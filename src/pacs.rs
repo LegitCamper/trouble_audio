@@ -1,4 +1,4 @@
-// Audio Capabilities Service 1.0.2
+// Published Audio Capabilities Service 1.0.2
 //
 // The Published Audio Capabilities (PACS) service exposes
 // server audio capabilities and audio availability, allowing discovery by clients.
