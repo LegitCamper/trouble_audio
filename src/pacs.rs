@@ -5,21 +5,20 @@
 
 use core::mem::size_of_val;
 use defmt::*;
-use trouble_host::Error;
-use trouble_host::prelude::*;
+use trouble_host::{Error, prelude::*};
 
 pub const UUID: u32 = 0x1850;
 
 /// A set of parameter values that denote server audio capabilities.
-pub struct PACRecord<'a> {
+pub struct PACRecord {
     codec_id: u64,
     codec_specific_capabilities_length: u16,
-    codec_specific_capabilities: CodecSpecificCapabilities<'a>,
+    codec_specific_capabilities: CodecSpecificCapabilities,
     metadata_length: u16,
     metadata: Option<u64>,
 }
 
-impl<'a> PACRecord<'a> {
+impl PACRecord {
     /// NOTE:
     ///
     /// If the server wished to support only 30-octet codec frame lengths
@@ -32,7 +31,7 @@ impl<'a> PACRecord<'a> {
     /// https://www.bluetooth.com/specifications/specs/pacs-1-0-2/
     pub fn new(
         codec_id: u64,
-        codec_specific_capabilities: CodecSpecificCapabilities<'a>,
+        codec_specific_capabilities: CodecSpecificCapabilities,
         metadata: Option<u64>,
     ) -> Self {
         PACRecord {
@@ -45,8 +44,8 @@ impl<'a> PACRecord<'a> {
     }
 }
 
-pub struct CodecSpecificCapabilities<'a> {
-    supported_sampling_frequencies: &'a [SupportedSamplingFrequency],
+pub struct CodecSpecificCapabilities {
+    supported_sampling_frequencies: SupportedSamplingFrequencies,
     supported_octets_per_codec_frame: SupportedOctetsPerCodecFrame,
 }
 
@@ -104,8 +103,9 @@ impl SupportedOctetsPerCodecFrame {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum SupportedSamplingFrequency {
+#[derive(Default, Debug, Clone, Copy)]
+pub enum SamplingFrequency {
+    #[default]
     Hz8000 = 0,
     Hz11025 = 1,
     Hz16000 = 2,
@@ -121,26 +121,28 @@ pub enum SupportedSamplingFrequency {
     Hz384000 = 12,
 }
 
-impl SupportedSamplingFrequency {
-    /// Returns the bit position for this frequency
-    pub fn bit_position(&self) -> u8 {
+impl SamplingFrequency {
+    fn bit_position(&self) -> u8 {
         *self as u8
     }
 }
 
-/// Encodes a collection of `SamplingFrequency` values into a `u16` bitfield.
-pub fn encode_frequencies_to_bitfield(frequencies: &[SupportedSamplingFrequency]) -> u16 {
-    let mut bitfield: u16 = 0;
-    for frequency in frequencies {
-        bitfield |= 1 << frequency.bit_position();
+pub struct SupportedSamplingFrequencies(u16);
+
+impl SupportedSamplingFrequencies {
+    pub fn new() -> Self {
+        Self(1 << SamplingFrequency::default().bit_position())
     }
-    bitfield
+
+    pub fn add(self, sampling_frequency: SamplingFrequency) -> Self {
+        Self(self.0 + 1 << sampling_frequency.bit_position())
+    }
 }
 
 /// Sink PAC characteristic containing one or more PAC records.
 pub struct SinkPAC<'a> {
-    pub number_of_pac_records: u8,        // Number of PAC records
-    pub pac_records: &'a [PACRecord<'a>], // Array of PAC records
+    pub number_of_pac_records: u8,    // Number of PAC records
+    pub pac_records: &'a [PACRecord], // Array of PAC records
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -206,8 +208,8 @@ impl SinkAudioLocations {
 
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
 pub struct SourcePAC<'a> {
-    pub number_of_pac_records: u8,        // Number of PAC records
-    pub pac_records: &'a [PACRecord<'a>], // Array of PAC records
+    pub number_of_pac_records: u8,    // Number of PAC records
+    pub pac_records: &'a [PACRecord], // Array of PAC records
 }
 
 /// The Source Audio Locations characteristic is used to expose the
