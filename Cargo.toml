@@ -1,0 +1,12 @@
+[package]
+name = "trouble_audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+defmt = "0.3.10"
+lc3-codec = "0.2.0"
+trouble-host = "0.1.0"
+
+[patch.crates-io]
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git" }
