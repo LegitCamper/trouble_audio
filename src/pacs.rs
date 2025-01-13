@@ -28,7 +28,7 @@ impl PACRecord {
     /// the minimum and maximum values set to 30 octets in one PAC record,
     /// and with the minimum and maximum values set to 50 octets in
     /// another PAC record, as shown in Table 2.3.
-    /// https://www.bluetooth.com/specifications/specs/pacs-1-0-2/
+    /// <https://www.bluetooth.com/specifications/specs/pacs-1-0-2/>
     pub fn new(
         codec_id: u64,
         codec_specific_capabilities: CodecSpecificCapabilities,
@@ -197,7 +197,6 @@ impl SinkAudioLocations {
     /// is not 4 octets in length, or if the parameter value written
     /// includes any RFU bits set to a value of 0b1, the server shall
     /// respond with an ATT Error Response and shall set the Error Code parameter to
-    /// Write Request Rejected as defined in [4].
     pub fn verify(&self, client_audio_location: AudioLocation) -> Result<(), Error> {
         if client_audio_location != self.0 {
             return Err(Error::Att(AttErrorCode::WriteNotPermitted));
@@ -230,7 +229,6 @@ impl SourceAudioLocations {
     /// is not 4 octets in length, or if the parameter value written
     /// includes any RFU bits set to a value of 0b1, the server shall respond
     /// with an ATT Error Response and shall set the Error Code parameter to
-    /// Write Request Rejected as defined in [4].
     pub fn verify(&self, client_audio_location: AudioLocation) -> Result<(), Error> {
         if client_audio_location != self.0 {
             return Err(Error::Att(AttErrorCode::WriteNotPermitted));
