@@ -1,13 +1,39 @@
-// Published Audio Capabilities Service 1.0.2
-//
-// The Published Audio Capabilities (PACS) service exposes
-// server audio capabilities and audio availability, allowing discovery by clients.
+//! ## Published Audio Capabilities Service
+//!
+//! The Published Audio Capabilities (PACS) service exposes
+//! server audio capabilities and audio availability, allowing discovery by clients.
 
 use core::mem::size_of_val;
 use defmt::*;
 use trouble_host::{Error, prelude::*};
 
-pub const UUID: u32 = 0x1850;
+/// Published Audio Capabilities Service
+#[gatt_service(uuid = 0x1850)]
+pub struct PublishedAudioCapabilitiesService {
+    /// Sink PAC characteristic containing one or more PAC records
+    #[descriptor(uuid = "2BC9", read, notify)]
+    sink_pac: SinkPAC,
+
+    /// Sink Audio Locations characteristic
+    #[descriptor(uuid = "2BCA", read, notify, write)]
+    sink_audio_locations: SinkAudioLocations,
+
+    /// Source PAC characteristic containing one or more PAC records
+    #[descriptor(uuid = "2BCB", read, notify)]
+    source_pac: SourcePAC,
+
+    /// Source Audio Locations characteristic
+    #[descriptor(uuid = "2BCC", read, notify, write)]
+    source_audio_locations: SourceAudioLocations,
+
+    /// Available Audio Contexts characteristic
+    #[descriptor(uuid = "2BCD", read, notify)]
+    available_audio_contexts: AvailableAudioContexts,
+
+    /// Supported Audio Contexts characteristic
+    #[descriptor(uuid = "2BCD", read, notify)]
+    supported_audio_contexts: SupportedAudioContexts,
+}
 
 /// A set of parameter values that denote server audio capabilities.
 pub struct PACRecord {
@@ -44,32 +70,35 @@ impl PACRecord {
     }
 }
 
+impl Default for PACRecord {
+    fn default() -> Self {
+        Self::new(
+            1,
+            CodecSpecificCapabilities::new(
+                SupportedSamplingFrequencies::default(),
+                SupportedOctetsPerCodecFrame::new(30, 50),
+            ),
+            None,
+        )
+    }
+}
+
 pub struct CodecSpecificCapabilities {
     supported_sampling_frequencies: SupportedSamplingFrequencies,
     supported_octets_per_codec_frame: SupportedOctetsPerCodecFrame,
 }
 
-// impl<'a> CodecSpecificCapabilities<'a> {
-
-//     pub fn as_bytes(Self<'a>) -> &'a [u8] {
-//           let mut idx = 0;
-
-//         if buf.len() > 0 {
-//             buf[idx] = self.capability_type;
-//             idx += 1;
-//         }
-
-//         let len = self.capabilities.len();
-//         if len <= buf.len() - idx {
-//             buf[idx..idx + len].copy_from_slice(self.capabilities);
-//             idx += len;
-//         }
-
-//         buf
-
-//     }
-
-// }
+impl CodecSpecificCapabilities {
+    pub fn new(
+        supported_sampling_frequencies: SupportedSamplingFrequencies,
+        supported_octets_per_codec_frame: SupportedOctetsPerCodecFrame,
+    ) -> Self {
+        Self {
+            supported_sampling_frequencies,
+            supported_octets_per_codec_frame,
+        }
+    }
+}
 
 pub struct SupportedOctetsPerCodecFrame {
     min_octets: u16,
@@ -129,9 +158,15 @@ impl SamplingFrequency {
 
 pub struct SupportedSamplingFrequencies(u16);
 
+impl Default for SupportedSamplingFrequencies {
+    fn default() -> Self {
+        Self(1 << SamplingFrequency::default().bit_position())
+    }
+}
+
 impl SupportedSamplingFrequencies {
     pub fn new() -> Self {
-        Self(1 << SamplingFrequency::default().bit_position())
+        Self::default()
     }
 
     pub fn add(self, sampling_frequency: SamplingFrequency) -> Self {
@@ -140,9 +175,10 @@ impl SupportedSamplingFrequencies {
 }
 
 /// Sink PAC characteristic containing one or more PAC records.
-pub struct SinkPAC<'a> {
-    pub number_of_pac_records: u8,    // Number of PAC records
-    pub pac_records: &'a [PACRecord], // Array of PAC records
+#[derive(Default)]
+pub struct SinkPAC {
+    pub number_of_pac_records: u8,         // Number of PAC records
+    pub pac_records: &'static [PACRecord], // Array of PAC records
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -181,11 +217,8 @@ pub enum AudioLocation {
 
 /// The Sink Audio Locations characteristic is used to expose
 /// the supported Audio Locations when the server supports reception of audio data.
-pub struct SinkAudioLocations(
-    ///Device-wide bitmap of supported Audio Location values for
-    /// all PAC records where the server supports reception of audio data.
-    AudioLocation,
-);
+#[derive(Default)]
+pub struct SinkAudioLocations(AudioLocation);
 
 impl SinkAudioLocations {
     fn new(audio_location: AudioLocation) -> Self {
@@ -206,13 +239,15 @@ impl SinkAudioLocations {
 }
 
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
-pub struct SourcePAC<'a> {
-    pub number_of_pac_records: u8,    // Number of PAC records
-    pub pac_records: &'a [PACRecord], // Array of PAC records
+#[derive(Default)]
+pub struct SourcePAC {
+    pub number_of_pac_records: u8,         // Number of PAC records
+    pub pac_records: &'static [PACRecord], // Array of PAC records
 }
 
 /// The Source Audio Locations characteristic is used to expose the
 /// supported Audio Locations when the server supports transmission of audio data.
+#[derive(Default)]
 pub struct SourceAudioLocations(
     ///Device-wide bitmap of supported Audio Location values for
     /// all PAC records where the server supports reception of audio data.
@@ -269,6 +304,7 @@ pub enum ContextType {
 
 /// The Available Audio Contexts characteristic exposes the availability of the server
 /// for reception and/or transmission of unicast audio data only, associated with specific Context Types.
+#[derive(Default)]
 pub struct AvailableAudioContexts {
     // Bitmask of audio data Context Type values available for reception.
     available_sink_contexts: ContextType,
@@ -278,6 +314,7 @@ pub struct AvailableAudioContexts {
 
 /// The Supported Audio Contexts characteristic exposes the server’s support for reception
 /// and/or transmission of unicast audio data and/or broadcast audio data associated with specific Context Types.
+#[derive(Default)]
 pub struct SupportedAudioContexts {
     // Bitmask of audio data Context Type values available for reception.
     available_sink_contexts: ContextType,

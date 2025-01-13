@@ -725,7 +725,9 @@ name = "trouble_audio"
 version = "0.1.0"
 dependencies = [
  "defmt",
+ "embassy-sync",
  "lc3-codec",
+ "static_cell",
  "trouble-host",
 ]
 
