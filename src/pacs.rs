@@ -465,3 +465,41 @@ impl FixedGattValue for SupportedAudioContexts {
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn characteristics() {
+        let sink_pac = SinkPAC::default();
+        let sink_pac_gatt = GattValue::to_gatt(&sink_pac);
+        <SinkPAC as FixedGattValue>::from_gatt(sink_pac_gatt).unwrap();
+
+        let sink_audio_locations = SinkAudioLocations::default();
+        let sink_audio_locations_gatt = GattValue::to_gatt(&sink_audio_locations);
+        <SinkAudioLocations as FixedGattValue>::from_gatt(sink_audio_locations_gatt).unwrap();
+
+        let source_pac = SourcePAC::default();
+        let source_pac_gatt = GattValue::to_gatt(&source_pac);
+        <SourcePAC as FixedGattValue>::from_gatt(source_pac_gatt).unwrap();
+
+        let source_audio_locations = SourceAudioLocations::default();
+        let source_audio_locations_gatt = GattValue::to_gatt(&source_audio_locations);
+        <SourceAudioLocations as FixedGattValue>::from_gatt(source_audio_locations_gatt).unwrap();
+
+        let available_audio_locations = AvailableAudioContexts::default();
+        let available_audio_locations_gatt = GattValue::to_gatt(&available_audio_locations);
+        <AvailableAudioContexts as FixedGattValue>::from_gatt(available_audio_locations_gatt)
+            .unwrap();
+
+        let supported_audio_locations = SupportedAudioContexts::default();
+        let supported_audio_locations_gatt = GattValue::to_gatt(&supported_audio_locations);
+        <SupportedAudioContexts as FixedGattValue>::from_gatt(supported_audio_locations_gatt)
+            .unwrap();
+
+        let source_pac = SourcePAC::default();
+        let source_pac_gatt = GattValue::to_gatt(&source_pac);
+        <SourcePAC as FixedGattValue>::from_gatt(source_pac_gatt).unwrap();
+    }
+}
