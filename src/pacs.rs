@@ -3,35 +3,35 @@
 //! The Published Audio Capabilities (PACS) service exposes
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
-use core::mem::size_of_val;
+use core::{mem::size_of_val, slice};
 use defmt::*;
-use trouble_host::{Error, prelude::*};
+use trouble_host::{Error, prelude::*, types::gatt_traits::*};
 
 /// Published Audio Capabilities Service
 #[gatt_service(uuid = 0x1850)]
 pub struct PublishedAudioCapabilitiesService {
     /// Sink PAC characteristic containing one or more PAC records
-    #[descriptor(uuid = "2BC9", read, notify)]
+    #[characteristic(uuid = "2BC9", read, notify)]
     sink_pac: SinkPAC,
 
     /// Sink Audio Locations characteristic
-    #[descriptor(uuid = "2BCA", read, notify, write)]
+    #[characteristic(uuid = "2BCA", read, notify, write)]
     sink_audio_locations: SinkAudioLocations,
 
     /// Source PAC characteristic containing one or more PAC records
-    #[descriptor(uuid = "2BCB", read, notify)]
+    #[characteristic(uuid = "2BCB", read, notify)]
     source_pac: SourcePAC,
 
     /// Source Audio Locations characteristic
-    #[descriptor(uuid = "2BCC", read, notify, write)]
+    #[characteristic(uuid = "2BCC", read, notify, write)]
     source_audio_locations: SourceAudioLocations,
 
     /// Available Audio Contexts characteristic
-    #[descriptor(uuid = "2BCD", read, notify)]
+    #[characteristic(uuid = "2BCD", read, notify)]
     available_audio_contexts: AvailableAudioContexts,
 
     /// Supported Audio Contexts characteristic
-    #[descriptor(uuid = "2BCD", read, notify)]
+    #[characteristic(uuid = "2BCD", read, notify)]
     supported_audio_contexts: SupportedAudioContexts,
 }
 
@@ -132,7 +132,7 @@ impl SupportedOctetsPerCodecFrame {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum SamplingFrequency {
     #[default]
     Hz8000 = 0,
@@ -181,7 +181,31 @@ pub struct SinkPAC {
     pub pac_records: &'static [PACRecord], // Array of PAC records
 }
 
-#[derive(Default, PartialEq, Eq)]
+impl FixedGattValue for SinkPAC {
+    const SIZE: usize = size_of::<PACRecord>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
+}
+
+#[derive(Default, Debug, PartialEq, Eq)]
 pub enum AudioLocation {
     #[default]
     Mono = 0x00000000, // Mono Audio (no specified Audio Location)
@@ -238,11 +262,59 @@ impl SinkAudioLocations {
     }
 }
 
+impl FixedGattValue for SinkAudioLocations {
+    const SIZE: usize = size_of::<Self>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
+}
+
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
 #[derive(Default)]
 pub struct SourcePAC {
     pub number_of_pac_records: u8,         // Number of PAC records
     pub pac_records: &'static [PACRecord], // Array of PAC records
+}
+
+impl FixedGattValue for SourcePAC {
+    const SIZE: usize = size_of::<PACRecord>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
 }
 
 /// The Source Audio Locations characteristic is used to expose the
@@ -269,6 +341,30 @@ impl SourceAudioLocations {
             return Err(Error::Att(AttErrorCode::WriteNotPermitted));
         }
         Ok(())
+    }
+}
+
+impl FixedGattValue for SourceAudioLocations {
+    const SIZE: usize = size_of::<PACRecord>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
 
@@ -312,6 +408,30 @@ pub struct AvailableAudioContexts {
     available_source_contexts: ContextType,
 }
 
+impl FixedGattValue for AvailableAudioContexts {
+    const SIZE: usize = size_of::<PACRecord>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
+}
+
 /// The Supported Audio Contexts characteristic exposes the server’s support for reception
 /// and/or transmission of unicast audio data and/or broadcast audio data associated with specific Context Types.
 #[derive(Default)]
@@ -320,4 +440,28 @@ pub struct SupportedAudioContexts {
     available_sink_contexts: ContextType,
     // Bitmask of audio data Context Type values available for transmission.
     available_source_contexts: ContextType,
+}
+
+impl FixedGattValue for SupportedAudioContexts {
+    const SIZE: usize = size_of::<PACRecord>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            // SAFETY
+            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
+            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
+            //     and all types implementing Primitive are valid for all possible configurations of bits
+            // - Primitive trait is constrained to require Copy
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        // SAFETY
+        // - Slice is of type u8 so data is guaranteed valid for reads of any length
+        // - Data and len are tied to the address and size of the type
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
 }
