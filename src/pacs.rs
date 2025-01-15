@@ -5,7 +5,7 @@
 
 use core::{mem::size_of_val, slice};
 use defmt::*;
-use trouble_host::{Error, prelude::*, types::gatt_traits::*};
+use trouble_host::{prelude::*, types::gatt_traits::*, Error};
 
 /// Published Audio Capabilities Service
 #[gatt_service(uuid = 0x1850)]
@@ -478,7 +478,10 @@ mod tests {
 
         let sink_audio_locations = SinkAudioLocations::default();
         let sink_audio_locations_gatt = GattValue::to_gatt(&sink_audio_locations);
-        <SinkAudioLocations as FixedGattValue>::from_gatt(sink_audio_locations_gatt).unwrap();
+        <SinkAudioLocations as FixedGattValue>::from_gatt(sink_audio_locations_gatt)
+            .unwrap()
+            .verify(AudioLocation::default())
+            .unwrap();
 
         let source_pac = SourcePAC::default();
         let source_pac_gatt = GattValue::to_gatt(&source_pac);
@@ -486,7 +489,10 @@ mod tests {
 
         let source_audio_locations = SourceAudioLocations::default();
         let source_audio_locations_gatt = GattValue::to_gatt(&source_audio_locations);
-        <SourceAudioLocations as FixedGattValue>::from_gatt(source_audio_locations_gatt).unwrap();
+        <SourceAudioLocations as FixedGattValue>::from_gatt(source_audio_locations_gatt)
+            .unwrap()
+            .verify(AudioLocation::default())
+            .unwrap();
 
         let available_audio_locations = AvailableAudioContexts::default();
         let available_audio_locations_gatt = GattValue::to_gatt(&available_audio_locations);
