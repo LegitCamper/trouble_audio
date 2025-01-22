@@ -7,8 +7,10 @@ use core::{mem::size_of_val, slice};
 use defmt::*;
 use trouble_host::{prelude::*, types::gatt_traits::*, Error};
 
+use crate::CodedId;
+
 /// Published Audio Capabilities Service
-#[gatt_service(uuid = 0x1850)]
+#[gatt_service(uuid = BluetoothUuid16::new(0x1850))]
 pub struct PublishedAudioCapabilitiesService {
     /// Sink PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BC9", read, notify)]
@@ -16,7 +18,7 @@ pub struct PublishedAudioCapabilitiesService {
 
     /// Sink Audio Locations characteristic
     #[characteristic(uuid = "2BCA", read, notify, write)]
-    sink_audio_locations: SinkAudioLocations,
+    sink_audio_locations: AudioLocation,
 
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
@@ -24,7 +26,7 @@ pub struct PublishedAudioCapabilitiesService {
 
     /// Source Audio Locations characteristic
     #[characteristic(uuid = "2BCC", read, notify, write)]
-    source_audio_locations: SourceAudioLocations,
+    source_audio_locations: AudioLocation,
 
     /// Available Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
@@ -37,7 +39,7 @@ pub struct PublishedAudioCapabilitiesService {
 
 /// A set of parameter values that denote server audio capabilities.
 pub struct PACRecord {
-    codec_id: u64,
+    codec_id: CodedId,
     codec_specific_capabilities_length: u16,
     codec_specific_capabilities: CodecSpecificCapabilities,
     metadata_length: u16,
@@ -56,7 +58,7 @@ impl PACRecord {
     /// another PAC record, as shown in Table 2.3.
     /// <https://www.bluetooth.com/specifications/specs/pacs-1-0-2/>
     pub fn new(
-        codec_id: u64,
+        codec_id: CodedId,
         codec_specific_capabilities: CodecSpecificCapabilities,
         metadata: Option<u64>,
     ) -> Self {
@@ -205,7 +207,7 @@ impl FixedGattValue for SinkPAC {
     }
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AudioLocation {
     #[default]
     Mono = 0x00000000, // Mono Audio (no specified Audio Location)
@@ -239,42 +241,63 @@ pub enum AudioLocation {
     RightSurround = 0x08000000,
 }
 
-/// The Sink Audio Locations characteristic is used to expose
-/// the supported Audio Locations when the server supports reception of audio data.
-#[derive(Default)]
-pub struct SinkAudioLocations(AudioLocation);
-
-impl SinkAudioLocations {
-    fn new(audio_location: AudioLocation) -> Self {
-        Self(audio_location)
-    }
-
-    /// If the server detects that the Sink_Audio_Locations parameter value,
+impl AudioLocation {
+    /// If the server detects that the Source_Audio_Locations parameter value,
     /// written by a client by using the GATT Write Characteristic Value sub-procedure,
     /// is not 4 octets in length, or if the parameter value written
-    /// includes any RFU bits set to a value of 0b1, the server shall
-    /// respond with an ATT Error Response and shall set the Error Code parameter to
+    /// includes any RFU bits set to a value of 0b1, the server shall respond
+    /// with an ATT Error Response and shall set the Error Code parameter to
     pub fn verify(&self, client_audio_location: AudioLocation) -> Result<(), Error> {
-        if client_audio_location != self.0 {
-            return Err(Error::Att(AttErrorCode::WriteNotPermitted));
+        if client_audio_location != *self {
+            return Err(Error::Att(AttErrorCode::WRITE_REQUEST_REJECTED));
         }
         Ok(())
     }
 }
 
-impl FixedGattValue for SinkAudioLocations {
-    const SIZE: usize = size_of::<Self>();
+impl FixedGattValue for AudioLocation {
+    const SIZE: usize = 4;
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
         } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+            let value = (data[0] as u32)
+                | ((data[1] as u32) << 8)
+                | ((data[2] as u32) << 16)
+                | ((data[3] as u32) << 24);
+            match value {
+                0x00000000 => Ok(AudioLocation::Mono),
+                0x00000001 => Ok(AudioLocation::FrontLeft),
+                0x00000002 => Ok(AudioLocation::FrontRight),
+                0x00000004 => Ok(AudioLocation::FrontCenter),
+                0x00000008 => Ok(AudioLocation::LowFrequencyEffects1),
+                0x00000010 => Ok(AudioLocation::BackLeft),
+                0x00000020 => Ok(AudioLocation::BackRight),
+                0x00000040 => Ok(AudioLocation::FrontLeftOfCenter),
+                0x00000080 => Ok(AudioLocation::FrontRightOfCenter),
+                0x00000100 => Ok(AudioLocation::BackCenter),
+                0x00000200 => Ok(AudioLocation::LowFrequencyEffects2),
+                0x00000400 => Ok(AudioLocation::SideLeft),
+                0x00000800 => Ok(AudioLocation::SideRight),
+                0x00001000 => Ok(AudioLocation::TopFrontLeft),
+                0x00002000 => Ok(AudioLocation::TopFrontRight),
+                0x00004000 => Ok(AudioLocation::TopFrontCenter),
+                0x00008000 => Ok(AudioLocation::TopCenter),
+                0x00010000 => Ok(AudioLocation::TopBackLeft),
+                0x00020000 => Ok(AudioLocation::TopBackRight),
+                0x00040000 => Ok(AudioLocation::TopSideLeft),
+                0x00080000 => Ok(AudioLocation::TopSideRight),
+                0x00100000 => Ok(AudioLocation::TopBackCenter),
+                0x00200000 => Ok(AudioLocation::BottomFrontCenter),
+                0x00400000 => Ok(AudioLocation::BottomFrontLeft),
+                0x00800000 => Ok(AudioLocation::BottomFrontRight),
+                0x01000000 => Ok(AudioLocation::FrontLeftWide),
+                0x02000000 => Ok(AudioLocation::FrontRightWide),
+                0x04000000 => Ok(AudioLocation::LeftSurround),
+                0x08000000 => Ok(AudioLocation::RightSurround),
+                _ => Err(FromGattError::InvalidLength),
+            }
         }
     }
 
@@ -286,6 +309,7 @@ impl FixedGattValue for SinkAudioLocations {
     }
 }
 
+/// The Sink Audio Locations characteristic i
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
 #[derive(Default)]
 pub struct SourcePAC {
@@ -294,57 +318,6 @@ pub struct SourcePAC {
 }
 
 impl FixedGattValue for SourcePAC {
-    const SIZE: usize = size_of::<PACRecord>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
-        }
-    }
-
-    fn to_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
-    }
-}
-
-/// The Source Audio Locations characteristic is used to expose the
-/// supported Audio Locations when the server supports transmission of audio data.
-#[derive(Default)]
-pub struct SourceAudioLocations(
-    ///Device-wide bitmap of supported Audio Location values for
-    /// all PAC records where the server supports reception of audio data.
-    AudioLocation,
-);
-
-impl SourceAudioLocations {
-    fn new(audio_location: AudioLocation) -> Self {
-        Self(audio_location)
-    }
-
-    /// If the server detects that the Source_Audio_Locations parameter value,
-    /// written by a client by using the GATT Write Characteristic Value sub-procedure,
-    /// is not 4 octets in length, or if the parameter value written
-    /// includes any RFU bits set to a value of 0b1, the server shall respond
-    /// with an ATT Error Response and shall set the Error Code parameter to
-    pub fn verify(&self, client_audio_location: AudioLocation) -> Result<(), Error> {
-        if client_audio_location != self.0 {
-            return Err(Error::Att(AttErrorCode::WriteNotPermitted));
-        }
-        Ok(())
-    }
-}
-
-impl FixedGattValue for SourceAudioLocations {
     const SIZE: usize = size_of::<PACRecord>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
@@ -476,23 +449,9 @@ mod tests {
         let sink_pac_gatt = GattValue::to_gatt(&sink_pac);
         <SinkPAC as FixedGattValue>::from_gatt(sink_pac_gatt).unwrap();
 
-        let sink_audio_locations = SinkAudioLocations::default();
-        let sink_audio_locations_gatt = GattValue::to_gatt(&sink_audio_locations);
-        <SinkAudioLocations as FixedGattValue>::from_gatt(sink_audio_locations_gatt)
-            .unwrap()
-            .verify(AudioLocation::default())
-            .unwrap();
-
         let source_pac = SourcePAC::default();
         let source_pac_gatt = GattValue::to_gatt(&source_pac);
         <SourcePAC as FixedGattValue>::from_gatt(source_pac_gatt).unwrap();
-
-        let source_audio_locations = SourceAudioLocations::default();
-        let source_audio_locations_gatt = GattValue::to_gatt(&source_audio_locations);
-        <SourceAudioLocations as FixedGattValue>::from_gatt(source_audio_locations_gatt)
-            .unwrap()
-            .verify(AudioLocation::default())
-            .unwrap();
 
         let available_audio_locations = AvailableAudioContexts::default();
         let available_audio_locations_gatt = GattValue::to_gatt(&available_audio_locations);

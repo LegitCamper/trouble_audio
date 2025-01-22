@@ -8,6 +8,8 @@ use core::{mem::size_of_val, slice};
 use defmt::*;
 use trouble_host::{prelude::*, scan::PhySet, types::gatt_traits::*, Error};
 
+use crate::CodedId;
+
 /// Audio Stream Control Service
 #[gatt_service(uuid = 0x184E)]
 pub struct AudioStreamControlService {
@@ -20,7 +22,7 @@ pub struct AudioStreamControlService {
     source_ase: Ase,
 
     /// Sink PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC6", read, write, notify)]
+    #[characteristic(uuid = "2BC6", write, write_without_response, notify)]
     ase_control_point: Ase,
 }
 
@@ -29,23 +31,7 @@ pub struct Ase {
     pub id: u8,
     /// State of the ASE with respect to the ASE state machine
     pub state: AseState,
-    pub params: AseParams,
-}
-
-pub struct AseParams {
-    /// Server support for unframed ISOAL PDUs
-    pub farming: bool,
-    /// Server preferred value for the PHY parameter to be written by the
-    /// client for this ASE in the Config QoS operation defined in Section 5.2
-    preferred_phy: PhySet,
-    /// Server preferred value for the Retransmission_Number parameter
-    /// to be written by the client for this ASE in the Config
-    /// QoS operation defined in Section 5.2. The Retransmission_Number
-    /// parameter is defined in Volume 4, Part E, Section 7.8.97 in [1].
-    /// If the server expresses a value for Preferred_Retransmission_Number
-    /// that is not 0xFF, the server shall support all values of Retransmission_Number
-    /// up to and including Preferred_Retransmission_Number.
-    preferred_retransmission_number: u8,
+    // pub params: AseParams, the params are encoded in the state
 }
 
 /// Represents the ASE Control Operations.
@@ -81,13 +67,13 @@ pub enum AseType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AseState {
-    Idle = 0x00,
-    CodecConfigured = 0x01,
-    QosConfigured = 0x02,
-    Enabling = 0x03,
-    Streaming = 0x04,
-    Disabling = 0x05,
-    Releasing = 0x06,
+    Idle,
+    CodecConfigured(AseParamsCodecConfigured),
+    QosConfigured(AseParamsQoSConfigured),
+    Enabling(AseParamsOther),
+    Streaming(AseParamsOther),
+    Disabling(AseParamsOther),
+    Releasing,
 }
 
 impl AseState {
@@ -146,4 +132,50 @@ impl AseState {
             }
         }
     }
+}
+
+/// Additional Ase parameters for the State::CodedConfigured
+pub struct AseParamsCodecConfigured {
+    /// Server support for unframed ISOAL PDUs
+    pub framing: u8,
+    /// Server preferred value for the PHY parameter
+    pub preferred_phy: PhySet,
+    /// Server preferred value for the Retransmission_Number parameter
+    pub preferred_retransmission_number: u8,
+    /// Maximum server supported value for the Max_Transport_Latency parameter (in milliseconds)
+    pub max_transport_latency: u16,
+    /// Minimum server supported Presentation_Delay (in microseconds)
+    pub presentation_delay_min: u32,
+    /// Maximum server supported Presentation_Delay (in microseconds)
+    pub presentation_delay_max: u32,
+    /// Server preferred minimum Presentation_Delay (in microseconds)
+    pub preferred_presentation_delay_min: u32,
+    /// Server preferred maximum Presentation_Delay (in microseconds)
+    pub preferred_presentation_delay_max: u32,
+    /// Codec ID
+    pub codec_id: CodedId,
+    /// Length of the Codec_Specific_Configuration field
+    pub codec_specific_configuration_length: u8,
+    /// Codec specific configuration for this ASE
+    pub codec_specific_configuration: Option<&'static [u8]>,
+}
+
+/// Additional Ase parameters for the State::QoSConfigured
+pub struct AseParamsQoSConfigured {
+    pub cig_id: u8,
+    pub cis_id: u8,
+    pub sdu_interval: [u8; 3],
+    pub framing: u8,
+    pub phy: PhySet,
+    pub max_sdu: u16,
+    pub retransmission_number: u8,
+    pub max_transport_latency: u16,
+    pub presentation_delay: [u8; 3],
+}
+
+/// Additional Ase parameters for the State::Enabling, State::Steaming, or State::Disabled
+pub struct AseParamsOther {
+    pub cig_id: u8,
+    pub cis_id: u8,
+    pub metadata: Option<u64>,
 }

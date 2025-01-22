@@ -5,7 +5,12 @@ edition = "2021"
 
 [dependencies]
 embassy-sync = "0.6.1"
-trouble-host = { version = "0.1.0", features = ["gatt"] }
+trouble-host = { version = "0.1.0", features = [
+  "derive",
+  "gatt",
+  "peripheral",
+  "central",
+] }
 
 lc3-codec = "0.2.0"
 
