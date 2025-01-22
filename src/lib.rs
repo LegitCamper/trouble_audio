@@ -5,6 +5,15 @@
 // pub mod ascs;
 // pub mod bap;
 #[allow(dead_code)]
+pub mod generic_audio;
+#[allow(dead_code)]
 pub mod pacs;
 
-pub type CodedId = u64;
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub struct CodecdId(u64);
+
+impl Default for CodecdId {
+    fn default() -> Self {
+        Self(0x000000000D)
+    }
+}
