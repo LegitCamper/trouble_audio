@@ -6,6 +6,15 @@ use trouble_host::{prelude::*, types::gatt_traits::*, Error};
 
 use crate::CodecdId;
 
+mod metadata;
+pub use metadata::*;
+
+mod capabilities;
+pub use capabilities::*;
+
+mod configuration;
+pub use configuration::*;
+
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AudioLocation {
     #[default]
@@ -41,22 +50,51 @@ pub enum AudioLocation {
     Undefined,
 }
 
-impl AudioLocation {
-    /// If the server detects that the Source_Audio_Locations parameter value,
-    /// written by a client by using the GATT Write Characteristic Value sub-procedure,
-    /// is not 4 octets in length, or if the parameter value written
-    /// includes any RFU bits set to a value of 0b1, the server shall respond
-    /// with an ATT Error Response and shall set the Error Code parameter to
-    pub fn verify(&self, client_audio_location: AudioLocation) -> Result<(), Error> {
-        if client_audio_location != *self {
-            return Err(Error::Att(AttErrorCode::WRITE_REQUEST_REJECTED));
+impl Into<u32> for AudioLocation {
+    fn into(self) -> u32 {
+        self as u32
+    }
+}
+
+impl From<u32> for AudioLocation {
+    fn from(value: u32) -> Self {
+        match value {
+            0x00000000 => AudioLocation::Mono,
+            0x00000001 => AudioLocation::FrontLeft,
+            0x00000002 => AudioLocation::FrontRight,
+            0x00000004 => AudioLocation::FrontCenter,
+            0x00000008 => AudioLocation::LowFrequencyEffects1,
+            0x00000010 => AudioLocation::BackLeft,
+            0x00000020 => AudioLocation::BackRight,
+            0x00000040 => AudioLocation::FrontLeftOfCenter,
+            0x00000080 => AudioLocation::FrontRightOfCenter,
+            0x00000100 => AudioLocation::BackCenter,
+            0x00000200 => AudioLocation::LowFrequencyEffects2,
+            0x00000400 => AudioLocation::SideLeft,
+            0x00000800 => AudioLocation::SideRight,
+            0x00001000 => AudioLocation::TopFrontLeft,
+            0x00002000 => AudioLocation::TopFrontRight,
+            0x00004000 => AudioLocation::TopFrontCenter,
+            0x00008000 => AudioLocation::TopCenter,
+            0x00010000 => AudioLocation::TopBackLeft,
+            0x00020000 => AudioLocation::TopBackRight,
+            0x00040000 => AudioLocation::TopSideLeft,
+            0x00080000 => AudioLocation::TopSideRight,
+            0x00100000 => AudioLocation::TopBackCenter,
+            0x00200000 => AudioLocation::BottomFrontCenter,
+            0x00400000 => AudioLocation::BottomFrontLeft,
+            0x00800000 => AudioLocation::BottomFrontRight,
+            0x01000000 => AudioLocation::FrontLeftWide,
+            0x02000000 => AudioLocation::FrontRightWide,
+            0x04000000 => AudioLocation::LeftSurround,
+            0x08000000 => AudioLocation::RightSurround,
+            _ => AudioLocation::Undefined,
         }
-        Ok(())
     }
 }
 
 impl FixedGattValue for AudioLocation {
-    const SIZE: usize = 4;
+    const SIZE: usize = size_of::<AudioLocation>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
@@ -66,38 +104,7 @@ impl FixedGattValue for AudioLocation {
                 | ((data[1] as u32) << 8)
                 | ((data[2] as u32) << 16)
                 | ((data[3] as u32) << 24);
-            match value {
-                0x00000000 => Ok(AudioLocation::Mono),
-                0x00000001 => Ok(AudioLocation::FrontLeft),
-                0x00000002 => Ok(AudioLocation::FrontRight),
-                0x00000004 => Ok(AudioLocation::FrontCenter),
-                0x00000008 => Ok(AudioLocation::LowFrequencyEffects1),
-                0x00000010 => Ok(AudioLocation::BackLeft),
-                0x00000020 => Ok(AudioLocation::BackRight),
-                0x00000040 => Ok(AudioLocation::FrontLeftOfCenter),
-                0x00000080 => Ok(AudioLocation::FrontRightOfCenter),
-                0x00000100 => Ok(AudioLocation::BackCenter),
-                0x00000200 => Ok(AudioLocation::LowFrequencyEffects2),
-                0x00000400 => Ok(AudioLocation::SideLeft),
-                0x00000800 => Ok(AudioLocation::SideRight),
-                0x00001000 => Ok(AudioLocation::TopFrontLeft),
-                0x00002000 => Ok(AudioLocation::TopFrontRight),
-                0x00004000 => Ok(AudioLocation::TopFrontCenter),
-                0x00008000 => Ok(AudioLocation::TopCenter),
-                0x00010000 => Ok(AudioLocation::TopBackLeft),
-                0x00020000 => Ok(AudioLocation::TopBackRight),
-                0x00040000 => Ok(AudioLocation::TopSideLeft),
-                0x00080000 => Ok(AudioLocation::TopSideRight),
-                0x00100000 => Ok(AudioLocation::TopBackCenter),
-                0x00200000 => Ok(AudioLocation::BottomFrontCenter),
-                0x00400000 => Ok(AudioLocation::BottomFrontLeft),
-                0x00800000 => Ok(AudioLocation::BottomFrontRight),
-                0x01000000 => Ok(AudioLocation::FrontLeftWide),
-                0x02000000 => Ok(AudioLocation::FrontRightWide),
-                0x04000000 => Ok(AudioLocation::LeftSurround),
-                0x08000000 => Ok(AudioLocation::RightSurround),
-                _ => Ok(AudioLocation::Undefined),
-            }
+            Ok(Self::from(value))
         }
     }
 
@@ -109,168 +116,79 @@ impl FixedGattValue for AudioLocation {
     }
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AudioInputType {
+    #[default]
     Unspecified = 0x00, // Unspecified Input
-    Bluetooth = 0x01,   // Bluetooth Audio Stream
-    Microphone = 0x02,  // Microphone
-    Analog = 0x03,      // Analog Interface
-    Digital = 0x04,     // Digital Interface
-    Radio = 0x05,       // AM/FM/XM/etc.
-    Streaming = 0x06,   // Streaming Audio Source
-    Ambient = 0x07,     // Transparency/Pass-through
+    Bluetooth = 0x01,  // Bluetooth Audio Stream
+    Microphone = 0x02, // Microphone
+    Analog = 0x03,     // Analog Interface
+    Digital = 0x04,    // Digital Interface
+    Radio = 0x05,      // AM/FM/XM/etc.
+    Streaming = 0x06,  // Streaming Audio Source
+    Ambient = 0x07,    // Transparency/Pass-through
+    Undefined,
+}
+
+impl Into<u8> for AudioInputType {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+impl From<u8> for AudioInputType {
+    fn from(value: u8) -> Self {
+        match value {
+            0x00 => Self::Unspecified,
+            0x01 => Self::Bluetooth,
+            0x02 => Self::Microphone,
+            0x03 => Self::Analog,
+            0x04 => Self::Digital,
+            0x05 => Self::Radio,
+            0x06 => Self::Streaming,
+            0x07 => Self::Ambient,
+            _ => Self::Undefined,
+        }
+    }
 }
 
 /// A bitfield of values that, when set to 0b1 for a bit,
 /// describes audio data as being intended for the use case represented by that bit.
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ContextType {
-    /// Prohibited
     #[default]
     Prohibited = 0x0000,
-    /// Identifies audio where the use case context does not match any other defined value,
-    /// or where the context is unknown or cannot be determined.
     Unspecified = 0x0001,
-    /// Conversation between humans, for example, in telephony or video calls,
-    /// including traditional cellular as well as VoIP and Push-to-Talk.
     Conversational = 0x0002,
-    /// Media, for example, music playback, radio, podcast or movie soundtrack, or TV audio.
     Media = 0x0004,
-    /// Audio associated with video gaming, for example gaming media; gaming effects;
-    /// music and in-game voice chat between participants; or a mix of all the above.
     Game = 0x0008,
-    /// Instructional audio, for example, in navigation, announcements, or user guidance.
     Instructional = 0x0010,
-    /// Man-machine communication, for example, with voice recognition or virtual assistants.
     VoiceAssistants = 0x0020,
-    /// Live audio, for example, from a microphone where audio is perceived both
-    /// through a direct acoustic path and through an LE Audio Stream.
     Live = 0x0040,
-    /// Sound effects including keyboard and touch feedback;
-    /// menu and user interface sounds; and other system sounds.
     SoundEffects = 0x0080,
+    Undefined,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CodecSpecificCapabilities {
-    SupportedSamplingFrequencies(SamplingFrequencies),
-    SupportedFrameDurations(FrameDurations),
-    SupportedAudioChannelCounts(AudioChannelCounts),
-    SupportedOctetsPerCodecFrame(OctetsPerCodecFrame),
-    SupportedMaxCodecFramesPerSDU(u8),
-}
-
-impl CodecSpecificCapabilities {
-    pub fn as_type(&self) -> u8 {
-        match self {
-            Self::SupportedSamplingFrequencies(_) => 1,
-            Self::SupportedFrameDurations(_) => 2,
-            Self::SupportedAudioChannelCounts(_) => 3,
-            Self::SupportedOctetsPerCodecFrame(_) => 4,
-            Self::SupportedMaxCodecFramesPerSDU(_) => 5,
-        }
+impl Into<u16> for ContextType {
+    fn into(self) -> u16 {
+        self as u16
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq)]
-pub enum SamplingFrequency {
-    #[default]
-    Hz8000 = 0,
-    Hz11025 = 1,
-    Hz16000 = 2,
-    Hz22050 = 3,
-    Hz24000 = 4,
-    Hz32000 = 5,
-    Hz44100 = 6,
-    Hz48000 = 7,
-    Hz88200 = 8,
-    Hz96000 = 9,
-    Hz176400 = 10,
-    Hz192000 = 11,
-    Hz384000 = 12,
-}
-
-impl SamplingFrequency {
-    fn bit_position(&self) -> u8 {
-        *self as u8
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SamplingFrequencies(u8);
-
-impl Default for SamplingFrequencies {
-    fn default() -> Self {
-        Self(1 << SamplingFrequency::default().bit_position())
-    }
-}
-
-impl SamplingFrequencies {
-    pub fn new(frequencies: &[SamplingFrequency]) -> Self {
-        let mut sampling_frequencies = 0;
-        for frequency in frequencies {
-            Self::add(&mut sampling_frequencies, *frequency)
+impl From<u16> for ContextType {
+    fn from(value: u16) -> Self {
+        match value {
+            0x0000 => Self::Prohibited,
+            0x0001 => Self::Unspecified,
+            0x0002 => Self::Conversational,
+            0x0004 => Self::Media,
+            0x0008 => Self::Game,
+            0x0010 => Self::Instructional,
+            0x0020 => Self::VoiceAssistants,
+            0x0040 => Self::Live,
+            0x0080 => Self::SoundEffects,
+            _ => Self::Undefined,
         }
-        SamplingFrequencies(sampling_frequencies)
-    }
-
-    pub fn add(frequencies: &mut u8, sampling_frequency: SamplingFrequency) {
-        *frequencies += 1 << sampling_frequency.bit_position();
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrameDurations(u8);
-
-impl FrameDurations {
-    pub fn new(
-        support_7_5_ms: bool,
-        support_10_ms: bool,
-        prefer_7_5_ms: bool,
-        prefer_10_ms: bool,
-    ) -> Self {
-        let mut value = 0;
-        if support_7_5_ms {
-            value |= 0b0000_0001; // Set bit 0
-        }
-        if support_10_ms {
-            value |= 0b0000_0010; // Set bit 1
-        }
-        if support_7_5_ms && support_10_ms && prefer_7_5_ms {
-            value |= 0b0001_0000; // Set bit 4
-        }
-        if support_7_5_ms && support_10_ms && prefer_10_ms {
-            value |= 0b0010_0000; // Set bit 5
-        }
-
-        Self(value)
-    }
-}
-
-impl Default for FrameDurations {
-    fn default() -> Self {
-        Self::new(false, true, false, false)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
-pub struct AudioChannelCounts(u8);
-
-impl AudioChannelCounts {
-    /// Creates a new `SupportedAudioChannelCounts` instance.
-    ///
-    /// - `channels`: A slice of `u8` values representing the supported channel counts (1 to 8).
-    ///
-    /// Returns a `AudioChannelCounts` struct.
-    pub fn new(channels: &[u8]) -> Self {
-        let mut value = 0;
-
-        for &channel in channels {
-            if channel >= 1 && channel <= 8 {
-                value |= 1 << (channel - 1);
-            }
-        }
-
-        Self(value)
     }
 }
 
