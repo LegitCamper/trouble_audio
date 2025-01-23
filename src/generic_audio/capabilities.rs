@@ -1,4 +1,5 @@
 use super::{OctetsPerCodecFrame, SamplingFrequency};
+use crate::Type;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodecSpecificCapabilities {
@@ -9,8 +10,8 @@ pub enum CodecSpecificCapabilities {
     SupportedMaxCodecFramesPerSDU(u8),
 }
 
-impl CodecSpecificCapabilities {
-    pub(crate) fn as_type(&self) -> u8 {
+impl Type for CodecSpecificCapabilities {
+    fn as_type(&self) -> u8 {
         match self {
             Self::SupportedSamplingFrequencies(_) => 1,
             Self::SupportedFrameDurations(_) => 2,

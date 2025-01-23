@@ -30,11 +30,11 @@ pub struct PublishedAudioCapabilitiesService {
 
     /// Available Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
-    available_audio_contexts: AvailableAudioContexts,
+    available_audio_contexts: AudioContexts,
 
     /// Supported Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
-    supported_audio_contexts: SupportedAudioContexts,
+    supported_audio_contexts: AudioContexts,
 }
 
 /// A set of parameter values that denote server audio capabilities.
@@ -42,7 +42,7 @@ pub struct PublishedAudioCapabilitiesService {
 pub struct PACRecord {
     codec_id: CodecdId,
     codec_specific_capabilities: &'static [CodecSpecificCapabilities],
-    metadata: Option<&'static [u8]>,
+    metadata: &'static [Metadata],
 }
 
 impl PACRecord {
@@ -59,7 +59,7 @@ impl PACRecord {
     pub fn new(
         codec_id: CodecdId,
         codec_specific_capabilities: &'static [CodecSpecificCapabilities],
-        metadata: Option<&'static [u8]>,
+        metadata: &'static [Metadata],
     ) -> Self {
         PACRecord {
             codec_id,
@@ -146,17 +146,15 @@ impl FixedGattValue for SourcePAC {
     }
 }
 
-/// The Available Audio Contexts characteristic exposes the availability of the server
-/// for reception and/or transmission of unicast audio data only, associated with specific Context Types.
 #[derive(Default)]
-pub struct AvailableAudioContexts {
-    // Bitmask of audio data Context Type values available for reception.
-    available_sink_contexts: ContextType,
-    // Bitmask of audio data Context Type values available for transmission.
-    available_source_contexts: ContextType,
+pub struct AudioContexts {
+    // Bitmask of audio data Context Type values for reception.
+    sink_contexts: ContextType,
+    // Bitmask of audio data Context Type values for transmission.
+    source_contexts: ContextType,
 }
 
-impl FixedGattValue for AvailableAudioContexts {
+impl FixedGattValue for AudioContexts {
     const SIZE: usize = size_of::<PACRecord>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
@@ -177,69 +175,5 @@ impl FixedGattValue for AvailableAudioContexts {
         // - Slice is of type u8 so data is guaranteed valid for reads of any length
         // - Data and len are tied to the address and size of the type
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
-    }
-}
-
-/// The Supported Audio Contexts characteristic exposes the server’s support for reception
-/// and/or transmission of unicast audio data and/or broadcast audio data associated with specific Context Types.
-#[derive(Default)]
-pub struct SupportedAudioContexts {
-    // Bitmask of audio data Context Type values available for reception.
-    available_sink_contexts: ContextType,
-    // Bitmask of audio data Context Type values available for transmission.
-    available_source_contexts: ContextType,
-}
-
-impl FixedGattValue for SupportedAudioContexts {
-    const SIZE: usize = size_of::<PACRecord>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
-        }
-    }
-
-    fn to_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn characteristics() {
-        let sink_pac = SinkPAC::default();
-        let sink_pac_gatt = GattValue::to_gatt(&sink_pac);
-        <SinkPAC as FixedGattValue>::from_gatt(sink_pac_gatt).unwrap();
-
-        let source_pac = SourcePAC::default();
-        let source_pac_gatt = GattValue::to_gatt(&source_pac);
-        <SourcePAC as FixedGattValue>::from_gatt(source_pac_gatt).unwrap();
-
-        let available_audio_locations = AvailableAudioContexts::default();
-        let available_audio_locations_gatt = GattValue::to_gatt(&available_audio_locations);
-        <AvailableAudioContexts as FixedGattValue>::from_gatt(available_audio_locations_gatt)
-            .unwrap();
-
-        let supported_audio_locations = SupportedAudioContexts::default();
-        let supported_audio_locations_gatt = GattValue::to_gatt(&supported_audio_locations);
-        <SupportedAudioContexts as FixedGattValue>::from_gatt(supported_audio_locations_gatt)
-            .unwrap();
-
-        let source_pac = SourcePAC::default();
-        let source_pac_gatt = GattValue::to_gatt(&source_pac);
-        <SourcePAC as FixedGattValue>::from_gatt(source_pac_gatt).unwrap();
     }
 }
