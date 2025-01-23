@@ -1,11 +1,7 @@
 //! Generic Audio structures
 //!
 
-use core::ops::Deref;
-use core::slice;
-use heapless::Vec;
-use postcard::{from_bytes, to_vec};
-use serde::{Deserialize, Serialize};
+use core::{mem::transmute, slice};
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
 mod metadata;
@@ -17,7 +13,7 @@ pub use capabilities::*;
 mod configuration;
 pub use configuration::*;
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Debug)]
 #[repr(u64)]
 pub enum AudioLocation {
     #[default]
@@ -50,6 +46,7 @@ pub enum AudioLocation {
     FrontRightWide = 0x02000000,
     LeftSurround = 0x04000000,
     RightSurround = 0x08000000,
+    Undefined,
 }
 
 impl FixedGattValue for AudioLocation {
@@ -59,20 +56,20 @@ impl FixedGattValue for AudioLocation {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
         } else {
-            Ok(from_bytes(data).unwrap())
+            unsafe {
+                Ok(transmute(u64::from_le_bytes(
+                    data.try_into().expect("incorrect length"),
+                )))
+            }
         }
     }
 
     fn to_gatt(&self) -> &[u8] {
-        // to_vec::<AudioLocation, { Self::SIZE }>(self).unwrap()
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Default, Debug)]
 pub enum AudioInputType {
     #[default]
     Unspecified = 0x00, // Unspecified Input
@@ -83,33 +80,12 @@ pub enum AudioInputType {
     Radio = 0x05,      // AM/FM/XM/etc.
     Streaming = 0x06,  // Streaming Audio Source
     Ambient = 0x07,    // Transparency/Pass-through
-}
-
-impl Into<u8> for AudioInputType {
-    fn into(self) -> u8 {
-        self as u8
-    }
-}
-
-impl From<u8> for AudioInputType {
-    fn from(value: u8) -> Self {
-        match value {
-            0x00 => Self::Unspecified,
-            0x01 => Self::Bluetooth,
-            0x02 => Self::Microphone,
-            0x03 => Self::Analog,
-            0x04 => Self::Digital,
-            0x05 => Self::Radio,
-            0x06 => Self::Streaming,
-            0x07 => Self::Ambient,
-            _ => Self::default(),
-        }
-    }
+    Undefined,
 }
 
 /// A bitfield of values that, when set to 0b1 for a bit,
 /// describes audio data as being intended for the use case represented by that bit.
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u16)]
 pub enum ContextType {
     #[default]
@@ -122,9 +98,10 @@ pub enum ContextType {
     VoiceAssistants = 0x0020,
     Live = 0x0040,
     SoundEffects = 0x0080,
+    Undefined,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Default)]
 pub struct OctetsPerCodecFrame {
     min_octets: u16,
     max_octets: u16,
@@ -149,21 +126,5 @@ impl OctetsPerCodecFrame {
         let min_octets = (encoded & 0xFFFF) as u16;
         let max_octets = (encoded >> 16) as u16;
         Self::new(min_octets, max_octets)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test() {
-        // let audio = AudioLocation::default().to_gatt();
-        let a = AudioLocation::RightSurround;
-        let audio = trouble_host::prelude::FixedGattValue::to_gatt(&a);
-        println!("{:?}", audio);
-        assert_eq!(
-            AudioLocation::RightSurround,
-            <AudioLocation as FixedGattValue>::from_gatt(audio).unwrap()
-        );
     }
 }

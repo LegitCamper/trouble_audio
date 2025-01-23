@@ -1,27 +1,15 @@
 use super::{AudioLocation, OctetsPerCodecFrame};
-use crate::Type;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
+#[repr(u8)]
 pub enum CodecSpecificConfiguration {
-    SamplingFrequency(SamplingFrequency),
-    FrameDuration(FrameDuration),
-    AudioChannelAllocation(AudioLocation),
-    OctetsPerCodecFrame(OctetsPerCodecFrame),
+    SamplingFrequency(SamplingFrequency) = 1,
+    FrameDuration(FrameDuration) = 2,
+    AudioChannelAllocation(AudioLocation) = 3,
+    OctetsPerCodecFrame(OctetsPerCodecFrame) = 4,
 }
 
-impl Type for CodecSpecificConfiguration {
-    fn as_type(&self) -> u8 {
-        match self {
-            Self::SamplingFrequency(_) => 1,
-            Self::FrameDuration(_) => 2,
-            Self::AudioChannelAllocation(_) => 3,
-            Self::OctetsPerCodecFrame(_) => 4,
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy)]
 pub enum SamplingFrequency {
     #[default]
     Hz8000 = 0,
@@ -37,15 +25,10 @@ pub enum SamplingFrequency {
     Hz176400 = 10,
     Hz192000 = 11,
     Hz384000 = 12,
+    Undefined,
 }
 
-impl SamplingFrequency {
-    pub(crate) fn bit_position(&self) -> u8 {
-        *self as u8
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug)]
 #[repr(u8)]
 pub enum FrameDuration {
     Duration7_5MS = 0,

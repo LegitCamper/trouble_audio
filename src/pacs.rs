@@ -14,7 +14,7 @@ use crate::CodecdId;
 pub struct PublishedAudioCapabilitiesService {
     /// Sink PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BC9", read, notify)]
-    sink_pac: SinkPAC,
+    sink_pac: PAC,
 
     /// Sink Audio Locations characteristic
     #[characteristic(uuid = "2BCA", read, notify, write)]
@@ -22,7 +22,7 @@ pub struct PublishedAudioCapabilitiesService {
 
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
-    source_pac: SourcePAC,
+    source_pac: PAC,
 
     /// Source Audio Locations characteristic
     #[characteristic(uuid = "2BCC", read, notify, write)]
@@ -38,120 +38,52 @@ pub struct PublishedAudioCapabilitiesService {
 }
 
 /// A set of parameter values that denote server audio capabilities.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Default)]
 pub struct PACRecord {
-    codec_id: CodecdId,
-    codec_specific_capabilities: &'static [CodecSpecificCapabilities],
-    metadata: &'static [Metadata],
-}
-
-impl PACRecord {
-    /// NOTE:
-    ///
-    /// If the server wished to support only 30-octet codec frame lengths
-    /// and 50-octet codec frame lengths, but not support codec frame
-    /// lengths in-between these minimum and maximum values, then
-    /// the server would need to expose discrete PAC records with
-    /// the minimum and maximum values set to 30 octets in one PAC record,
-    /// and with the minimum and maximum values set to 50 octets in
-    /// another PAC record, as shown in Table 2.3.
-    /// <https://www.bluetooth.com/specifications/specs/pacs-1-0-2/>
-    pub fn new(
-        codec_id: CodecdId,
-        codec_specific_capabilities: &'static [CodecSpecificCapabilities],
-        metadata: &'static [Metadata],
-    ) -> Self {
-        PACRecord {
-            codec_id,
-            codec_specific_capabilities,
-            metadata,
-        }
-    }
-}
-
-impl GattValue for PACRecord {
-    const MIN_SIZE: usize = size_of::<PACRecord>();
-
-    const MAX_SIZE: usize = size_of::<PACRecord>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        todo!()
-    }
-
-    fn to_gatt(&self) -> &[u8] {
-        todo!()
-    }
-}
-
-/// Sink PAC characteristic containing one or more PAC records.
-#[derive(Default)]
-pub struct SinkPAC {
-    pub number_of_pac_records: u8,         // Number of PAC records
-    pub pac_records: &'static [PACRecord], // Array of PAC records
-}
-
-impl FixedGattValue for SinkPAC {
-    const SIZE: usize = size_of::<PACRecord>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
-        }
-    }
-
-    fn to_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
-    }
+    pub codec_id: CodecdId,
+    pub codec_specific_capabilities: &'static [CodecSpecificCapabilities],
+    pub metadata: &'static [Metadata],
 }
 
 /// The Sink Audio Locations characteristic i
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
 #[derive(Default)]
-pub struct SourcePAC {
-    pub number_of_pac_records: u8,         // Number of PAC records
-    pub pac_records: &'static [PACRecord], // Array of PAC records
+pub struct PAC {
+    number_of_pac_records: u8,
+    pac_records: &'static [PACRecord],
 }
 
-impl FixedGattValue for SourcePAC {
+impl PAC {
+    fn new(records: &'static [PACRecord]) -> Self {
+        Self {
+            number_of_pac_records: records.len() as u8,
+            pac_records: records,
+        }
+    }
+}
+
+impl FixedGattValue for PAC {
     const SIZE: usize = size_of::<PACRecord>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
         } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
             unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
         }
     }
 
     fn to_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
 
 #[derive(Default)]
 pub struct AudioContexts {
-    // Bitmask of audio data Context Type values for reception.
-    sink_contexts: ContextType,
-    // Bitmask of audio data Context Type values for transmission.
-    source_contexts: ContextType,
+    /// Bitmask of audio data Context Type values for reception.
+    pub sink_contexts: ContextType,
+    /// Bitmask of audio data Context Type values for transmission.
+    pub source_contexts: ContextType,
 }
 
 impl FixedGattValue for AudioContexts {
@@ -161,19 +93,11 @@ impl FixedGattValue for AudioContexts {
         if data.len() != Self::SIZE {
             Err(FromGattError::InvalidLength)
         } else {
-            // SAFETY
-            // - Pointer is considered "valid" as per the rules outlined for validity in std::ptr v1.82.0
-            // - Pointer was generated from a slice of bytes matching the size of the type implementing Primitive,
-            //     and all types implementing Primitive are valid for all possible configurations of bits
-            // - Primitive trait is constrained to require Copy
             unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
         }
     }
 
     fn to_gatt(&self) -> &[u8] {
-        // SAFETY
-        // - Slice is of type u8 so data is guaranteed valid for reads of any length
-        // - Data and len are tied to the address and size of the type
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }

@@ -1,8 +1,7 @@
 use super::ContextType;
-use crate::{ContentControlID, Type};
-use serde::{Deserialize, Serialize};
+use crate::ContentControlID;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum Metadata {
     PreferredAudioContexts(ContextType) = 1,
@@ -22,7 +21,7 @@ pub enum Metadata {
     BroadcastName(&'static str) = 11,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum ParentalRating {
     NoRating = 0x00,     // No rating
@@ -45,28 +44,20 @@ pub enum ParentalRating {
 
 pub enum ExtendedMetadata {}
 
-impl Type for ExtendedMetadata {
-    fn as_type(&self) -> u8 {
-        // match self {}
-        0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VenderSpecific {
-    #[serde(skip_serializing_if = "Option::is_none")]
     company_id: Option<u8>,
     vender_specific_metadata: &'static [u8],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum AudioActiveState {
     NotBeingTransmitted = 0,
     BeingTransmitted = 1,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum AssistedListeningStream {
     UnspecifiedAudioEnhancement = 0,

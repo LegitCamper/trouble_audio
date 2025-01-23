@@ -19,7 +19,3 @@ impl Default for CodecdId {
         Self(0x000000000D)
     }
 }
-
-trait Type {
-    fn as_type(&self) -> u8;
-}

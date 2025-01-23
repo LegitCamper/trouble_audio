@@ -1,25 +1,13 @@
 use super::{OctetsPerCodecFrame, SamplingFrequency};
-use crate::Type;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
+#[repr(u8)]
 pub enum CodecSpecificCapabilities {
-    SupportedSamplingFrequencies(SupportedSamplingFrequencies),
-    SupportedFrameDurations(SupportedFrameDurations),
-    SupportedAudioChannelCounts(SupportedAudioChannelCounts),
-    SupportedOctetsPerCodecFrame(OctetsPerCodecFrame),
-    SupportedMaxCodecFramesPerSDU(u8),
-}
-
-impl Type for CodecSpecificCapabilities {
-    fn as_type(&self) -> u8 {
-        match self {
-            Self::SupportedSamplingFrequencies(_) => 1,
-            Self::SupportedFrameDurations(_) => 2,
-            Self::SupportedAudioChannelCounts(_) => 3,
-            Self::SupportedOctetsPerCodecFrame(_) => 4,
-            Self::SupportedMaxCodecFramesPerSDU(_) => 5,
-        }
-    }
+    SupportedSamplingFrequencies(SupportedSamplingFrequencies) = 1,
+    SupportedFrameDurations(SupportedFrameDurations) = 2,
+    SupportedAudioChannelCounts(SupportedAudioChannelCounts) = 3,
+    SupportedOctetsPerCodecFrame(OctetsPerCodecFrame) = 4,
+    SupportedMaxCodecFramesPerSDU(u8) = 5,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +15,7 @@ pub struct SupportedSamplingFrequencies(u8);
 
 impl Default for SupportedSamplingFrequencies {
     fn default() -> Self {
-        Self(1 << SamplingFrequency::default().bit_position())
+        Self(1 << SamplingFrequency::default() as u8)
     }
 }
 
@@ -41,7 +29,7 @@ impl SupportedSamplingFrequencies {
     }
 
     pub fn add(frequencies: &mut u8, sampling_frequency: SamplingFrequency) {
-        *frequencies += 1 << sampling_frequency.bit_position();
+        *frequencies += 1 << sampling_frequency as u8;
     }
 }
 
