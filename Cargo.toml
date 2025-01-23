@@ -18,4 +18,5 @@ defmt = "0.3.10"
 static_cell = "2.1.0"
 
 [patch.crates-io]
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "195b1a593a4f51ebc7ae61b5045c620a1dbd25d8" }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "e1940e89144096bc69b3c38745c3e13203135775" }
