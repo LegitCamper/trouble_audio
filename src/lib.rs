@@ -9,6 +9,8 @@ pub mod generic_audio;
 #[allow(dead_code)]
 pub mod pacs;
 
+pub type ContentControlID = u8;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct CodecdId(u64);
 
