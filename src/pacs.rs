@@ -13,32 +13,33 @@ use crate::CodecdId;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[gatt_service(uuid = 0x1850)]
 pub struct PublishedAudioCapabilitiesService {
-    /// Sink PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC9", read, notify)]
-    pub sink_pac: PAC,
-
-    /// Sink Audio Locations characteristic
-    #[characteristic(uuid = "2BCA", read, notify, write)]
-    pub sink_audio_locations: AudioLocation,
-
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
     pub source_pac: PAC,
 
+    /// Sink PAC characteristic containing one or more PAC records
+    #[characteristic(uuid = "2BC9", read, notify)]
+    pub sink_pac: PAC,
+
     /// Source Audio Locations characteristic
     #[characteristic(uuid = "2BCC", read, notify, write)]
     pub source_audio_locations: AudioLocation,
+
+    /// Sink Audio Locations characteristic
+    #[characteristic(uuid = "2BCA", read, notify, write)]
+    pub sink_audio_locations: AudioLocation,
 
     /// Available Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
     pub available_audio_contexts: AudioContexts,
 
     /// Supported Audio Contexts characteristic
-    #[characteristic(uuid = "2BCD", read, notify)]
+    #[characteristic(uuid = "2BCE", read, notify)]
     pub supported_audio_contexts: AudioContexts,
 }
 
 /// A set of parameter values that denote server audio capabilities.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Default)]
 pub struct PACRecord {
     pub codec_id: CodecdId,
@@ -80,6 +81,7 @@ impl FixedGattValue for PAC {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
 pub struct AudioContexts {
     /// Bitmask of audio data Context Type values for reception.

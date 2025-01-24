@@ -11,7 +11,8 @@ pub mod pacs;
 
 pub type ContentControlID = u8;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug)]
 pub struct CodecdId(u64);
 
 impl Default for CodecdId {

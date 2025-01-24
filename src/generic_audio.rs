@@ -88,7 +88,7 @@ pub enum AudioInputType {
 /// A bitfield of values that, when set to 0b1 for a bit,
 /// describes audio data as being intended for the use case represented by that bit.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 #[repr(u16)]
 pub enum ContextType {
     #[default]

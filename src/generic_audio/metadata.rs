@@ -1,6 +1,7 @@
 use super::ContextType;
 use crate::ContentControlID;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum Metadata {
@@ -21,6 +22,7 @@ pub enum Metadata {
     BroadcastName(&'static str) = 11,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum ParentalRating {
@@ -42,14 +44,17 @@ pub enum ParentalRating {
     Age18orOlder = 0x0F, // Recommended for listeners of age 18 or older
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ExtendedMetadata {}
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 pub struct VenderSpecific {
     company_id: Option<u8>,
     vender_specific_metadata: &'static [u8],
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum AudioActiveState {
@@ -57,6 +62,7 @@ pub enum AudioActiveState {
     BeingTransmitted = 1,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum AssistedListeningStream {
