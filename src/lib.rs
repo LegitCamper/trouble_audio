@@ -1,9 +1,11 @@
 #![cfg_attr(not(test), no_std, no_main)]
 // #![warn(missing_docs)]
 
+#[cfg(feature = "defmt")]
+use defmt::*;
+
 use trouble_host::{
-    attribute::Uuid,
-    gatt::GattEvent,
+    gap::CentralConfig,
     prelude::{
         appearance, gatt_server, AdStructure, Advertisement, Central, Connection, ConnectionEvent,
         GapConfig, Peripheral, PeripheralConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
@@ -36,13 +38,13 @@ pub enum DeviceRole {
 pub async fn create_run<'a, C: Controller>(
     role: DeviceRole,
     name: &'static str,
-    central: &mut Central<'a, C>,
+    _central: &mut Central<'a, C>,
     peripheral: &mut Peripheral<'a, C>,
 ) {
     let server = create_server(name, role).await.unwrap();
 
     loop {
-        let conn = match role {
+        match role {
             DeviceRole::Central => {
                 // TODO: Connect to peripheral
                 // run_server(&server, &conn).await;
@@ -56,7 +58,8 @@ pub async fn create_run<'a, C: Controller>(
                     Err(e) => {
                         #[cfg(feature = "defmt")]
                         let e = defmt::Debug2Format(&e);
-                        panic!("[adv] error: {:?}", e);
+                        #[cfg(feature = "defmt")]
+                        defmt::panic!("[adv] error: {:?}", e);
                     }
                 }
             }
@@ -103,7 +106,10 @@ async fn create_server(
     info!("Starting LE Audio GATT server");
 
     let config = match role {
-        DeviceRole::Central => todo!(),
+        DeviceRole::Central => GapConfig::Central(CentralConfig {
+            name,
+            appearance: &appearance::power_device::GENERIC_POWER_DEVICE,
+        }),
         DeviceRole::Peripheral => GapConfig::Peripheral(PeripheralConfig {
             name,
             appearance: &appearance::power_device::GENERIC_POWER_DEVICE,

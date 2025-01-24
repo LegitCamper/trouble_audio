@@ -7,6 +7,9 @@ use super::{generic_audio::*, LEAudioGattServer};
 use core::slice;
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
+#[cfg(feature = "defmt")]
+use defmt::*;
+
 use crate::CodecdId;
 
 pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: GattData<'_>) {
