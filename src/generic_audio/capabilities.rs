@@ -1,5 +1,6 @@
 use super::{OctetsPerCodecFrame, SamplingFrequency};
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 #[repr(u8)]
 pub enum CodecSpecificCapabilities {
@@ -10,7 +11,8 @@ pub enum CodecSpecificCapabilities {
     SupportedMaxCodecFramesPerSDU(u8) = 5,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone)]
 pub struct SupportedSamplingFrequencies(u8);
 
 impl Default for SupportedSamplingFrequencies {
@@ -33,19 +35,8 @@ impl SupportedSamplingFrequencies {
     }
 }
 
-impl From<u8> for SupportedSamplingFrequencies {
-    fn from(value: u8) -> Self {
-        Self(value)
-    }
-}
-
-impl Into<u8> for SupportedSamplingFrequencies {
-    fn into(self) -> u8 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone)]
 pub struct SupportedFrameDurations(u8);
 
 impl SupportedFrameDurations {
@@ -79,19 +70,8 @@ impl Default for SupportedFrameDurations {
     }
 }
 
-impl From<u8> for SupportedFrameDurations {
-    fn from(value: u8) -> Self {
-        SupportedFrameDurations(value)
-    }
-}
-
-impl Into<u8> for SupportedFrameDurations {
-    fn into(self) -> u8 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy)]
 pub struct SupportedAudioChannelCounts(u8);
 
 impl SupportedAudioChannelCounts {
@@ -102,18 +82,6 @@ impl SupportedAudioChannelCounts {
             value |= 1 << (count - 1);
         }
 
-        Self(value)
-    }
-}
-
-impl Into<u8> for SupportedAudioChannelCounts {
-    fn into(self) -> u8 {
-        self.0
-    }
-}
-
-impl From<u8> for SupportedAudioChannelCounts {
-    fn from(value: u8) -> Self {
         Self(value)
     }
 }

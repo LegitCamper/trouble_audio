@@ -14,27 +14,27 @@ use crate::CodecdId;
 pub struct PublishedAudioCapabilitiesService {
     /// Sink PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BC9", read, notify)]
-    sink_pac: PAC,
+    pub sink_pac: PAC,
 
     /// Sink Audio Locations characteristic
     #[characteristic(uuid = "2BCA", read, notify, write)]
-    sink_audio_locations: AudioLocation,
+    pub sink_audio_locations: AudioLocation,
 
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
-    source_pac: PAC,
+    pub source_pac: PAC,
 
     /// Source Audio Locations characteristic
     #[characteristic(uuid = "2BCC", read, notify, write)]
-    source_audio_locations: AudioLocation,
+    pub source_audio_locations: AudioLocation,
 
     /// Available Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
-    available_audio_contexts: AudioContexts,
+    pub available_audio_contexts: AudioContexts,
 
     /// Supported Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
-    supported_audio_contexts: AudioContexts,
+    pub supported_audio_contexts: AudioContexts,
 }
 
 /// A set of parameter values that denote server audio capabilities.
@@ -47,7 +47,8 @@ pub struct PACRecord {
 
 /// The Sink Audio Locations characteristic i
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
-#[derive(Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Default, Debug)]
 pub struct PAC {
     number_of_pac_records: u8,
     pac_records: &'static [PACRecord],
@@ -78,7 +79,7 @@ impl FixedGattValue for PAC {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AudioContexts {
     /// Bitmask of audio data Context Type values for reception.
     pub sink_contexts: ContextType,

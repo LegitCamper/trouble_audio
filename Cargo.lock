@@ -60,6 +60,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d69c6b9d78fe4db539449fc8782dd2554fd4baee27f6e6dbf2e4757fcbc36139"
 dependencies = [
+ "defmt",
  "embassy-sync",
  "embassy-time",
  "embedded-io",
@@ -196,6 +197,7 @@ checksum = "f820157f198ada183ad62e0a66f554c610cdcd1a9f27d4b316358103ced7a1f8"
 dependencies = [
  "cfg-if",
  "critical-section",
+ "defmt",
  "document-features",
  "embassy-time-driver",
  "embedded-hal 0.2.7",
@@ -243,6 +245,9 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+dependencies = [
+ "defmt",
+]
 
 [[package]]
 name = "embedded-io-async"
@@ -250,6 +255,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
 dependencies = [
+ "defmt",
  "embedded-io",
 ]
 
@@ -694,6 +700,7 @@ version = "0.1.0"
 source = "git+https://github.com/embassy-rs/trouble.git?rev=e1940e89144096bc69b3c38745c3e13203135775#e1940e89144096bc69b3c38745c3e13203135775"
 dependencies = [
  "bt-hci",
+ "defmt",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",

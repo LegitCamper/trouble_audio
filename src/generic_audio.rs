@@ -13,6 +13,7 @@ pub use capabilities::*;
 mod configuration;
 pub use configuration::*;
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
 #[repr(u64)]
 pub enum AudioLocation {
@@ -69,6 +70,7 @@ impl FixedGattValue for AudioLocation {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
 pub enum AudioInputType {
     #[default]
@@ -85,6 +87,7 @@ pub enum AudioInputType {
 
 /// A bitfield of values that, when set to 0b1 for a bit,
 /// describes audio data as being intended for the use case represented by that bit.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u16)]
 pub enum ContextType {
@@ -101,6 +104,7 @@ pub enum ContextType {
     Undefined,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Default)]
 pub struct OctetsPerCodecFrame {
     min_octets: u16,
@@ -109,9 +113,6 @@ pub struct OctetsPerCodecFrame {
 
 impl OctetsPerCodecFrame {
     pub fn new(min_octets: u16, max_octets: u16) -> Self {
-        if min_octets > max_octets {
-            defmt::panic!("min_octets cannot be greater than max_octets");
-        }
         Self {
             min_octets,
             max_octets,

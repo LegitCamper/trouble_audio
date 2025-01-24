@@ -1,5 +1,6 @@
 use super::{AudioLocation, OctetsPerCodecFrame};
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
 #[repr(u8)]
 pub enum CodecSpecificConfiguration {
@@ -9,6 +10,7 @@ pub enum CodecSpecificConfiguration {
     OctetsPerCodecFrame(OctetsPerCodecFrame) = 4,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug, Clone, Copy)]
 pub enum SamplingFrequency {
     #[default]
@@ -28,6 +30,7 @@ pub enum SamplingFrequency {
     Undefined,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
 #[repr(u8)]
 pub enum FrameDuration {
