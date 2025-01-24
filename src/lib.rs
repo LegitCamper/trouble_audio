@@ -13,6 +13,7 @@ pub type ContentControlID = u8;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CodecdId(u64);
 
 impl Default for CodecdId {
