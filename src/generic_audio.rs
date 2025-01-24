@@ -15,7 +15,7 @@ pub use configuration::*;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
-#[repr(u64)]
+#[repr(u32)]
 pub enum AudioLocation {
     #[default]
     Mono = 0x00000000, // Mono Audio (no specified Audio Location)
@@ -58,7 +58,7 @@ impl FixedGattValue for AudioLocation {
             Err(FromGattError::InvalidLength)
         } else {
             unsafe {
-                Ok(transmute::<u64, AudioLocation>(u64::from_le_bytes(
+                Ok(transmute::<u32, AudioLocation>(u32::from_le_bytes(
                     data.try_into().expect("incorrect length"),
                 )))
             }

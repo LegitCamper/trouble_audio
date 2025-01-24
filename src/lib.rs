@@ -45,7 +45,7 @@ pub async fn create_run<'a, C: Controller>(
     let server = create_server(name, role).await.unwrap();
 
     loop {
-        match role {
+        let conn = match role {
             DeviceRole::Central(target) => {
                 let config = ConnectConfig {
                     connect_params: Default::default(),
@@ -54,24 +54,23 @@ pub async fn create_run<'a, C: Controller>(
                         ..Default::default()
                     },
                 };
-                let conn = central.connect(&config).await.unwrap();
+                central.connect(&config).await
+            }
+            DeviceRole::Peripheral => advertise(name, peripheral).await,
+        };
+
+        match conn {
+            Ok(conn) => {
+                // set up tasks when the connection is established, so they don't run when no one is connected.
                 run_server(&server, &conn).await;
             }
-            DeviceRole::Peripheral => {
-                match advertise(name, peripheral).await {
-                    Ok(conn) => {
-                        // set up tasks when the connection is established, so they don't run when no one is connected.
-                        run_server(&server, &conn).await;
-                    }
-                    Err(_e) => {
-                        #[cfg(feature = "defmt")]
-                        let err = defmt::Debug2Format(&_e);
-                        #[cfg(feature = "defmt")]
-                        defmt::panic!("[adv] error: {:?}", err);
-                    }
-                }
+            Err(_e) => {
+                #[cfg(feature = "defmt")]
+                let err = defmt::Debug2Format(&_e);
+                #[cfg(feature = "defmt")]
+                defmt::panic!("[adv] error: {:?}", err);
             }
-        };
+        }
     }
 }
 

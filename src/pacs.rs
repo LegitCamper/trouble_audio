@@ -18,14 +18,22 @@ pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: G
         // Server processing emits
         Ok(Some(GattEvent::Read(event))) => {
             if event.handle() == pacs.sink_pac.handle {
-                let _value = server.get(&pacs.sink_pac);
-                #[cfg(feature = "defmt")]
-                info!("[gatt] Read Event sink pac char: {:?}", _value);
             } else if event.handle() == pacs.source_pac.handle {
+            } else if event.handle() == pacs.source_audio_locations.handle {
+            } else if event.handle() == pacs.sink_audio_locations.handle {
+            } else if event.handle() == pacs.available_audio_contexts.handle {
+            } else if event.handle() == pacs.supported_audio_contexts.handle {
             }
         }
         Ok(Some(GattEvent::Write(event))) => {
-            if event.handle() == pacs.sink_pac.handle {
+            // if event.handle() == pacs.sink_pac.handle {
+            // } else if event.handle() == pacs.source_pac.handle {
+            // } else if event.handle() == pacs.source_audio_locations.handle {
+            // } else if event.handle() == pacs.sink_audio_locations.handle {
+            // } else if event.handle() == pacs.available_audio_contexts.handle {
+            // } else if event.handle() == pacs.supported_audio_contexts.handle {
+            // }
+            if event.handle() == pacs.source_audio_locations.handle {
                 #[cfg(feature = "defmt")]
                 info!(
                     "[gatt] Write Event to Level Characteristic: {:?}",
