@@ -41,7 +41,7 @@ pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: G
     }
 }
 
-pub(crate) const PACS_UUID: Uuid = Uuid::Uuid16([0x18, 0x50]);
+pub(crate) const PACS_UUID: Uuid = Uuid::new_short(0x1850);
 
 /// Published Audio Capabilities Service
 #[gatt_service(uuid = PACS_UUID)]
