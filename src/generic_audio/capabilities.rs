@@ -78,7 +78,7 @@ impl SupportedAudioChannelCounts {
     pub fn new(count: u8) -> Self {
         let mut value = 0;
 
-        if count >= 1 && count <= 8 {
+        if (1..=8).contains(&count) {
             value |= 1 << (count - 1);
         }
 

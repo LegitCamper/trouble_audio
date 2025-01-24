@@ -58,7 +58,7 @@ impl FixedGattValue for AudioLocation {
             Err(FromGattError::InvalidLength)
         } else {
             unsafe {
-                Ok(transmute(u64::from_le_bytes(
+                Ok(transmute::<u64, AudioLocation>(u64::from_le_bytes(
                     data.try_into().expect("incorrect length"),
                 )))
             }
