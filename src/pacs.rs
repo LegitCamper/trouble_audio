@@ -3,14 +3,45 @@
 //! The Published Audio Capabilities (PACS) service exposes
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
-use super::generic_audio::*;
+use super::{generic_audio::*, LEAudioGattServer};
 use core::slice;
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
 use crate::CodecdId;
 
+pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: GattData<'_>) {
+    let pacs = &server.pacs;
+    match connection_data.process(server).await {
+        // Server processing emits
+        Ok(Some(GattEvent::Read(event))) => {
+            if event.handle() == pacs.sink_pac.handle {
+                let _value = server.get(&pacs.sink_pac);
+                #[cfg(feature = "defmt")]
+                info!("[gatt] Read Event sink pac char: {:?}", _value);
+            } else if event.handle() == pacs.source_pac.handle {
+            }
+        }
+        Ok(Some(GattEvent::Write(event))) => {
+            if event.handle() == pacs.sink_pac.handle {
+                #[cfg(feature = "defmt")]
+                info!(
+                    "[gatt] Write Event to Level Characteristic: {:?}",
+                    event.data()
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(_e) => {
+            #[cfg(feature = "defmt")]
+            warn!("[gatt] error processing event: {:?}", _e);
+        }
+    }
+}
+
+pub(crate) const PACS_UUID: Uuid = Uuid::Uuid16([0x18, 0x50]);
+
 /// Published Audio Capabilities Service
-#[gatt_service(uuid = 0x1850)]
+#[gatt_service(uuid = PACS_UUID)]
 pub struct PublishedAudioCapabilitiesService {
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
