@@ -10,6 +10,7 @@ use trouble_host::{prelude::*, types::gatt_traits::*};
 use crate::CodecdId;
 
 /// Published Audio Capabilities Service
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[gatt_service(uuid = 0x1850)]
 pub struct PublishedAudioCapabilitiesService {
     /// Sink PAC characteristic containing one or more PAC records
