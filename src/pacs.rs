@@ -16,13 +16,27 @@ pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: G
     let pacs = &server.pacs;
     match connection_data.process(server).await {
         // Server processing emits
-        Ok(Some(GattEvent::Read(event))) => {
+        Ok(Some(GattEvent::Read(event))) =>
+        {
+            #[cfg(feature = "defmt")]
             if event.handle() == pacs.sink_pac.handle {
+                let value = server.get(&pacs.sink_pac);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             } else if event.handle() == pacs.source_pac.handle {
+                let value = server.get(&pacs.source_pac);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             } else if event.handle() == pacs.source_audio_locations.handle {
+                let value = server.get(&pacs.source_audio_locations);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             } else if event.handle() == pacs.sink_audio_locations.handle {
+                let value = server.get(&pacs.sink_audio_locations);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             } else if event.handle() == pacs.available_audio_contexts.handle {
+                let value = server.get(&pacs.available_audio_contexts);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             } else if event.handle() == pacs.supported_audio_contexts.handle {
+                let value = server.get(&pacs.supported_audio_contexts);
+                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
             }
         }
         Ok(Some(GattEvent::Write(event))) => {
