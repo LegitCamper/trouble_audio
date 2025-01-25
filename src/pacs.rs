@@ -12,52 +12,11 @@ use defmt::*;
 
 use crate::CodecdId;
 
-pub(crate) async fn pacs_gatt(server: &LEAudioGattServer<'_>, connection_data: GattData<'_>) {
-    let pacs = &server.pacs;
-    match connection_data.process(server).await {
-        // Server processing emits
-        Ok(Some(GattEvent::Read(event))) =>
-        {
-            #[cfg(feature = "defmt")]
-            if event.handle() == pacs.sink_pac.handle {
-                let value = server.get(&pacs.sink_pac);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            } else if event.handle() == pacs.source_pac.handle {
-                let value = server.get(&pacs.source_pac);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            } else if event.handle() == pacs.source_audio_locations.handle {
-                let value = server.get(&pacs.source_audio_locations);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            } else if event.handle() == pacs.sink_audio_locations.handle {
-                let value = server.get(&pacs.sink_audio_locations);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            } else if event.handle() == pacs.available_audio_contexts.handle {
-                let value = server.get(&pacs.available_audio_contexts);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            } else if event.handle() == pacs.supported_audio_contexts.handle {
-                let value = server.get(&pacs.supported_audio_contexts);
-                info!("[gatt] Read Event to Level Characteristic: {:?}", value);
-            }
-        }
-        Ok(Some(GattEvent::Write(event))) => {
-            // if event.handle() == pacs.sink_pac.handle {
-            // } else if event.handle() == pacs.source_pac.handle {
-            // } else if event.handle() == pacs.source_audio_locations.handle {
-            // } else if event.handle() == pacs.sink_audio_locations.handle {
-            // } else if event.handle() == pacs.available_audio_contexts.handle {
-            // } else if event.handle() == pacs.supported_audio_contexts.handle {
-            // }
-            if event.handle() == pacs.source_audio_locations.handle {
-                #[cfg(feature = "defmt")]
-                info!(
-                    "[gatt] Write Event to Level Characteristic: {:?}",
-                    event.data()
-                );
-            }
-        }
+pub(crate) async fn pacs_gatt(_server: &LEAudioGattServer<'_>, _connection_data: GattData<'_>) {
+    #[cfg(feature = "defmt")]
+    match _connection_data.process(_server).await {
         Ok(_) => {}
         Err(_e) => {
-            #[cfg(feature = "defmt")]
             warn!("[gatt] error processing event: {:?}", _e);
         }
     }
@@ -68,29 +27,26 @@ pub(crate) const PACS_UUID: Uuid = Uuid::new_short(0x1850);
 /// Published Audio Capabilities Service
 #[gatt_service(uuid = PACS_UUID)]
 pub struct PublishedAudioCapabilitiesService {
+    // /// Sink PAC characteristic containing one or more PAC records
+    // #[characteristic(uuid = "2BC9", read, notify)]
+    // pub sink_pac: PAC,
     /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BCB", read, notify)]
     pub source_pac: PAC,
 
-    /// Sink PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC9", read, notify)]
-    pub sink_pac: PAC,
-
+    // /// Sink Audio Locations characteristic
+    // #[characteristic(uuid = "2BCA", read, notify, write)]
+    // pub sink_audio_locations: AudioLocation,
     /// Source Audio Locations characteristic
     #[characteristic(uuid = "2BCC", read, notify, write)]
     pub source_audio_locations: AudioLocation,
 
-    /// Sink Audio Locations characteristic
-    #[characteristic(uuid = "2BCA", read, notify, write)]
-    pub sink_audio_locations: AudioLocation,
-
+    // /// Supported Audio Contexts characteristic
+    // #[characteristic(uuid = "2BCE", read, notify)]
+    // pub supported_audio_contexts: AudioContexts,
     /// Available Audio Contexts characteristic
     #[characteristic(uuid = "2BCD", read, notify)]
     pub available_audio_contexts: AudioContexts,
-
-    /// Supported Audio Contexts characteristic
-    #[characteristic(uuid = "2BCE", read, notify)]
-    pub supported_audio_contexts: AudioContexts,
 }
 
 /// A set of parameter values that denote server audio capabilities.
