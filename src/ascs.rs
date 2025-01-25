@@ -4,20 +4,21 @@
 //! which enables clients to discover, configure, establish,and
 //! control the ASEs and their associated unicast Audio Streams.
 
-use core::{mem::size_of_val, slice};
-use defmt::*;
-use trouble_host::{prelude::*, scan::PhySet, types::gatt_traits::*, Error};
+use core::{mem::size_of, slice};
+use trouble_host::{connection::PhySet, prelude::*, types::gatt_traits::*};
 
-use crate::CodedId;
+#[cfg(feature = "defmt")]
+use defmt::*;
+
+use crate::CodecId;
 
 /// Audio Stream Control Service
 #[gatt_service(uuid = 0x184E)]
 pub struct AudioStreamControlService {
-    /// Sink PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC4", read, notify)]
-    sink_ase: Ase,
-
-    /// Sink PAC characteristic containing one or more PAC records
+    // /// Sink PAC characteristic containing one or more PAC records
+    // #[characteristic(uuid = "2BC4", read, notify)]
+    // sink_ase: Ase,
+    /// Source PAC characteristic containing one or more PAC records
     #[characteristic(uuid = "2BC5", read, notify)]
     source_ase: Ase,
 
@@ -26,27 +27,43 @@ pub struct AudioStreamControlService {
     ase_control_point: Ase,
 }
 
+#[derive(Default)]
 pub struct Ase {
     /// Identifier of this ASE, assigned by the server.
     pub id: u8,
     /// State of the ASE with respect to the ASE state machine
     pub state: AseState,
-    // pub params: AseParams, the params are encoded in the state
+}
+
+impl FixedGattValue for Ase {
+    const SIZE: usize = size_of::<Ase>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn to_gatt(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
 }
 
 /// Represents the ASE Control Operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum AseControlOperation {
-    ConfigCodec,
-    ConfigQos,
-    Enable,
-    Release,
-    UpdateMetadata,
-    Disable,
-    ReceiverStartReady,
-    ReceiverStopReady,
-    ReleasedNoCaching,
-    ReleasedCaching,
+    ConfigCodec = 1,
+    ConfigQos = 2,
+    Enable = 3,
+    ReceiverStartReady = 4,
+    ReceiverStopReady = 5,
+    Disable = 6,
+    UpdateMetadata = 7,
+    Release = 8,
+    Released,
 }
 
 /// Represents the device initiating the operation.
@@ -65,15 +82,18 @@ pub enum AseType {
     All, // Covers cases where the operation is valid for all types
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
+#[repr(u8)]
 pub enum AseState {
-    Idle,
-    CodecConfigured(AseParamsCodecConfigured),
-    QosConfigured(AseParamsQoSConfigured),
-    Enabling(AseParamsOther),
-    Streaming(AseParamsOther),
-    Disabling(AseParamsOther),
-    Releasing,
+    #[default]
+    Idle = 0,
+    CodecConfigured(AseParamsCodecConfigured) = 1,
+    QosConfigured(AseParamsQoSConfigured) = 2,
+    Enabling(AseParamsOther) = 3,
+    Streaming(AseParamsOther) = 4,
+    Disabling(AseParamsOther) = 5,
+    Releasing = 6,
+    RFU,
 }
 
 impl AseState {
@@ -91,44 +111,48 @@ impl AseState {
 
         match (self, operation, initiator, ase_type) {
             // Idle state transitions
-            (Idle, ConfigCodec, ClientOrServer, All) => CodecConfigured,
+            (Idle, ConfigCodec, ClientOrServer, All) => CodecConfigured(Default::default()),
 
             // CodecConfigured state transitions
-            (CodecConfigured, ConfigCodec, ClientOrServer, All) => CodecConfigured,
-            (CodecConfigured, Release, ClientOrServer, All) => Releasing,
-            (CodecConfigured, ConfigQos, Client, All) => QosConfigured,
+            (CodecConfigured(_), ConfigCodec, ClientOrServer, All) => {
+                CodecConfigured(Default::default())
+            }
+            (CodecConfigured(_), Release, ClientOrServer, All) => Releasing,
+            (CodecConfigured(_), ConfigQos, Client, All) => QosConfigured(Default::default()),
 
             // QosConfigured state transitions
-            (QosConfigured, ConfigCodec, ClientOrServer, All) => CodecConfigured,
-            (QosConfigured, ConfigQos, Client, All) => QosConfigured,
-            (QosConfigured, Release, ClientOrServer, All) => Releasing,
-            (QosConfigured, Enable, Client, All) => Enabling,
+            (QosConfigured(_), ConfigCodec, ClientOrServer, All) => {
+                CodecConfigured(Default::default())
+            }
+            (QosConfigured(_), ConfigQos, Client, All) => QosConfigured(Default::default()),
+            (QosConfigured(_), Release, ClientOrServer, All) => Releasing,
+            (QosConfigured(_), Enable, Client, All) => Enabling(Default::default()),
 
             // Enabling state transitions
-            (Enabling, Release, ClientOrServer, All) => Releasing,
-            (Enabling, UpdateMetadata, ClientOrServer, All) => Enabling,
-            (Enabling, Disable, ClientOrServer, Source) => Disabling,
-            (Enabling, Disable, ClientOrServer, Sink) => QosConfigured,
-            (Enabling, ReceiverStartReady, Client, Source) => Streaming,
-            (Enabling, ReceiverStartReady, Server, Sink) => Streaming,
+            (Enabling(_), Release, ClientOrServer, All) => Releasing,
+            (Enabling(_), UpdateMetadata, ClientOrServer, All) => Enabling(Default::default()),
+            (Enabling(_), Disable, ClientOrServer, Source) => Disabling(Default::default()),
+            (Enabling(_), Disable, ClientOrServer, Sink) => QosConfigured(Default::default()),
+            (Enabling(_), ReceiverStartReady, Client, Source) => Streaming(Default::default()),
+            (Enabling(_), ReceiverStartReady, Server, Sink) => Streaming(Default::default()),
 
             // Streaming state transitions
-            (Streaming, UpdateMetadata, ClientOrServer, All) => Streaming,
-            (Streaming, Disable, ClientOrServer, Source) => Disabling,
-            (Streaming, Disable, ClientOrServer, Sink) => QosConfigured,
-            (Streaming, Release, ClientOrServer, All) => Releasing,
+            (Streaming(_), UpdateMetadata, ClientOrServer, All) => Streaming(Default::default()),
+            (Streaming(_), Disable, ClientOrServer, Source) => Disabling(Default::default()),
+            (Streaming(_), Disable, ClientOrServer, Sink) => QosConfigured(Default::default()),
+            (Streaming(_), Release, ClientOrServer, All) => Releasing,
 
             // Disabling state transitions
-            (Disabling, ReceiverStopReady, Client, Source) => QosConfigured,
-            (Disabling, Release, ClientOrServer, Source) => Releasing,
+            (Disabling(_), ReceiverStopReady, Client, Source) => QosConfigured(Default::default()),
+            (Disabling(_), Release, ClientOrServer, Source) => Releasing,
 
             // Releasing state transitions
-            (Releasing, ReleasedNoCaching, Server, All) => Idle,
-            (Releasing, ReleasedCaching, Server, All) => CodecConfigured,
-
+            (Releasing, Released, Server, All) => Idle,
+            // (Releasing, ReleasedCaching(_), Server, All) => CodecConfigured::default(),
             _ => {
+                #[cfg(feature = "defmt")]
                 warn!("Invalid transition state");
-                Disabling
+                Disabling(Default::default())
             }
         }
     }
@@ -153,11 +177,29 @@ pub struct AseParamsCodecConfigured {
     /// Server preferred maximum Presentation_Delay (in microseconds)
     pub preferred_presentation_delay_max: u32,
     /// Codec ID
-    pub codec_id: CodedId,
+    pub codec_id: CodecId,
     /// Length of the Codec_Specific_Configuration field
     pub codec_specific_configuration_length: u8,
     /// Codec specific configuration for this ASE
     pub codec_specific_configuration: Option<&'static [u8]>,
+}
+
+impl Default for AseParamsCodecConfigured {
+    fn default() -> Self {
+        Self {
+            framing: Default::default(),
+            preferred_phy: PhySet::M2,
+            preferred_retransmission_number: Default::default(),
+            max_transport_latency: Default::default(),
+            presentation_delay_min: Default::default(),
+            presentation_delay_max: Default::default(),
+            preferred_presentation_delay_min: Default::default(),
+            preferred_presentation_delay_max: Default::default(),
+            codec_id: Default::default(),
+            codec_specific_configuration_length: Default::default(),
+            codec_specific_configuration: Default::default(),
+        }
+    }
 }
 
 /// Additional Ase parameters for the State::QoSConfigured
@@ -173,9 +215,41 @@ pub struct AseParamsQoSConfigured {
     pub presentation_delay: [u8; 3],
 }
 
+impl Default for AseParamsQoSConfigured {
+    fn default() -> Self {
+        Self {
+            cig_id: Default::default(),
+            cis_id: Default::default(),
+            sdu_interval: Default::default(),
+            framing: Default::default(),
+            phy: PhySet::M2,
+            max_sdu: Default::default(),
+            retransmission_number: Default::default(),
+            max_transport_latency: Default::default(),
+            presentation_delay: Default::default(),
+        }
+    }
+}
+
 /// Additional Ase parameters for the State::Enabling, State::Steaming, or State::Disabled
+#[derive(Default)]
 pub struct AseParamsOther {
     pub cig_id: u8,
     pub cis_id: u8,
     pub metadata: Option<u64>,
+}
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AseControlOpcode {
+    ConfigCodec = 0x01,        // Configures codec parameters
+    ConfigQoS = 0x02,          // Configures preferred CIS parameters
+    Enable = 0x03,             // Applies codec parameters and starts coupling
+    ReceiverStartReady = 0x04, // Signals readiness to receive audio data
+    Disable = 0x05,            // Decouples a Source ASE or Sink ASE
+    ReceiverStopReady = 0x06,  // Signals readiness to stop receiving audio data
+    UpdateMetadata = 0x07,     // Updates metadata for one or more ASEs
+    Release = 0x08,            // Releases resources associated with an ASE
+    Released = 0x09,           // Transitions ASE to Idle or Codec Configured state
+    Rfu = 0xFF,                // Reserved for future use
 }

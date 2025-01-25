@@ -10,7 +10,7 @@ use trouble_host::{prelude::*, types::gatt_traits::*};
 #[cfg(feature = "defmt")]
 use defmt::*;
 
-use crate::CodecdId;
+use crate::CodecId;
 
 pub(crate) async fn pacs_gatt(_server: &LEAudioGattServer<'_>, _connection_data: GattData<'_>) {
     #[cfg(feature = "defmt")]
@@ -53,7 +53,7 @@ pub struct PublishedAudioCapabilitiesService {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Default)]
 pub struct PACRecord {
-    pub codec_id: CodecdId,
+    pub codec_id: CodecId,
     pub codec_specific_capabilities: &'static [CodecSpecificCapabilities],
     pub metadata: &'static [Metadata],
 }
