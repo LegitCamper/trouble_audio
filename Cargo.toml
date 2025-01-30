@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["defmt", "client", "server"]
+default = ["defmt"]
 defmt = ["dep:defmt", "trouble-host/defmt"]
-server = []
-client = []
 
 [dependencies]
 embassy-sync = "0.6.1"
