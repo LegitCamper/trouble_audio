@@ -730,8 +730,10 @@ dependencies = [
 name = "trouble_audio"
 version = "0.1.0"
 dependencies = [
+ "bt-hci",
  "defmt",
  "embassy-sync",
+ "heapless 0.8.0",
  "lc3-codec",
  "static_cell",
  "trouble-host",
