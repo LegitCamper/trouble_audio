@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["defmt", "client"]
+default = ["defmt", "client", "server"]
 defmt = ["dep:defmt", "trouble-host/defmt"]
 server = []
 client = []
@@ -12,6 +12,7 @@ client = []
 [dependencies]
 embassy-sync = "0.6.1"
 embassy-futures = "0.1.1"
+embassy-time = "0.4.0"
 bt-hci = "0.2.0"
 trouble-host = { version = "0.1.0", features = [
   "derive",

@@ -19,8 +19,12 @@ use trouble_host::{
 pub mod ascs;
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "client")]
+pub use client::run_client;
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "server")]
+pub use server::run_server;
 // pub mod bap;
 #[allow(dead_code)]
 pub mod generic_audio;

@@ -1,3 +1,5 @@
+#[cfg(feature = "defmt")]
+use defmt::*;
 use trouble_host::{
     gap::CentralConfig,
     gatt::GattClient,
@@ -13,7 +15,7 @@ use trouble_host::{
 #[cfg(feature = "server")]
 #[gatt_server]
 pub struct LEAudioGattServer {
-    pacs: pacs::Pacs,
+    pacs: super::pacs::Pacs,
 }
 
 #[cfg(feature = "server")]
@@ -57,7 +59,7 @@ pub async fn run_server<'a, C: Controller>(
                         }
                         ConnectionEvent::Gatt { data } => {
                             // other services will follow
-                            pacs::pacs_server(&server, data).await
+                            super::pacs::pacs_gatt_server(&server, data).await
                         }
                     }
                 }

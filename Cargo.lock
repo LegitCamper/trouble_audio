@@ -734,6 +734,7 @@ dependencies = [
  "defmt",
  "embassy-futures",
  "embassy-sync",
+ "embassy-time",
  "heapless 0.8.0",
  "lc3-codec",
  "static_cell",
