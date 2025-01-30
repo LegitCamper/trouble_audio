@@ -10,6 +10,15 @@ use super::LEAudioGattServer;
 use core::slice;
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
+#[cfg(feature = "client")]
+use bt_hci::uuid::{
+    characteristic::{
+        AVAILABLE_AUDIO_CONTEXTS, SINK_AUDIO_LOCATIONS, SINK_PAC, SOURCE_AUDIO_LOCATIONS,
+        SOURCE_PAC, SUPPORTED_AUDIO_CONTEXTS,
+    },
+    service::PUBLISHED_AUDIO_CAPABILITIES,
+};
+
 #[cfg(feature = "defmt")]
 use defmt::*;
 
@@ -30,40 +39,98 @@ pub(crate) async fn pacs_gatt_server(
     }
 }
 
-pub(crate) const PACS_UUID: Uuid = Uuid::new_short(0x1850);
+#[cfg(feature = "client")]
+pub(crate) async fn pacs_gatt_client<'a, C>(
+    client: &GattClient<'a, C, { crate::client::NUMBER_OF_SERVICES }, 24>,
+) where
+    C: bt_hci::controller::Controller,
+{
+    let services = client
+        .services_by_uuid(&Uuid::from(PUBLISHED_AUDIO_CAPABILITIES))
+        .await
+        .unwrap();
+    let service = services.first().unwrap().clone();
 
-/// Published Audio Capabilities Service
-#[cfg(feature = "server")]
-#[gatt_service(uuid = PACS_UUID)]
-pub struct Pacs {
-    /// Source PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BCB", read, notify)]
-    pub source_pac: PAC,
+    // Sink PAC characteristic containing one or more PAC records
+    let sink_pac: Characteristic<u8> = client
+        .characteristic_by_uuid(&service, &Uuid::from(SINK_PAC))
+        .await
+        .unwrap();
 
-    /// Source Audio Locations characteristic
-    #[characteristic(uuid = "2BCC", read, notify, write)]
-    pub source_audio_locations: AudioLocation,
+    let mut sink_pac_listener = client.subscribe(&sink_pac, true).await.unwrap();
 
-    /// Available Audio Contexts characteristic
-    #[characteristic(uuid = "2BCD", read, notify)]
-    pub available_audio_contexts: AudioContexts,
+    // Sink Audio Locations characteristic
+    let sink_audio_locations: Characteristic<u8> = client
+        .characteristic_by_uuid(&service, &Uuid::from(SINK_AUDIO_LOCATIONS))
+        .await
+        .unwrap();
+
+    let mut sink_audio_locations_listener =
+        client.subscribe(&sink_audio_locations, true).await.unwrap();
+
+    // Supported Audio Contexts characteristic
+    let supported_audio_contexts: Characteristic<u8> = client
+        .characteristic_by_uuid(&service, &Uuid::from(SUPPORTED_AUDIO_CONTEXTS))
+        .await
+        .unwrap();
+
+    let mut supported_audio_contexts = client
+        .subscribe(&supported_audio_contexts, true)
+        .await
+        .unwrap();
+
+    embassy_futures::join::join(
+        embassy_futures::join::join(
+            async {
+                loop {
+                    let data = sink_pac_listener.next().await;
+                    info!(
+                        "Got notification: {:?} (val: {})",
+                        data.as_ref(),
+                        data.as_ref()[0]
+                    );
+                }
+            },
+            async {
+                loop {
+                    let data = sink_audio_locations_listener.next().await;
+                    info!(
+                        "Got notification: {:?} (val: {})",
+                        data.as_ref(),
+                        data.as_ref()[0]
+                    );
+                }
+            },
+        ),
+        async {
+            loop {
+                let data = supported_audio_contexts.next().await;
+                info!(
+                    "Got notification: {:?} (val: {})",
+                    data.as_ref(),
+                    data.as_ref()[0]
+                );
+            }
+        },
+    )
+    .await;
 }
 
 /// Published Audio Capabilities Service
-#[cfg(feature = "client")]
-// #[gatt_service(uuid = PACS_UUID)]
+#[cfg(feature = "server")]
+#[gatt_service(uuid = bt_hci::uuid::service::PUBLISHED_AUDIO_CAPABILITIES)]
 pub struct Pacs {
-    /// Sink PAC characteristic containing one or more PAC records
-    // #[characteristic(uuid = "2BC9", read, notify)]
-    pub sink_pac: PAC,
+    /// Source PAC characteristic containing one or more PAC records
+    #[characteristic(uuid = SOURCE_PAC, read, notify)]
+    pub source_pac: PAC,
 
-    /// Sink Audio Locations characteristic
-    // #[characteristic(uuid = "2BCA", read, notify, write)]
-    pub sink_audio_locations: AudioLocation,
+    /// Source Audio Locations characteristic
+    #[characteristic(uuid = SOURCE_AUDIO_LOCATIONS, read, notify, write)]
+    pub source_audio_locations: AudioLocation,
 
-    /// Supported Audio Contexts characteristic
-    // #[characteristic(uuid = "2BCE", read, notify)]
-    pub supported_audio_contexts: AudioContexts,
+    /// Available Audio Contexts characteristic
+    #[characteristic(uuid = AVAILABLE_AUDIO_CONTEXTS, read, notify)]
+    pub available_audio_contexts: AudioContexts,
 }
 
 /// A set of parameter values that denote server audio capabilities.

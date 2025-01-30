@@ -17,7 +17,9 @@ use trouble_host::{
 
 #[allow(dead_code)]
 pub mod ascs;
+#[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "server")]
 pub mod server;
 // pub mod bap;
 #[allow(dead_code)]

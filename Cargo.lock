@@ -732,6 +732,7 @@ version = "0.1.0"
 dependencies = [
  "bt-hci",
  "defmt",
+ "embassy-futures",
  "embassy-sync",
  "heapless 0.8.0",
  "lc3-codec",

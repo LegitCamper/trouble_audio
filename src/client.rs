@@ -1,39 +1,20 @@
-use heapless::Vec;
-use trouble_host::{
-    gap::CentralConfig,
-    gatt::{GattClient, ServiceHandle},
-    prelude::{
-        appearance, gatt_server, AdStructure, AddrKind, Address, Advertisement, BdAddr, Central,
-        ConnectConfig, Connection, ConnectionEvent, GapConfig, Peripheral, PeripheralConfig,
-        ScanConfig, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
-    },
-    BleHostError, Controller, Stack,
-};
+use embassy_futures::join::join_array;
+use trouble_host::{gatt::GattClient, prelude::Connection, Stack};
 
-use super::pacs::{Pacs, PACS_UUID};
+use super::pacs::pacs_gatt_client;
 
-const NUMBER_OF_SERVICES: usize = 10;
+pub(crate) const NUMBER_OF_SERVICES: usize = 10;
 
-/// LE Audio GATT Client
-#[cfg(feature = "client")]
-pub struct LEAudioGattClient<'a, C>
+pub async fn run_client<'a, C>(stack: &'a Stack<'a, C>, conn: &'a Connection<'a>)
 where
     C: bt_hci::controller::Controller,
 {
-    client: GattClient<'a, C, NUMBER_OF_SERVICES, 24>,
-    services: Vec<ServiceHandle, NUMBER_OF_SERVICES>,
-}
+    let client = GattClient::<C, NUMBER_OF_SERVICES, 24>::new(stack, conn)
+        .await
+        .unwrap();
 
-impl<'a, C> LEAudioGattClient<'a, C>
-where
-    C: bt_hci::controller::Controller,
-{
-    pub async fn new(stack: &'a Stack<'a, C>, conn: &'a Connection<'a>) -> Self {
-        let client = GattClient::<C, NUMBER_OF_SERVICES, 24>::new(stack, conn)
-            .await
-            .unwrap();
-        let services = client.services_by_uuid(&PACS_UUID).await.unwrap();
-
-        Self { client, services }
-    }
+    join_array([
+        pacs_gatt_client(&client), //
+    ])
+    .await;
 }
