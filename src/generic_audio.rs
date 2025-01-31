@@ -101,6 +101,10 @@ pub enum ContextType {
     VoiceAssistants = 0x0020,
     Live = 0x0040,
     SoundEffects = 0x0080,
+    Notifications = 0x0100,
+    Ringtone = 0x0200,
+    Alerts = 0x0400,
+    Alarm = 0x0800,
     Undefined,
 }
 

@@ -9,86 +9,88 @@ use defmt::*;
 pub async fn source_client<'a, C: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>(
     client: &GattClient<'a, C, MAX_SERVICES, L2CAP_MTU>,
 ) {
-    #[cfg(feature = "defmt")]
-    info!("Looking for pacs service");
-
-    let services = client
+    if let Ok(services) = client
         .services_by_uuid(&Uuid::from(service::PUBLISHED_AUDIO_CAPABILITIES))
         .await
-        .unwrap();
-    if services.is_empty() {
-        #[cfg(feature = "defmt")]
-        info!("Pacs not supported by server");
-        return;
-    }
-    let service = services.first().unwrap().clone();
+    {
+        if services.is_empty() {
+            return;
+        }
+        let service = services.first().unwrap().clone();
 
-    // Sink PAC characteristic containing one or more PAC records
-    let sink_pac: Characteristic<u8> = client
-        .characteristic_by_uuid(&service, &Uuid::from(characteristic::SINK_PAC))
-        .await
-        .unwrap();
-
-    let mut sink_pac_listener = client.subscribe(&sink_pac, true).await.unwrap();
-
-    // Sink Audio Locations characteristic
-    let sink_audio_locations: Characteristic<u8> = client
-        .characteristic_by_uuid(&service, &Uuid::from(characteristic::SINK_AUDIO_LOCATIONS))
-        .await
-        .unwrap();
-
-    let mut sink_audio_locations_listener =
-        client.subscribe(&sink_audio_locations, true).await.unwrap();
-
-    // Supported Audio Contexts characteristic
-    let supported_audio_contexts: Characteristic<u8> = client
-        .characteristic_by_uuid(
-            &service,
-            &Uuid::from(characteristic::SUPPORTED_AUDIO_CONTEXTS),
-        )
-        .await
-        .unwrap();
-
-    let mut supported_audio_contexts = client
-        .subscribe(&supported_audio_contexts, true)
-        .await
-        .unwrap();
-
-    select(
-        select(
-            async {
+        let sink_pac_task = async {
+            if let Ok(sink_pac) = client
+                .characteristic_by_uuid::<super::PAC>(
+                    &service,
+                    &Uuid::from(characteristic::SINK_PAC),
+                )
+                .await
+            {
+                let mut sink_pac_listener = client.subscribe(&sink_pac, true).await.unwrap();
                 loop {
                     let data = sink_pac_listener.next().await;
                     info!(
                         "Got notification: {:?} (val: {})",
                         data.as_ref(),
-                        data.as_ref()[0]
+                        data.as_ref()
                     );
                 }
-            },
-            async {
+            } else {
+                return;
+            }
+        };
+
+        let sink_audio_locations_task = async {
+            if let Ok(sink_audio_locations) = client
+                .characteristic_by_uuid::<super::AudioLocation>(
+                    &service,
+                    &Uuid::from(characteristic::SINK_AUDIO_LOCATIONS),
+                )
+                .await
+            {
+                let mut sink_audio_locations_listener =
+                    client.subscribe(&sink_audio_locations, true).await.unwrap();
                 loop {
                     let data = sink_audio_locations_listener.next().await;
                     info!(
                         "Got notification: {:?} (val: {})",
                         data.as_ref(),
-                        data.as_ref()[0]
+                        data.as_ref()
                     );
                 }
-            },
-        ),
-        async {
-            loop {
-                let data = supported_audio_contexts.next().await;
-                info!(
-                    "Got notification: {:?} (val: {})",
-                    data.as_ref(),
-                    data.as_ref()[0]
-                );
+            } else {
+                return;
             }
-        },
-    )
-    .await;
+        };
+
+        let contexts_task = async {
+            if let Ok(contexts) = client
+                .characteristic_by_uuid::<super::AudioContexts>(
+                    &service,
+                    &Uuid::from(characteristic::SUPPORTED_AUDIO_CONTEXTS),
+                )
+                .await
+            {
+                let mut contexts_listener = client.subscribe(&contexts, true).await.unwrap();
+                loop {
+                    let data = contexts_listener.next().await;
+                    info!(
+                        "Got notification: {:?} (val: {})",
+                        data.as_ref(),
+                        data.as_ref()
+                    );
+                }
+            } else {
+                return;
+            }
+        };
+
+        select(
+            select(sink_pac_task, sink_audio_locations_task),
+            contexts_task,
+        )
+        .await;
+    }
 }
 
 pub fn source_server<'a, C: Controller, const MAX_SERVICES: usize>(

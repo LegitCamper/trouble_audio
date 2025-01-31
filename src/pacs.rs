@@ -14,9 +14,10 @@ use bt_hci::uuid::{characteristic, service};
 #[cfg(feature = "defmt")]
 use defmt::*;
 
-// mod sink;
 mod source;
 pub use source::{source_client, source_server};
+mod sink;
+pub use sink::{sink_client, sink_server};
 
 use crate::CodecId;
 
