@@ -7,6 +7,7 @@ use super::generic_audio::*;
 
 use core::slice;
 use embassy_futures::select::select;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
 use bt_hci::uuid::{characteristic, service};
@@ -14,14 +15,36 @@ use bt_hci::uuid::{characteristic, service};
 #[cfg(feature = "defmt")]
 use defmt::*;
 
-mod source;
-pub use source::{source_client, source_server};
-mod sink;
-pub use sink::{sink_client, sink_server};
+// Handles server events for both Source and Sink servers
+// returns true if it handles the event
+pub(crate) fn try_handle_event(pacs: &PacsSink, event: &GattEvent) -> bool {
+    #[cfg(feature = "defmt")]
+    info!("trying to match event");
+    match event {
+        GattEvent::Read(event) => {
+            if event.handle() == pacs.sink_pac.handle {
+                info!("Got Sinks Pac");
+                true
+            } else if event.handle() == pacs.sink_audio_locations.handle {
+                info!("Got audio locations");
+                true
+            } else if event.handle() == pacs.supported_audio_contexts.handle {
+                info!("Got audio contexts");
+                true
+            } else {
+                false
+            }
+        }
+        GattEvent::Write(event) => match BluetoothUuid16::new(event.handle()) {
+            characteristic::SOURCE_PAC => true,
+            _ => false,
+        },
+    }
+}
 
 use crate::CodecId;
 
-/// Published Audio Capabilities Service Central
+/// Published Audio Capabilities Service for Sources
 #[gatt_service(uuid = service::PUBLISHED_AUDIO_CAPABILITIES)]
 pub struct PacsSource {
     /// Source PAC characteristic containing one or more PAC records
@@ -37,7 +60,7 @@ pub struct PacsSource {
     pub available_audio_contexts: AudioContexts,
 }
 
-/// Published Audio Capabilities Service Peripheral
+/// Published Audio Capabilities Service for Sinks
 #[gatt_service(uuid = service::PUBLISHED_AUDIO_CAPABILITIES)]
 pub struct PacsSink {
     /// Sink PAC characteristic containing one or more PAC records

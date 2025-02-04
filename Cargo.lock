@@ -494,26 +494,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num_enum"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e613fc340b2220f734a8595782c551f1250e969d87d3be1ae0579e8d4065179"
-dependencies = [
- "num_enum_derive",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1844ef2428cc3e1cb900be36181049ef3d3193c63e43026cfe202983b27a56"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -697,7 +677,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=e1940e89144096bc69b3c38745c3e13203135775#e1940e89144096bc69b3c38745c3e13203135775"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=7700932050221fa68a274fe713f7d1eb3d477ea2#7700932050221fa68a274fe713f7d1eb3d477ea2"
 dependencies = [
  "bt-hci",
  "defmt",
@@ -707,16 +687,14 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless 0.8.0",
- "num_enum",
  "static_cell",
- "thiserror",
  "trouble-host-macros",
 ]
 
 [[package]]
 name = "trouble-host-macros"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=e1940e89144096bc69b3c38745c3e13203135775#e1940e89144096bc69b3c38745c3e13203135775"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=7700932050221fa68a274fe713f7d1eb3d477ea2#7700932050221fa68a274fe713f7d1eb3d477ea2"
 dependencies = [
  "Inflector",
  "darling",
