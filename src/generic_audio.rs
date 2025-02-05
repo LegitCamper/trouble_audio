@@ -51,17 +51,15 @@ pub enum AudioLocation {
 }
 
 impl FixedGattValue for AudioLocation {
-    const SIZE: usize = size_of::<AudioLocation>();
+    const SIZE: usize = size_of::<Self>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            unsafe {
-                Ok(transmute::<u32, AudioLocation>(u32::from_le_bytes(
-                    data.try_into().expect("incorrect length"),
-                )))
-            }
+        #[cfg(feature = "defmt")]
+        defmt::info!("Gatt len: {}, data: {:?}", data.len(), data);
+        unsafe {
+            Ok(transmute::<u32, AudioLocation>(
+                <u32 as trouble_host::prelude::GattValue>::from_gatt(data)?,
+            ))
         }
     }
 
@@ -109,7 +107,7 @@ pub enum ContextType {
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct OctetsPerCodecFrame {
     min_octets: u16,
     max_octets: u16,

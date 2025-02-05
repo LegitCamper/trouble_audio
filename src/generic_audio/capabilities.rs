@@ -1,7 +1,7 @@
 use super::{OctetsPerCodecFrame, SamplingFrequency};
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(u8)]
 pub enum CodecSpecificCapabilities {
     SupportedSamplingFrequencies(SupportedSamplingFrequencies) = 1,
