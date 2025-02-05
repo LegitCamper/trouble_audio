@@ -12,10 +12,10 @@ use trouble_host::{
     gap::CentralConfig,
     gatt::{GattClient, GattEvent},
     prelude::{
-        appearance, gatt_server, AdStructure, AddrKind, Address, Advertisement, AttributeServer,
-        AttributeTable, BdAddr, Central, ConnectConfig, Connection, ConnectionEvent, GapConfig,
-        Peripheral, PeripheralConfig, ScanConfig, Service, BR_EDR_NOT_SUPPORTED,
-        LE_GENERAL_DISCOVERABLE,
+        appearance, gatt_server, AdStructure, AddrKind, Address, Advertisement, AttErrorCode,
+        AttributeServer, AttributeTable, BdAddr, Central, ConnectConfig, Connection,
+        ConnectionEvent, GapConfig, Peripheral, PeripheralConfig, ScanConfig, Service,
+        BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
     },
     BleHostError, Controller,
 };
@@ -49,6 +49,9 @@ pub async fn run_server<'a, const ATT_MTU: usize, M: RawMutex>(
     appearance: &'a [u8; 2],
     storage: &'a mut [u8; MAX_SERVICES * ATT_MTU],
 ) {
+    #[cfg(feature = "defmt")]
+    info!("[gatt] Starting LE Audio Server");
+
     let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
     let mut svc = table.add_service(Service::new(0x1800u16));
     let _ = svc.add_characteristic_ro(0x2a00u16, &name_id);
@@ -83,13 +86,18 @@ pub async fn run_server<'a, const ATT_MTU: usize, M: RawMutex>(
                     if let Some(event) = data {
                         if let Some(resp) = pacs.handle(&event) {
                             if let Err(err) = resp {
-                                event.reject(err).unwrap()
+                                event.reject(err).unwrap().send().await
                             } else {
-                                event.accept().unwrap()
+                                event.accept().unwrap().send().await
                             };
                         } else {
                             #[cfg(feature = "defmt")]
-                            warn!("There was no known handler to handle this event")
+                            warn!("[gatt] There was no known handler to handle this event");
+                            event
+                                .reject(AttErrorCode::INVALID_HANDLE)
+                                .unwrap()
+                                .send()
+                                .await;
                         }
                     }
                 }
