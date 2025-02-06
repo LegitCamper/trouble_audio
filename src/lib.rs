@@ -2,6 +2,7 @@
 #![cfg_attr(not(test), no_std, no_main)]
 // #![warn(missing_docs)]
 
+use bt_hci::uuid::BluetoothUuid16;
 #[cfg(feature = "defmt")]
 use defmt::*;
 
@@ -14,8 +15,8 @@ use trouble_host::{
     prelude::{
         appearance, gatt_server, AdStructure, AddrKind, Address, Advertisement, AttErrorCode,
         AttributeServer, AttributeTable, BdAddr, Central, ConnectConfig, Connection,
-        ConnectionEvent, GapConfig, Peripheral, PeripheralConfig, ScanConfig, Service,
-        BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
+        ConnectionEvent, GapConfig, GattValue, Peripheral, PeripheralConfig, ScanConfig, Service,
+        Uuid, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
     },
     BleHostError, Controller,
 };
@@ -41,71 +42,86 @@ impl Default for CodecId {
     }
 }
 
-const MAX_SERVICES: usize = 3;
+pub const MAX_SERVICES: usize = 5;
 
-pub async fn run_server<'a, const ATT_MTU: usize, M: RawMutex>(
-    conn: &Connection<'_>,
-    name_id: &str,
-    appearance: &'a [u8; 2],
-    storage: &'a mut [u8; MAX_SERVICES * ATT_MTU],
-) {
-    #[cfg(feature = "defmt")]
-    info!("[gatt] Starting LE Audio Server");
+pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
+    server: AttributeServer<'a, M, MAX_SERVICES>,
+    pacs: pacs::PacsServer<ATT_MTU>,
+}
 
-    let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
-    let mut svc = table.add_service(Service::new(0x1800u16));
-    let _ = svc.add_characteristic_ro(0x2a00u16, &name_id);
-    let _ = svc.add_characteristic_ro(0x2a01u16, appearance);
-    svc.build();
+impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
+    const STORAGE_SIZE: usize = MAX_SERVICES * ATT_MTU;
 
-    // Generic attribute service (mandatory)
-    table.add_service(Service::new(0x1801u16));
+    pub fn new(
+        name_id: &'a impl GattValue,
+        appearance: &'a impl GattValue,
+        storage: &'a mut [u8],
+    ) -> Self {
+        #[cfg(feature = "defmt")]
+        info!("[gatt] Starting LE Audio Server");
+        #[cfg(feature = "defmt")]
+        defmt::assert!(storage.len() >= Self::STORAGE_SIZE);
 
-    let mut storages = storage.chunks_exact_mut(ATT_MTU);
-    let pacs = pacs::PacsServer::<ATT_MTU>::new(
-        &mut table,
-        None,
-        None,
-        None,
-        None,
-        (Default::default(), storages.next().unwrap()),
-        (Default::default(), storages.next().unwrap()),
-    );
+        let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
+        let mut svc = table.add_service(Service::new(0x1800u16));
+        let _ = svc.add_characteristic_ro(0x2a00u16, name_id);
+        let _ = svc.add_characteristic_ro(0x2a01u16, appearance);
+        svc.build();
 
-    let server = AttributeServer::<M, MAX_SERVICES>::new(table);
+        // Generic attribute service (mandatory)
+        table.add_service(Service::new(0x1801u16));
 
-    loop {
-        match conn.next().await {
-            ConnectionEvent::Disconnected { reason } => {
-                #[cfg(feature = "defmt")]
-                info!("[gatt] disconnected: {:?}", reason);
-                break;
-            }
-            ConnectionEvent::Gatt { data } => match data.process(&server).await {
-                Ok(data) => {
-                    if let Some(event) = data {
-                        if let Some(resp) = pacs.handle(&event) {
-                            if let Err(err) = resp {
-                                event.reject(err).unwrap().send().await
+        let mut storages = storage.chunks_exact_mut(ATT_MTU);
+        let pacs = pacs::PacsServer::<ATT_MTU>::new(
+            &mut table,
+            None,
+            None,
+            None,
+            None,
+            (Default::default(), storages.next().unwrap()),
+            (Default::default(), storages.next().unwrap()),
+        );
+
+        Self {
+            server: AttributeServer::<M, MAX_SERVICES>::new(table),
+            pacs,
+        }
+    }
+
+    pub async fn run(&self, conn: &Connection<'_>) {
+        loop {
+            match conn.next().await {
+                ConnectionEvent::Disconnected { reason } => {
+                    #[cfg(feature = "defmt")]
+                    info!("[gatt] disconnected: {:?}", reason);
+                    break;
+                }
+                ConnectionEvent::Gatt { data } => match data.process(&self.server).await {
+                    Ok(data) => {
+                        if let Some(event) = data {
+                            if let Some(resp) = self.pacs.handle(&event) {
+                                if let Err(err) = resp {
+                                    event.reject(err).unwrap().send().await
+                                } else {
+                                    event.accept().unwrap().send().await
+                                };
                             } else {
-                                event.accept().unwrap().send().await
-                            };
-                        } else {
-                            #[cfg(feature = "defmt")]
-                            warn!("[gatt] There was no known handler to handle this event");
-                            event
-                                .reject(AttErrorCode::INVALID_HANDLE)
-                                .unwrap()
-                                .send()
-                                .await;
+                                #[cfg(feature = "defmt")]
+                                warn!("[gatt] There was no known handler to handle this event");
+                                event
+                                    .reject(AttErrorCode::INVALID_HANDLE)
+                                    .unwrap()
+                                    .send()
+                                    .await;
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    #[cfg(feature = "defmt")]
-                    warn!("[gatt] error processing event: {:?}", e);
-                }
-            },
+                    Err(e) => {
+                        #[cfg(feature = "defmt")]
+                        warn!("[gatt] error processing event: {:?}", e);
+                    }
+                },
+            }
         }
     }
 }
