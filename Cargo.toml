@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["defmt"]
-defmt = ["dep:defmt", "trouble-host/defmt"]
+defmt = ["dep:defmt", "trouble-host/defmt", "heapless/defmt-03"]
 
 [dependencies]
 embassy-sync = "0.6.1"
@@ -24,7 +24,7 @@ lc3-codec = "0.2.0"
 
 defmt = { version = "0.3.10", optional = true }
 static_cell = "2.1.0"
-heapless = { version = "0.8.0", features = ["defmt-03"] }
+heapless = "0.8.0"
 
 [patch.crates-io]
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "195b1a593a4f51ebc7ae61b5045c620a1dbd25d8" }

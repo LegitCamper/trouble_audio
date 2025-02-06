@@ -1,32 +1,23 @@
-#![feature(generic_const_exprs)]
 #![cfg_attr(not(test), no_std, no_main)]
 // #![warn(missing_docs)]
 
-use bt_hci::uuid::BluetoothUuid16;
 #[cfg(feature = "defmt")]
 use defmt::*;
 
+use core::slice::ChunksExactMut;
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
-use heapless::Vec;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use pacs::PacsServer;
 use trouble_host::{
-    gap::CentralConfig,
-    gatt::{GattClient, GattEvent},
-    prelude::{
-        appearance, gatt_server, AdStructure, AddrKind, Address, Advertisement, AttErrorCode,
-        AttributeServer, AttributeTable, BdAddr, Central, ConnectConfig, Connection,
-        ConnectionEvent, GapConfig, GattValue, Peripheral, PeripheralConfig, ScanConfig, Service,
-        Uuid, BR_EDR_NOT_SUPPORTED, LE_GENERAL_DISCOVERABLE,
-    },
-    BleHostError, Controller,
+    gatt::{GattClient, GattData},
+    prelude::{AttErrorCode, AttributeServer, AttributeTable, GattValue, Service},
+    Controller,
 };
 
 #[allow(dead_code)]
 pub mod ascs;
 // pub mod bap;
-#[allow(dead_code)]
 pub mod generic_audio;
-#[allow(dead_code)]
 pub mod pacs;
 
 pub type ContentControlID = u8;
@@ -42,14 +33,17 @@ impl Default for CodecId {
     }
 }
 
-pub const MAX_SERVICES: usize = 5;
+pub const MAX_SERVICES: usize = 6 // pacs
+     + 2 // att
+ + 20;
 
-pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
-    server: AttributeServer<'a, M, MAX_SERVICES>,
-    pacs: pacs::PacsServer<ATT_MTU>,
+pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
+    table: AttributeTable<'a, M, MAX_SERVICES>,
+    storages: ChunksExactMut<'a, u8>,
+    pacs: Option<PacsServer<ATT_MTU>>,
 }
 
-impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
+impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
     const STORAGE_SIZE: usize = MAX_SERVICES * ATT_MTU;
 
     pub fn new(
@@ -58,9 +52,13 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
         storage: &'a mut [u8],
     ) -> Self {
         #[cfg(feature = "defmt")]
-        info!("[gatt] Starting LE Audio Server");
-        #[cfg(feature = "defmt")]
-        defmt::assert!(storage.len() >= Self::STORAGE_SIZE);
+        if storage.len() < Self::STORAGE_SIZE {
+            defmt::panic!(
+                "storage len: {}, but needs to be {}",
+                storage.len(),
+                Self::STORAGE_SIZE
+            );
+        }
 
         let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
         let mut svc = table.add_service(Service::new(0x1800u16));
@@ -71,56 +69,65 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
         // Generic attribute service (mandatory)
         table.add_service(Service::new(0x1801u16));
 
-        let mut storages = storage.chunks_exact_mut(ATT_MTU);
-        let pacs = pacs::PacsServer::<ATT_MTU>::new(
-            &mut table,
-            None,
-            None,
-            None,
-            None,
-            (Default::default(), storages.next().unwrap()),
-            (Default::default(), storages.next().unwrap()),
-        );
-
         Self {
-            server: AttributeServer::<M, MAX_SERVICES>::new(table),
-            pacs,
+            table,
+            storages: storage.chunks_exact_mut(ATT_MTU),
+            pacs: None,
         }
     }
 
-    pub async fn run(&self, conn: &Connection<'_>) {
-        loop {
-            match conn.next().await {
-                ConnectionEvent::Disconnected { reason } => {
-                    #[cfg(feature = "defmt")]
-                    info!("[gatt] disconnected: {:?}", reason);
-                    break;
-                }
-                ConnectionEvent::Gatt { data } => match data.process(&self.server).await {
-                    Ok(data) => {
-                        if let Some(event) = data {
-                            if let Some(resp) = self.pacs.handle(&event) {
-                                if let Err(err) = resp {
-                                    event.reject(err).unwrap().send().await
-                                } else {
-                                    event.accept().unwrap().send().await
-                                };
-                            } else {
-                                #[cfg(feature = "defmt")]
-                                warn!("[gatt] There was no known handler to handle this event");
-                                event
-                                    .reject(AttErrorCode::INVALID_HANDLE)
-                                    .unwrap()
-                                    .send()
-                                    .await;
-                            }
-                        }
-                    }
-                    Err(e) => {
+    pub fn build(self) -> Server<'a, ATT_MTU, M> {
+        Server {
+            server: AttributeServer::<M, MAX_SERVICES>::new(self.table),
+            pacs: self.pacs.expect("Pacs is a mandatory service"),
+        }
+    }
+
+    pub fn add_pacs(&mut self) {
+        info!("adding pacs now");
+        let pacs = pacs::PacsServer::<ATT_MTU>::new(
+            &mut self.table,
+            None,
+            None,
+            None,
+            None,
+            (Default::default(), self.storages.next().unwrap()),
+            (Default::default(), self.storages.next().unwrap()),
+        );
+        self.pacs = Some(pacs);
+    }
+}
+
+pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
+    server: AttributeServer<'a, M, MAX_SERVICES>,
+    pacs: pacs::PacsServer<ATT_MTU>,
+}
+
+impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
+    pub async fn process(&self, gatt_data: GattData<'_>) {
+        match gatt_data.process(&self.server).await {
+            Ok(data) => {
+                if let Some(event) = data {
+                    if let Some(resp) = self.pacs.handle(&event) {
+                        if let Err(err) = resp {
+                            event.reject(err).unwrap().send().await
+                        } else {
+                            event.accept().unwrap().send().await
+                        };
+                    } else {
                         #[cfg(feature = "defmt")]
-                        warn!("[gatt] error processing event: {:?}", e);
+                        warn!("[le audio] There was no known handler to handle this event");
+                        event
+                            .reject(AttErrorCode::INVALID_HANDLE)
+                            .unwrap()
+                            .send()
+                            .await;
                     }
-                },
+                }
+            }
+            Err(e) => {
+                #[cfg(feature = "defmt")]
+                warn!("[le audio] error processing event: {:?}", e);
             }
         }
     }

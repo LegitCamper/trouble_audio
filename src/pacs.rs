@@ -10,8 +10,9 @@ use core::slice;
 use heapless::Vec;
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
+use super::MAX_SERVICES;
 #[cfg(feature = "defmt")]
-use defmt::*;
+use defmt::{assert, info};
 
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
@@ -24,14 +25,14 @@ pub struct PacsServer<const ATT_MTU: usize> {
     available_audio_contexts: Characteristic<AudioContexts>,
 }
 
-impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
-    pub const ATTRIBUTE_COUNT: usize = 3;
+pub const PACS_ATTRIBUTES: usize = 13;
 
+impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     /// Create a new PAC Gatt Service
     ///
     /// If you enable a pac, you must also enable the corresponding location
-    pub fn new<'a, M, const MAX_ATTRIBUTES: usize>(
-        table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_ATTRIBUTES>,
+    pub fn new<'a, M>(
+        table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
         sink_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
         source_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
@@ -42,11 +43,12 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     where
         M: embassy_sync::blocking_mutex::raw::RawMutex,
     {
+        info!("building pacs");
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
         let (sink_pac_char, sink_audio_locations_char) = if let Some((sink_pac, store)) = sink_pac {
             #[cfg(feature = "defmt")]
-            defmt::debug_assert!(store.len() >= ATT_MTU);
+            assert!(store.len() >= ATT_MTU);
 
             let sink_pac_char = service
                 .add_characteristic(
@@ -60,7 +62,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             let (sink_audio_locations, store) = sink_audio_locations
                 .expect("If Sink Pac characteristic is enabled, locations must be defined");
             #[cfg(feature = "defmt")]
-            defmt::debug_assert!(store.len() >= ATT_MTU);
+            assert!(store.len() >= ATT_MTU);
 
             let sink_audio_locations_char = service
                 .add_characteristic(
@@ -83,7 +85,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
         let (source_pac_char, source_audio_locations_char) =
             if let Some((source_pac, store)) = source_pac {
                 #[cfg(feature = "defmt")]
-                defmt::debug_assert!(store.len() >= ATT_MTU);
+                assert!(store.len() >= ATT_MTU);
 
                 let source_pac_char = service
                     .add_characteristic(
@@ -97,7 +99,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
                 let (source_audio_locations, store) = source_audio_locations
                     .expect("If Source Pac characteristic is enabled, locations must be defined");
                 #[cfg(feature = "defmt")]
-                defmt::debug_assert!(store.len() >= ATT_MTU);
+                assert!(store.len() >= ATT_MTU);
 
                 let source_audio_locations_char = service
                     .add_characteristic(
@@ -118,7 +120,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             };
 
         #[cfg(feature = "defmt")]
-        defmt::debug_assert!(supported_audio_contexts.1.len() >= ATT_MTU);
+        assert!(supported_audio_contexts.1.len() >= ATT_MTU);
 
         let supported_audio_contexts_char = service
             .add_characteristic(
@@ -130,7 +132,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             .build();
 
         #[cfg(feature = "defmt")]
-        defmt::debug_assert!(available_audio_contexts.1.len() >= ATT_MTU);
+        assert!(available_audio_contexts.1.len() >= ATT_MTU);
 
         let available_audio_contexts_char = service
             .add_characteristic(
