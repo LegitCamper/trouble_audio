@@ -43,7 +43,6 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     where
         M: embassy_sync::blocking_mutex::raw::RawMutex,
     {
-        info!("building pacs");
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
         let (sink_pac_char, sink_audio_locations_char) = if let Some((sink_pac, store)) = sink_pac {
@@ -233,11 +232,14 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
 /// A set of parameter values that denote server audio capabilities.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Default, Clone)]
-pub struct PACRecord<const RECORD_LEN: usize> {
+pub struct PACRecord {
     pub codec_id: Vec<CodecId, 5>,
-    pub codec_specific_capabilities: Vec<CodecSpecificCapabilities, RECORD_LEN>,
-    pub metadata: Vec<Metadata, RECORD_LEN>,
+    pub codec_specific_capabilities: Vec<CodecSpecificCapabilities, 5>, // cap only has 5 elemenhts
+    pub metadata: Vec<Metadata, 13>, // Metadata only has 13 elements
 }
+
+// 5 may be too small
+const MAX_NUMBER_PAC_RECORDS: usize = 5;
 
 /// The Sink Audio Locations characteristic i
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
@@ -245,13 +247,13 @@ pub struct PACRecord<const RECORD_LEN: usize> {
 #[derive(Default, Debug)]
 pub struct PAC<const ATT_MTU: usize> {
     number_of_pac_records: u8,
-    pac_records: Vec<PACRecord<ATT_MTU>, ATT_MTU>,
+    pac_records: Vec<PACRecord, MAX_NUMBER_PAC_RECORDS>,
 }
 
 impl<const ATT_MTU: usize> PAC<ATT_MTU> {
-    pub fn new(records: Vec<PACRecord<ATT_MTU>, ATT_MTU>) -> Self {
+    pub fn new(records: Vec<PACRecord, MAX_NUMBER_PAC_RECORDS>) -> Self {
         Self {
-            number_of_pac_records: ATT_MTU as u8,
+            number_of_pac_records: records.len() as u8,
             pac_records: records,
         }
     }

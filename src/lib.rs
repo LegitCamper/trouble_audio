@@ -1,6 +1,5 @@
 #![cfg_attr(not(test), no_std, no_main)]
 // #![warn(missing_docs)]
-
 #[cfg(feature = "defmt")]
 use defmt::*;
 
@@ -33,9 +32,9 @@ impl Default for CodecId {
     }
 }
 
-pub const MAX_SERVICES: usize = 6 // pacs
-     + 2 // att
- + 20;
+pub const MAX_SERVICES: usize = 4 // att
+     + pacs::PACS_ATTRIBUTES // pacs
+  ;
 
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
     table: AttributeTable<'a, M, MAX_SERVICES>,
@@ -84,7 +83,6 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
     }
 
     pub fn add_pacs(&mut self) {
-        info!("adding pacs now");
         let pacs = pacs::PacsServer::<ATT_MTU>::new(
             &mut self.table,
             None,
