@@ -3,13 +3,13 @@
 #[cfg(feature = "defmt")]
 use defmt::*;
 
-use core::slice::ChunksExactMut;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use pacs::PacsServer;
+use generic_audio::AudioLocation;
+use pacs::{AudioContexts, PacsServer, PAC};
 use trouble_host::{
-    gatt::{GattClient, GattData},
-    prelude::{AttErrorCode, AttributeServer, AttributeTable, GattValue, Service},
+    gatt::{GattClient, GattData, GattEvent},
+    prelude::{AttErrorCode, AttributeServer, AttributeTable, GattValue},
     Controller,
 };
 
@@ -36,9 +36,12 @@ pub const MAX_SERVICES: usize = 4 // att
      + pacs::PACS_ATTRIBUTES // pacs
   ;
 
+trait LeAudioService {
+    fn handle(&self, event: &GattEvent) -> Option<Result<(), AttErrorCode>>;
+}
+
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
     table: AttributeTable<'a, M, MAX_SERVICES>,
-    storages: ChunksExactMut<'a, u8>,
     pacs: Option<PacsServer<ATT_MTU>>,
 }
 
@@ -60,19 +63,15 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
         }
 
         let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
-        let mut svc = table.add_service(Service::new(0x1800u16));
+        let mut svc = table.add_service(trouble_host::attribute::Service::new(0x1800u16));
         let _ = svc.add_characteristic_ro(0x2a00u16, name_id);
         let _ = svc.add_characteristic_ro(0x2a01u16, appearance);
         svc.build();
 
         // Generic attribute service (mandatory)
-        table.add_service(Service::new(0x1801u16));
+        table.add_service(trouble_host::attribute::Service::new(0x1801u16));
 
-        Self {
-            table,
-            storages: storage.chunks_exact_mut(ATT_MTU),
-            pacs: None,
-        }
+        Self { table, pacs: None }
     }
 
     pub fn build(self) -> Server<'a, ATT_MTU, M> {
@@ -82,15 +81,23 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
         }
     }
 
-    pub fn add_pacs(&mut self) {
+    pub fn add_pacs(
+        &mut self,
+        sink_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        source_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        supported_audio_contexts: (AudioContexts, &'a mut [u8]),
+        available_audio_contexts: (AudioContexts, &'a mut [u8]),
+    ) {
         let pacs = pacs::PacsServer::<ATT_MTU>::new(
             &mut self.table,
-            None,
-            None,
-            None,
-            None,
-            (Default::default(), self.storages.next().unwrap()),
-            (Default::default(), self.storages.next().unwrap()),
+            sink_pac,
+            sink_audio_locations,
+            source_pac,
+            source_audio_locations,
+            supported_audio_contexts,
+            available_audio_contexts,
         );
         self.pacs = Some(pacs);
     }

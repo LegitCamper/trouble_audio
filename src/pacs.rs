@@ -3,8 +3,7 @@
 //! The Published Audio Capabilities (PACS) service exposes
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
-use super::generic_audio::*;
-use crate::CodecId;
+use super::{generic_audio::*, CodecId, LeAudioService};
 use bt_hci::uuid::{characteristic, service};
 use core::slice;
 use heapless::Vec;
@@ -12,7 +11,7 @@ use trouble_host::{prelude::*, types::gatt_traits::*};
 
 use super::MAX_SERVICES;
 #[cfg(feature = "defmt")]
-use defmt::{assert, info};
+use defmt::assert;
 
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
@@ -152,11 +151,10 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             available_audio_contexts: available_audio_contexts_char,
         }
     }
+}
 
-    pub fn handle(
-        &self,
-        event: &GattEvent,
-    ) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
+impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
+    fn handle(&self, event: &GattEvent) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
         match event {
             GattEvent::Read(event) => {
                 if let Some(sink_pac) = &self.sink_pac {
