@@ -1,5 +1,6 @@
 //! Generic Audio structures
 //!
+use bitflags::bitflags;
 
 use core::{mem::transmute, slice};
 use trouble_host::{prelude::*, types::gatt_traits::*};
@@ -13,41 +14,39 @@ pub use capabilities::*;
 mod configuration;
 pub use configuration::*;
 
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Default, Debug)]
-#[repr(u32)]
-pub enum AudioLocation {
-    #[default]
-    Mono = 0x00000000, // Mono Audio (no specified Audio Location)
-    FrontLeft = 0x00000001,
-    FrontRight = 0x00000002,
-    FrontCenter = 0x00000004,
-    LowFrequencyEffects1 = 0x00000008,
-    BackLeft = 0x00000010,
-    BackRight = 0x00000020,
-    FrontLeftOfCenter = 0x00000040,
-    FrontRightOfCenter = 0x00000080,
-    BackCenter = 0x00000100,
-    LowFrequencyEffects2 = 0x00000200,
-    SideLeft = 0x00000400,
-    SideRight = 0x00000800,
-    TopFrontLeft = 0x00001000,
-    TopFrontRight = 0x00002000,
-    TopFrontCenter = 0x00004000,
-    TopCenter = 0x00008000,
-    TopBackLeft = 0x00010000,
-    TopBackRight = 0x00020000,
-    TopSideLeft = 0x00040000,
-    TopSideRight = 0x00080000,
-    TopBackCenter = 0x00100000,
-    BottomFrontCenter = 0x00200000,
-    BottomFrontLeft = 0x00400000,
-    BottomFrontRight = 0x00800000,
-    FrontLeftWide = 0x01000000,
-    FrontRightWide = 0x02000000,
-    LeftSurround = 0x04000000,
-    RightSurround = 0x08000000,
-    Undefined,
+bitflags! {
+    #[derive(Default, Debug)]
+    pub struct AudioLocation: u32 {
+        const Mono = 0x00000000; // Mono Audio (no specified Audio Location)
+        const FrontLeft = 0x00000001;
+        const FrontRight = 0x00000002;
+        const FrontCenter = 0x00000004;
+        const LowFrequencyEffects1 = 0x00000008;
+        const BackLeft = 0x00000010;
+        const BackRight = 0x00000020;
+        const FrontLeftOfCenter = 0x00000040;
+        const FrontRightOfCenter = 0x00000080;
+        const BackCenter = 0x00000100;
+        const LowFrequencyEffects2 = 0x00000200;
+        const SideLeft = 0x00000400;
+        const SideRight = 0x00000800;
+        const TopFrontLeft = 0x00001000;
+        const TopFrontRight = 0x00002000;
+        const TopFrontCenter = 0x00004000;
+        const TopCenter = 0x00008000;
+        const TopBackLeft = 0x00010000;
+        const TopBackRight = 0x00020000;
+        const TopSideLeft = 0x00040000;
+        const TopSideRight = 0x00080000;
+        const TopBackCenter = 0x00100000;
+        const BottomFrontCenter = 0x00200000;
+        const BottomFrontLeft = 0x00400000;
+        const BottomFrontRight = 0x00800000;
+        const FrontLeftWide = 0x01000000;
+        const FrontRightWide = 0x02000000;
+        const LeftSurround = 0x04000000;
+        const RightSurround = 0x08000000;
+    }
 }
 
 impl FixedGattValue for AudioLocation {

@@ -108,7 +108,7 @@ pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
     pacs: pacs::PacsServer<ATT_MTU>,
 }
 
-impl<'a, const ATT_MTU: usize, M: RawMutex> Server<'a, ATT_MTU, M> {
+impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
     pub async fn process(&self, gatt_data: GattData<'_>) {
         match gatt_data.process(&self.server).await {
             Ok(data) => {

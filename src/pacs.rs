@@ -44,78 +44,89 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     {
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
-        let (sink_pac_char, sink_audio_locations_char) = if let Some((sink_pac, store)) = sink_pac {
-            #[cfg(feature = "defmt")]
-            assert!(store.len() >= ATT_MTU);
+        let sink_pac_char = match sink_pac {
+            Some((sink_pac, store)) => {
+                #[cfg(feature = "defmt")]
+                assert!(store.len() >= ATT_MTU);
 
-            let sink_pac_char = service
-                .add_characteristic(
-                    characteristic::SINK_PAC,
-                    &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                    sink_pac,
-                    store,
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SINK_PAC,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            sink_pac,
+                            store,
+                        )
+                        .build(),
                 )
-                .build();
-
-            let (sink_audio_locations, store) = sink_audio_locations
-                .expect("If Sink Pac characteristic is enabled, locations must be defined");
-            #[cfg(feature = "defmt")]
-            assert!(store.len() >= ATT_MTU);
-
-            let sink_audio_locations_char = service
-                .add_characteristic(
-                    characteristic::SINK_AUDIO_LOCATIONS,
-                    &[
-                        CharacteristicProp::Read,
-                        CharacteristicProp::Notify,
-                        CharacteristicProp::Write,
-                    ],
-                    sink_audio_locations,
-                    store,
-                )
-                .build();
-
-            (Some(sink_pac_char), Some(sink_audio_locations_char))
-        } else {
-            (None, None)
+            }
+            None => None,
         };
 
-        let (source_pac_char, source_audio_locations_char) =
-            if let Some((source_pac, store)) = source_pac {
+        let sink_audio_locations_char = match sink_audio_locations {
+            Some((sink_audio_locations, store)) => {
                 #[cfg(feature = "defmt")]
                 assert!(store.len() >= ATT_MTU);
 
-                let source_pac_char = service
-                    .add_characteristic(
-                        characteristic::SOURCE_PAC,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                        source_pac,
-                        store,
-                    )
-                    .build();
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SINK_AUDIO_LOCATIONS,
+                            &[
+                                CharacteristicProp::Read,
+                                CharacteristicProp::Notify,
+                                CharacteristicProp::Write,
+                            ],
+                            sink_audio_locations,
+                            store,
+                        )
+                        .build(),
+                )
+            }
+            None => None,
+        };
 
-                let (source_audio_locations, store) = source_audio_locations
-                    .expect("If Source Pac characteristic is enabled, locations must be defined");
+        let source_pac_char = match source_pac {
+            Some((source_pac, store)) => {
                 #[cfg(feature = "defmt")]
                 assert!(store.len() >= ATT_MTU);
 
-                let source_audio_locations_char = service
-                    .add_characteristic(
-                        characteristic::SOURCE_AUDIO_LOCATIONS,
-                        &[
-                            CharacteristicProp::Read,
-                            CharacteristicProp::Notify,
-                            CharacteristicProp::Write,
-                        ],
-                        source_audio_locations,
-                        store,
-                    )
-                    .build();
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SOURCE_PAC,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            source_pac,
+                            store,
+                        )
+                        .build(),
+                )
+            }
+            None => None,
+        };
 
-                (Some(source_pac_char), Some(source_audio_locations_char))
-            } else {
-                (None, None)
-            };
+        let source_audio_locations_char = match source_audio_locations {
+            Some((source_audio_locations, store)) => {
+                #[cfg(feature = "defmt")]
+                assert!(store.len() >= ATT_MTU);
+
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SOURCE_AUDIO_LOCATIONS,
+                            &[
+                                CharacteristicProp::Read,
+                                CharacteristicProp::Notify,
+                                CharacteristicProp::Write,
+                            ],
+                            source_audio_locations,
+                            store,
+                        )
+                        .build(),
+                )
+            }
+            None => None,
+        };
 
         #[cfg(feature = "defmt")]
         assert!(supported_audio_contexts.1.len() >= ATT_MTU);
@@ -189,14 +200,17 @@ impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
 
                 None
             }
-            // TODO
             GattEvent::Write(event) => {
                 if let Some(sink_pac) = &self.sink_pac {
                     if event.handle() == sink_pac.handle {
-                        return Some(Ok(()));
+                        return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
                     }
                     if let Some(sink_audio_locations) = &self.sink_audio_locations {
                         if event.handle() == sink_audio_locations.handle {
+                            let data = event.value(sink_pac);
+                            // if data >= super::generic_audio::AudioLocation {
+                            // return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
+                            // }
                             return Some(Ok(()));
                         }
                     }
@@ -204,7 +218,7 @@ impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
 
                 if let Some(source_pac) = &self.source_pac {
                     if event.handle() == source_pac.handle {
-                        return Some(Ok(()));
+                        return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
                     }
                     if let Some(source_audio_locations) = &self.source_audio_locations {
                         if event.handle() == source_audio_locations.handle {
@@ -214,11 +228,11 @@ impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
                 }
 
                 if event.handle() == self.supported_audio_contexts.handle {
-                    return Some(Ok(()));
+                    return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
                 }
 
                 if event.handle() == self.available_audio_contexts.handle {
-                    return Some(Ok(()));
+                    return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
                 }
 
                 None
