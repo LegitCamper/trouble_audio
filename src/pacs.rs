@@ -4,8 +4,10 @@
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
 use super::{generic_audio::*, CodecId, LeAudioService};
+use bitflags::Flags;
 use bt_hci::uuid::{characteristic, service};
 use core::slice;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::{prelude::*, types::gatt_traits::*};
 
@@ -16,9 +18,9 @@ use defmt::assert;
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
     handle: trouble_host::attribute::AttributeHandle,
-    sink_pac: Option<Characteristic<PAC<ATT_MTU>>>,
+    sink_pac: Option<Characteristic<PAC>>,
     sink_audio_locations: Option<Characteristic<AudioLocation>>,
-    source_pac: Option<Characteristic<PAC<ATT_MTU>>>,
+    source_pac: Option<Characteristic<PAC>>,
     source_audio_locations: Option<Characteristic<AudioLocation>>,
     supported_audio_contexts: Characteristic<AudioContexts>,
     available_audio_contexts: Characteristic<AudioContexts>,
@@ -30,18 +32,15 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     /// Create a new PAC Gatt Service
     ///
     /// If you enable a pac, you must also enable the corresponding location
-    pub fn new<'a, M>(
+    pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
-        sink_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        sink_pac: Option<(PAC, &'a mut [u8])>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        source_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        source_pac: Option<(PAC, &'a mut [u8])>,
         source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: (AudioContexts, &'a mut [u8]),
         available_audio_contexts: (AudioContexts, &'a mut [u8]),
-    ) -> Self
-    where
-        M: embassy_sync::blocking_mutex::raw::RawMutex,
-    {
+    ) -> Self {
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
         let sink_pac_char = match sink_pac {
@@ -162,10 +161,87 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             available_audio_contexts: available_audio_contexts_char,
         }
     }
+
+    pub async fn change_sink_pac<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        pac: PAC,
+    ) -> Result<(), Error> {
+        if let Some(sink_pac) = &self.sink_pac {
+            return sink_pac.notify(server, connection, &pac).await;
+        }
+        Ok(())
+    }
+
+    pub async fn change_sink_audio_locations<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        location: AudioLocation,
+    ) -> Result<(), Error> {
+        if let Some(sink_location_location) = &self.sink_audio_locations {
+            return sink_location_location
+                .notify(server, connection, &location)
+                .await;
+        }
+        Ok(())
+    }
+
+    pub async fn change_source_pac<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        pac: PAC,
+    ) -> Result<(), Error> {
+        if let Some(source_pac) = &self.source_pac {
+            return source_pac.notify(server, connection, &pac).await;
+        }
+        Ok(())
+    }
+
+    pub async fn change_source_audio_locations<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        location: AudioLocation,
+    ) -> Result<(), Error> {
+        if let Some(source_location_location) = &self.source_audio_locations {
+            return source_location_location
+                .notify(server, connection, &location)
+                .await;
+        }
+        Ok(())
+    }
+
+    pub async fn change_supported_audio_contexts<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        contexts: AudioContexts,
+    ) -> Result<(), Error> {
+        self.supported_audio_contexts
+            .notify(server, connection, &contexts)
+            .await
+    }
+
+    pub async fn change_available_audio_contexts<'a, M: RawMutex>(
+        &mut self,
+        server: &AttributeServer<'a, M, ATT_MTU>,
+        connection: &Connection<'a>,
+        contexts: AudioContexts,
+    ) -> Result<(), Error> {
+        self.available_audio_contexts
+            .notify(server, connection, &contexts)
+            .await
+    }
 }
 
 impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
-    fn handle(&self, event: &GattEvent) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
+    fn handle_event(
+        &self,
+        event: &GattEvent,
+    ) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
         match event {
             GattEvent::Read(event) => {
                 if let Some(sink_pac) = &self.sink_pac {
@@ -207,11 +283,14 @@ impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
                     }
                     if let Some(sink_audio_locations) = &self.sink_audio_locations {
                         if event.handle() == sink_audio_locations.handle {
-                            let data = event.value(sink_pac);
-                            // if data >= super::generic_audio::AudioLocation {
-                            // return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
-                            // }
-                            return Some(Ok(()));
+                            if event.data().len() == size_of::<AudioLocation>() {
+                                if let Ok(data) = event.value(sink_audio_locations) {
+                                    if data.bits() <= AudioLocation::RightSurround.bits() {
+                                        return Some(Ok(()));
+                                    }
+                                }
+                            };
+                            return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
                         }
                     }
                 }
@@ -222,7 +301,14 @@ impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
                     }
                     if let Some(source_audio_locations) = &self.source_audio_locations {
                         if event.handle() == source_audio_locations.handle {
-                            return Some(Ok(()));
+                            if event.data().len() == size_of::<AudioLocation>() {
+                                if let Ok(data) = event.value(source_audio_locations) {
+                                    if data.bits() <= AudioLocation::RightSurround.bits() {
+                                        return Some(Ok(()));
+                                    }
+                                }
+                            };
+                            return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
                         }
                     }
                 }
@@ -257,12 +343,12 @@ const MAX_NUMBER_PAC_RECORDS: usize = 5;
 /// The Source PAC characteristic is used to expose PAC records when the server supports transmission of audio data.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Default, Debug)]
-pub struct PAC<const ATT_MTU: usize> {
+pub struct PAC {
     number_of_pac_records: u8,
     pac_records: Vec<PACRecord, MAX_NUMBER_PAC_RECORDS>,
 }
 
-impl<const ATT_MTU: usize> PAC<ATT_MTU> {
+impl PAC {
     pub fn new(records: Vec<PACRecord, MAX_NUMBER_PAC_RECORDS>) -> Self {
         Self {
             number_of_pac_records: records.len() as u8,
@@ -271,9 +357,9 @@ impl<const ATT_MTU: usize> PAC<ATT_MTU> {
     }
 }
 
-impl<const ATT_MTU: usize> GattValue for PAC<ATT_MTU> {
-    const MIN_SIZE: usize = size_of::<PAC<1>>();
-    const MAX_SIZE: usize = size_of::<PAC<ATT_MTU>>();
+impl GattValue for PAC {
+    const MIN_SIZE: usize = size_of::<PACRecord>() + 1;
+    const MAX_SIZE: usize = size_of::<PAC>();
 
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() < Self::MIN_SIZE || data.len() > Self::MAX_SIZE {

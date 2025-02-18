@@ -37,7 +37,7 @@ pub const MAX_SERVICES: usize = 4 // att
   ;
 
 trait LeAudioService {
-    fn handle(&self, event: &GattEvent) -> Option<Result<(), AttErrorCode>>;
+    fn handle_event(&self, event: &GattEvent) -> Option<Result<(), AttErrorCode>>;
 }
 
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
@@ -83,9 +83,9 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
 
     pub fn add_pacs(
         &mut self,
-        sink_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        sink_pac: Option<(PAC, &'a mut [u8])>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        source_pac: Option<(PAC<ATT_MTU>, &'a mut [u8])>,
+        source_pac: Option<(PAC, &'a mut [u8])>,
         source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: (AudioContexts, &'a mut [u8]),
         available_audio_contexts: (AudioContexts, &'a mut [u8]),
@@ -113,7 +113,7 @@ impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
         match gatt_data.process(&self.server).await {
             Ok(data) => {
                 if let Some(event) = data {
-                    if let Some(resp) = self.pacs.handle(&event) {
+                    if let Some(resp) = self.pacs.handle_event(&event) {
                         if let Err(err) = resp {
                             event.reject(err).unwrap().send().await
                         } else {
