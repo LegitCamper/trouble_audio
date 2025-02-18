@@ -3,7 +3,7 @@
 //! The Published Audio Capabilities (PACS) service exposes
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
-use super::{generic_audio::*, CodecId, LeAudioService};
+use super::{generic_audio::*, CodecId, LeAudioServerService};
 use bt_hci::uuid::{characteristic, service};
 use core::slice;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -236,7 +236,7 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     }
 }
 
-impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
+impl<const ATT_MTU: usize> LeAudioServerService for PacsServer<ATT_MTU> {
     fn handle_read_event(
         &self,
         event: &ReadEvent,
