@@ -4,7 +4,6 @@
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
 use super::{generic_audio::*, CodecId, LeAudioService};
-use bitflags::Flags;
 use bt_hci::uuid::{characteristic, service};
 use core::slice;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -238,92 +237,92 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
 }
 
 impl<const ATT_MTU: usize> LeAudioService for PacsServer<ATT_MTU> {
-    fn handle_event(
+    fn handle_read_event(
         &self,
-        event: &GattEvent,
+        event: &ReadEvent,
     ) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
-        match event {
-            GattEvent::Read(event) => {
-                if let Some(sink_pac) = &self.sink_pac {
-                    if event.handle() == sink_pac.handle {
-                        return Some(Ok(()));
-                    }
-                    if let Some(sink_audio_locations) = &self.sink_audio_locations {
-                        if event.handle() == sink_audio_locations.handle {
-                            return Some(Ok(()));
-                        }
-                    }
-                }
-
-                if let Some(source_pac) = &self.source_pac {
-                    if event.handle() == source_pac.handle {
-                        return Some(Ok(()));
-                    }
-                    if let Some(source_audio_locations) = &self.source_audio_locations {
-                        if event.handle() == source_audio_locations.handle {
-                            return Some(Ok(()));
-                        }
-                    }
-                }
-
-                if event.handle() == self.supported_audio_contexts.handle {
-                    return Some(Ok(()));
-                }
-
-                if event.handle() == self.available_audio_contexts.handle {
-                    return Some(Ok(()));
-                }
-
-                None
+        if let Some(sink_pac) = &self.sink_pac {
+            if event.handle() == sink_pac.handle {
+                return Some(Ok(()));
             }
-            GattEvent::Write(event) => {
-                if let Some(sink_pac) = &self.sink_pac {
-                    if event.handle() == sink_pac.handle {
-                        return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
-                    }
-                    if let Some(sink_audio_locations) = &self.sink_audio_locations {
-                        if event.handle() == sink_audio_locations.handle {
-                            if event.data().len() == size_of::<AudioLocation>() {
-                                if let Ok(data) = event.value(sink_audio_locations) {
-                                    if data.bits() <= AudioLocation::RightSurround.bits() {
-                                        return Some(Ok(()));
-                                    }
-                                }
-                            };
-                            return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
-                        }
-                    }
+            if let Some(sink_audio_locations) = &self.sink_audio_locations {
+                if event.handle() == sink_audio_locations.handle {
+                    return Some(Ok(()));
                 }
-
-                if let Some(source_pac) = &self.source_pac {
-                    if event.handle() == source_pac.handle {
-                        return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
-                    }
-                    if let Some(source_audio_locations) = &self.source_audio_locations {
-                        if event.handle() == source_audio_locations.handle {
-                            if event.data().len() == size_of::<AudioLocation>() {
-                                if let Ok(data) = event.value(source_audio_locations) {
-                                    if data.bits() <= AudioLocation::RightSurround.bits() {
-                                        return Some(Ok(()));
-                                    }
-                                }
-                            };
-                            return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
-                        }
-                    }
-                }
-
-                if event.handle() == self.supported_audio_contexts.handle {
-                    return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
-                }
-
-                if event.handle() == self.available_audio_contexts.handle {
-                    return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
-                }
-
-                None
             }
         }
+
+        if let Some(source_pac) = &self.source_pac {
+            if event.handle() == source_pac.handle {
+                return Some(Ok(()));
+            }
+            if let Some(source_audio_locations) = &self.source_audio_locations {
+                if event.handle() == source_audio_locations.handle {
+                    return Some(Ok(()));
+                }
+            }
+        }
+
+        if event.handle() == self.supported_audio_contexts.handle {
+            return Some(Ok(()));
+        }
+
+        if event.handle() == self.available_audio_contexts.handle {
+            return Some(Ok(()));
+        }
+
+        None
+    }
+
+    fn handle_write_event(
+        &self,
+        event: &WriteEvent,
+    ) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
+        if let Some(sink_pac) = &self.sink_pac {
+            if event.handle() == sink_pac.handle {
+                return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
+            }
+            if let Some(sink_audio_locations) = &self.sink_audio_locations {
+                if event.handle() == sink_audio_locations.handle {
+                    if event.data().len() == size_of::<AudioLocation>() {
+                        if let Ok(data) = event.value(sink_audio_locations) {
+                            if data.bits() <= AudioLocation::RightSurround.bits() {
+                                return Some(Ok(()));
+                            }
+                        }
+                    };
+                    return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
+                }
+            }
+        }
+
+        if let Some(source_pac) = &self.source_pac {
+            if event.handle() == source_pac.handle {
+                return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
+            }
+            if let Some(source_audio_locations) = &self.source_audio_locations {
+                if event.handle() == source_audio_locations.handle {
+                    if event.data().len() == size_of::<AudioLocation>() {
+                        if let Ok(data) = event.value(source_audio_locations) {
+                            if data.bits() <= AudioLocation::RightSurround.bits() {
+                                return Some(Ok(()));
+                            }
+                        }
+                    };
+                    return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
+                }
+            }
+        }
+
+        if event.handle() == self.supported_audio_contexts.handle {
+            return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
+        }
+
+        if event.handle() == self.available_audio_contexts.handle {
+            return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));
+        }
+
+        None
     }
 }
 

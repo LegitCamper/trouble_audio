@@ -8,7 +8,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use generic_audio::AudioLocation;
 use pacs::{AudioContexts, PacsServer, PAC};
 use trouble_host::{
-    gatt::{GattClient, GattData, GattEvent},
+    gatt::{GattClient, GattData, GattEvent, ReadEvent, WriteEvent},
     prelude::{AttErrorCode, AttributeServer, AttributeTable, GattValue},
     Controller,
 };
@@ -37,7 +37,8 @@ pub const MAX_SERVICES: usize = 4 // att
   ;
 
 trait LeAudioService {
-    fn handle_event(&self, event: &GattEvent) -> Option<Result<(), AttErrorCode>>;
+    fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>>;
+    fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>>;
 }
 
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
@@ -113,7 +114,12 @@ impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
         match gatt_data.process(&self.server).await {
             Ok(data) => {
                 if let Some(event) = data {
-                    if let Some(resp) = self.pacs.handle_event(&event) {
+                    if let Some(resp) = match event {
+                        GattEvent::Read(ref read_event) => self.pacs.handle_read_event(&read_event),
+                        GattEvent::Write(ref write_event) => {
+                            self.pacs.handle_write_event(&write_event)
+                        }
+                    } {
                         if let Err(err) = resp {
                             event.reject(err).unwrap().send().await
                         } else {
