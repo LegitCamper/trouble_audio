@@ -12,7 +12,7 @@ use trouble_host::{prelude::*, types::gatt_traits::*};
 
 use super::MAX_SERVICES;
 #[cfg(feature = "defmt")]
-use defmt::assert;
+use defmt::{assert, info};
 
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
@@ -326,7 +326,7 @@ impl<const ATT_MTU: usize> LeAudioServerService for PacsServer<ATT_MTU> {
     }
 }
 
-/// A set of parameter values that denote server audio capabilities.
+// A set of parameter values that denote server audio capabilities.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Default, Clone)]
 pub struct PACRecord {

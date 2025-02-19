@@ -5,32 +5,129 @@
 //! control the ASEs and their associated unicast Audio Streams.
 
 use core::{mem::size_of, slice};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use trouble_host::{connection::PhySet, prelude::*, types::gatt_traits::*};
 
 #[cfg(feature = "defmt")]
-use defmt::*;
+use defmt::{assert, info, warn};
 
-use crate::CodecId;
+use crate::{CodecId, LeAudioServerService, MAX_SERVICES};
 
-/// Audio Stream Control Service
-#[gatt_service(uuid = 0x184E)]
-pub struct AudioStreamControlService {
-    // /// Sink PAC characteristic containing one or more PAC records
-    // #[characteristic(uuid = "2BC4", read, notify)]
-    // sink_ase: Ase,
-    /// Source PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC5", read, notify)]
-    source_ase: Ase,
+/// A Gatt service for controlling unicast audio streams
+pub struct AscsServer<const ATT_MTU: usize> {
+    handle: trouble_host::attribute::AttributeHandle,
+    sink_ase: Option<Characteristic<Ase>>,
+    source_ase: Option<Characteristic<Ase>>,
+    ase_control_point: Characteristic<Ase>,
+}
 
-    /// Sink PAC characteristic containing one or more PAC records
-    #[characteristic(uuid = "2BC6", write, write_without_response, notify)]
-    ase_control_point: Ase,
+pub const ASCS_ATTRIBUTES: usize = 6;
+
+impl<const ATT_MTU: usize> AscsServer<ATT_MTU> {
+    /// Create a new Ascs Gatt Service
+    ///
+    pub fn new<'a, M: RawMutex>(
+        table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
+        sink_ase: Option<(Ase, &'a mut [u8])>,
+        source_ase: Option<(Ase, &'a mut [u8])>,
+        ase_control_point: (Ase, &'a mut [u8]),
+    ) -> Self {
+        let mut service = table.add_service(Service::new(service::AUDIO_STREAM_CONTROL));
+
+        let sink_ase_char = match sink_ase {
+            Some((sink_ase, store)) => {
+                #[cfg(feature = "defmt")]
+                assert!(store.len() >= ATT_MTU);
+
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SINK_ASE,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            sink_ase,
+                            store,
+                        )
+                        .build(),
+                )
+            }
+            None => None,
+        };
+
+        let source_ase_char = match source_ase {
+            Some((source_ase, store)) => {
+                #[cfg(feature = "defmt")]
+                assert!(store.len() >= ATT_MTU);
+
+                Some(
+                    service
+                        .add_characteristic(
+                            characteristic::SOURCE_ASE,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            source_ase,
+                            store,
+                        )
+                        .build(),
+                )
+            }
+            None => None,
+        };
+
+        #[cfg(feature = "defmt")]
+        assert!(ase_control_point.1.len() >= ATT_MTU);
+
+        let ase_control_point_char = service
+            .add_characteristic(
+                characteristic::ASE_CONTROL_POINT,
+                &[
+                    CharacteristicProp::Write,
+                    CharacteristicProp::WriteWithoutResponse,
+                    CharacteristicProp::Notify,
+                ],
+                ase_control_point.0,
+                ase_control_point.1,
+            )
+            .build();
+
+        Self {
+            handle: service.build(),
+            sink_ase: sink_ase_char,
+            source_ase: source_ase_char,
+            ase_control_point: ase_control_point_char,
+        }
+    }
+}
+
+impl<const ATT_MTU: usize> LeAudioServerService for AscsServer<ATT_MTU> {
+    fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
+        if let Some(sink_ase) = &self.sink_ase {
+            if event.handle() == sink_ase.handle {
+                return Some(Ok(()));
+            }
+        }
+
+        if let Some(source_ase) = &self.source_ase {
+            if event.handle() == source_ase.handle {
+                return Some(Ok(()));
+            }
+        }
+
+        if event.handle() == self.ase_control_point.handle {
+            return Some(Ok(()));
+        }
+
+        None
+    }
+
+    fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>> {
+        todo!()
+    }
 }
 
 #[derive(Default)]
 pub struct Ase {
     /// Identifier of this ASE, assigned by the server.
     pub id: u8,
+    state_id: u8,
     /// State of the ASE with respect to the ASE state machine
     pub state: AseState,
 }

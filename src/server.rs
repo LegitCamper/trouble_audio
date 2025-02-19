@@ -8,6 +8,7 @@ use trouble_host::{
 };
 
 use crate::{
+    ascs::AscsServer,
     generic_audio::AudioLocation,
     pacs::{AudioContexts, PacsServer, PAC, PACS_ATTRIBUTES},
 };
@@ -24,6 +25,7 @@ pub trait LeAudioServerService {
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
     table: AttributeTable<'a, M, MAX_SERVICES>,
     pacs: Option<PacsServer<ATT_MTU>>,
+    ascs: Option<AscsServer<ATT_MTU>>,
 }
 
 impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
@@ -52,13 +54,18 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
         // Generic attribute service (mandatory)
         table.add_service(trouble_host::attribute::Service::new(0x1801u16));
 
-        Self { table, pacs: None }
+        Self {
+            table,
+            pacs: None,
+            ascs: None,
+        }
     }
 
     pub fn build(self) -> Server<'a, ATT_MTU, M> {
         Server {
             server: AttributeServer::<M, MAX_SERVICES>::new(self.table),
             pacs: self.pacs.expect("Pacs is a mandatory service"),
+            ascs: self.ascs,
         }
     }
 
@@ -87,6 +94,7 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
 pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
     server: AttributeServer<'a, M, MAX_SERVICES>,
     pacs: PacsServer<ATT_MTU>,
+    ascs: Option<AscsServer<ATT_MTU>>,
 }
 
 impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
@@ -95,10 +103,8 @@ impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
             Ok(data) => {
                 if let Some(event) = data {
                     if let Some(resp) = match event {
-                        GattEvent::Read(ref read_event) => self.pacs.handle_read_event(&read_event),
-                        GattEvent::Write(ref write_event) => {
-                            self.pacs.handle_write_event(&write_event)
-                        }
+                        GattEvent::Read(ref event) => self.handle_read(event),
+                        GattEvent::Write(ref event) => self.handle_write(event),
                     } {
                         if let Err(err) = resp {
                             event.reject(err).unwrap().send().await
@@ -120,6 +126,34 @@ impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
                 #[cfg(feature = "defmt")]
                 warn!("[le audio] error processing event: {:?}", e);
             }
+        }
+    }
+
+    fn handle_read(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
+        if let Some(res) = self.pacs.handle_read_event(event) {
+            Some(res)
+        } else if let Some(ascs) = &self.ascs {
+            if let Some(res) = ascs.handle_read_event(event) {
+                Some(res)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn handle_write(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>> {
+        if let Some(res) = self.pacs.handle_write_event(event) {
+            Some(res)
+        } else if let Some(ascs) = &self.ascs {
+            if let Some(res) = ascs.handle_write_event(event) {
+                Some(res)
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 }
