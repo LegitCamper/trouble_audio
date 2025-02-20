@@ -12,7 +12,7 @@ use trouble_host::{prelude::*, types::gatt_traits::*};
 
 use super::MAX_SERVICES;
 #[cfg(feature = "defmt")]
-use defmt::{assert, info};
+use defmt::assert;
 
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
@@ -33,31 +33,21 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     /// If you enable a pac, you must also enable the corresponding location
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
-        sink_pac: Option<(PAC, &'a mut [u8])>,
+        sink_pac: Option<&'a PAC>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        source_pac: Option<(PAC, &'a mut [u8])>,
+        source_pac: Option<&'a PAC>,
         source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        supported_audio_contexts: (AudioContexts, &'a mut [u8]),
-        available_audio_contexts: (AudioContexts, &'a mut [u8]),
+        supported_audio_contexts: &'a AudioContexts,
+        available_audio_contexts: &'a AudioContexts,
     ) -> Self {
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
         let sink_pac_char = match sink_pac {
-            Some((sink_pac, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SINK_PAC,
-                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            sink_pac,
-                            store,
-                        )
-                        .build(),
-                )
-            }
+            Some(sink_pac) => Some(
+                service
+                    .add_characteristic_ro(characteristic::SINK_PAC, sink_pac)
+                    .build(),
+            ),
             None => None,
         };
 
@@ -85,21 +75,11 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
         };
 
         let source_pac_char = match source_pac {
-            Some((source_pac, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SOURCE_PAC,
-                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            source_pac,
-                            store,
-                        )
-                        .build(),
-                )
-            }
+            Some(source_pac) => Some(
+                service
+                    .add_characteristic_ro(characteristic::SOURCE_PAC, source_pac)
+                    .build(),
+            ),
             None => None,
         };
 
@@ -126,27 +106,17 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             None => None,
         };
 
-        #[cfg(feature = "defmt")]
-        assert!(supported_audio_contexts.1.len() >= ATT_MTU);
-
         let supported_audio_contexts_char = service
-            .add_characteristic(
+            .add_characteristic_ro(
                 characteristic::SUPPORTED_AUDIO_CONTEXTS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                supported_audio_contexts.0,
-                supported_audio_contexts.1,
+                supported_audio_contexts,
             )
             .build();
 
-        #[cfg(feature = "defmt")]
-        assert!(available_audio_contexts.1.len() >= ATT_MTU);
-
         let available_audio_contexts_char = service
-            .add_characteristic(
+            .add_characteristic_ro(
                 characteristic::AVAILABLE_AUDIO_CONTEXTS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                available_audio_contexts.0,
-                available_audio_contexts.1,
+                available_audio_contexts,
             )
             .build();
 
@@ -159,80 +129,6 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
             supported_audio_contexts: supported_audio_contexts_char,
             available_audio_contexts: available_audio_contexts_char,
         }
-    }
-
-    pub async fn change_sink_pac<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        pac: PAC,
-    ) -> Result<(), Error> {
-        if let Some(sink_pac) = &self.sink_pac {
-            return sink_pac.notify(server, connection, &pac).await;
-        }
-        Ok(())
-    }
-
-    pub async fn change_sink_audio_locations<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        location: AudioLocation,
-    ) -> Result<(), Error> {
-        if let Some(sink_location_location) = &self.sink_audio_locations {
-            return sink_location_location
-                .notify(server, connection, &location)
-                .await;
-        }
-        Ok(())
-    }
-
-    pub async fn change_source_pac<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        pac: PAC,
-    ) -> Result<(), Error> {
-        if let Some(source_pac) = &self.source_pac {
-            return source_pac.notify(server, connection, &pac).await;
-        }
-        Ok(())
-    }
-
-    pub async fn change_source_audio_locations<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        location: AudioLocation,
-    ) -> Result<(), Error> {
-        if let Some(source_location_location) = &self.source_audio_locations {
-            return source_location_location
-                .notify(server, connection, &location)
-                .await;
-        }
-        Ok(())
-    }
-
-    pub async fn change_supported_audio_contexts<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        contexts: AudioContexts,
-    ) -> Result<(), Error> {
-        self.supported_audio_contexts
-            .notify(server, connection, &contexts)
-            .await
-    }
-
-    pub async fn change_available_audio_contexts<'a, M: RawMutex>(
-        &mut self,
-        server: &AttributeServer<'a, M, ATT_MTU>,
-        connection: &Connection<'a>,
-        contexts: AudioContexts,
-    ) -> Result<(), Error> {
-        self.available_audio_contexts
-            .notify(server, connection, &contexts)
-            .await
     }
 }
 
