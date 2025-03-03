@@ -684,7 +684,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=7700932050221fa68a274fe713f7d1eb3d477ea2#7700932050221fa68a274fe713f7d1eb3d477ea2"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=06dc8f13b8f564075f53f4e017cffedfc36dbec6#06dc8f13b8f564075f53f4e017cffedfc36dbec6"
 dependencies = [
  "bt-hci",
  "defmt",
@@ -696,12 +696,13 @@ dependencies = [
  "heapless 0.8.0",
  "static_cell",
  "trouble-host-macros",
+ "zerocopy",
 ]
 
 [[package]]
 name = "trouble-host-macros"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=7700932050221fa68a274fe713f7d1eb3d477ea2#7700932050221fa68a274fe713f7d1eb3d477ea2"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=06dc8f13b8f564075f53f4e017cffedfc36dbec6#06dc8f13b8f564075f53f4e017cffedfc36dbec6"
 dependencies = [
  "Inflector",
  "darling",
@@ -752,4 +753,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcf01143b2dd5d134f11f545cf9f1431b13b749695cb33bcce051e7568f99478"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712c8386f4f4299382c9abee219bee7084f78fb939d88b6840fcc1320d5f6da2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]

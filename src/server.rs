@@ -4,7 +4,7 @@ use defmt::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use trouble_host::{
     gatt::{GattData, GattEvent, ReadEvent, WriteEvent},
-    prelude::{AttErrorCode, AttributeServer, AttributeTable, GattValue},
+    prelude::{AttErrorCode, AttributeServer, AttributeTable, FixedGattValue},
 };
 
 use crate::{
@@ -25,15 +25,15 @@ pub trait LeAudioServerService {
 pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
     table: AttributeTable<'a, M, MAX_SERVICES>,
     pacs: Option<PacsServer<ATT_MTU>>,
-    ascs: Option<AscsServer<ATT_MTU>>,
+    ascs: Option<AscsServer<10, 1>>,
 }
 
 impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
     const STORAGE_SIZE: usize = MAX_SERVICES * ATT_MTU;
 
     pub fn new(
-        name_id: &'a impl GattValue,
-        appearance: &'a impl GattValue,
+        name_id: &'a impl FixedGattValue,
+        appearance: &'a impl FixedGattValue,
         storage: &'a mut [u8],
     ) -> Self {
         #[cfg(feature = "defmt")]
@@ -71,12 +71,12 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
 
     pub fn add_pacs(
         &mut self,
-        sink_pac: Option<(PAC, &'a mut [u8])>,
+        sink_pac: Option<&'a PAC>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        source_pac: Option<(PAC, &'a mut [u8])>,
+        source_pac: Option<&'a PAC>,
         source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
-        supported_audio_contexts: (AudioContexts, &'a mut [u8]),
-        available_audio_contexts: (AudioContexts, &'a mut [u8]),
+        supported_audio_contexts: &'a AudioContexts,
+        available_audio_contexts: &'a AudioContexts,
     ) {
         let pacs = PacsServer::<ATT_MTU>::new(
             &mut self.table,
@@ -94,7 +94,7 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
 pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
     server: AttributeServer<'a, M, MAX_SERVICES>,
     pacs: PacsServer<ATT_MTU>,
-    ascs: Option<AscsServer<ATT_MTU>>,
+    ascs: Option<AscsServer<10, 1>>,
 }
 
 impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {

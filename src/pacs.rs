@@ -16,7 +16,7 @@ use defmt::assert;
 
 /// A Gatt service exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
-    handle: trouble_host::attribute::AttributeHandle,
+    handle: u16,
     sink_pac: Option<Characteristic<PAC>>,
     sink_audio_locations: Option<Characteristic<AudioLocation>>,
     source_pac: Option<Characteristic<PAC>>,
@@ -252,10 +252,7 @@ impl PAC {
     }
 }
 
-impl GattValue for PAC {
-    const MIN_SIZE: usize = size_of::<PACRecord>() + 1;
-    const MAX_SIZE: usize = size_of::<PAC>();
-
+impl FromGatt for PAC {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
         if data.len() < Self::MIN_SIZE || data.len() > Self::MAX_SIZE {
             Err(FromGattError::InvalidLength)
@@ -263,8 +260,11 @@ impl GattValue for PAC {
             unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
         }
     }
-
-    fn to_gatt(&self) -> &[u8] {
+}
+impl AsGatt for PAC {
+    const MIN_SIZE: usize = size_of::<PACRecord>() + 1;
+    const MAX_SIZE: usize = size_of::<PAC>();
+    fn as_gatt(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::MAX_SIZE) }
     }
 }
@@ -289,7 +289,7 @@ impl FixedGattValue for AudioContexts {
         }
     }
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }

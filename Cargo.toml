@@ -29,4 +29,4 @@ bitflags = "2.8.0"
 
 [patch.crates-io]
 embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "195b1a593a4f51ebc7ae61b5045c620a1dbd25d8" }
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "7700932050221fa68a274fe713f7d1eb3d477ea2" }
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "06dc8f13b8f564075f53f4e017cffedfc36dbec6" }

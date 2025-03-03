@@ -4,8 +4,9 @@
 //! which enables clients to discover, configure, establish,and
 //! control the ASEs and their associated unicast Audio Streams.
 
-use core::{mem::size_of, slice};
+use core::{mem::size_of, panic, slice};
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use heapless::Vec;
 use trouble_host::{connection::PhySet, prelude::*, types::gatt_traits::*};
 
 #[cfg(feature = "defmt")]
@@ -14,66 +15,28 @@ use defmt::{assert, info, warn};
 use crate::{CodecId, LeAudioServerService, MAX_SERVICES};
 
 /// A Gatt service for controlling unicast audio streams
-pub struct AscsServer<const ATT_MTU: usize> {
-    handle: trouble_host::attribute::AttributeHandle,
-    sink_ase: Option<Characteristic<Ase>>,
-    source_ase: Option<Characteristic<Ase>>,
-    ase_control_point: Characteristic<Ase>,
+///
+/// MAX_ASES is the max number of sink ases and source ases the device supports
+/// MAX_CONNECTIONS is the max number clients each ase can handle
+pub struct AscsServer<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> {
+    handle: u16,
+    ase_control_point: Characteristic<AseControlOpcode>,
+    ases: Vec<Characteristic<AseType>, MAX_ASES>,
+    // sink_ase: Option<Characteristic<Ase>>,
+    // source_ase: Option<Characteristic<Ase>>,
 }
 
 pub const ASCS_ATTRIBUTES: usize = 6;
 
-impl<const ATT_MTU: usize> AscsServer<ATT_MTU> {
+impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, MAX_CONNECTIONS> {
     /// Create a new Ascs Gatt Service
     ///
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
-        sink_ase: Option<(Ase, &'a mut [u8])>,
-        source_ase: Option<(Ase, &'a mut [u8])>,
-        ase_control_point: (Ase, &'a mut [u8]),
+        ases: Vec<(AseType, &'a mut [u8]), MAX_ASES>,
+        ase_control_point: (AseControlOpcode, &'a mut [u8]),
     ) -> Self {
         let mut service = table.add_service(Service::new(service::AUDIO_STREAM_CONTROL));
-
-        let sink_ase_char = match sink_ase {
-            Some((sink_ase, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SINK_ASE,
-                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            sink_ase,
-                            store,
-                        )
-                        .build(),
-                )
-            }
-            None => None,
-        };
-
-        let source_ase_char = match source_ase {
-            Some((source_ase, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SOURCE_ASE,
-                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            source_ase,
-                            store,
-                        )
-                        .build(),
-                )
-            }
-            None => None,
-        };
-
-        #[cfg(feature = "defmt")]
-        assert!(ase_control_point.1.len() >= ATT_MTU);
 
         let ase_control_point_char = service
             .add_characteristic(
@@ -88,16 +51,39 @@ impl<const ATT_MTU: usize> AscsServer<ATT_MTU> {
             )
             .build();
 
+        let mut ase_chars: Vec<Characteristic<AseType>, MAX_ASES> = Vec::new();
+        for (ase, store) in ases {
+            ase_chars.push(match ase {
+                AseType::Source(_) => service
+                    .add_characteristic(
+                        characteristic::SOURCE_ASE,
+                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        ase,
+                        store,
+                    )
+                    .build(),
+                AseType::Sink(_) => service
+                    .add_characteristic(
+                        characteristic::SINK_ASE,
+                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        ase,
+                        store,
+                    )
+                    .build(),
+            })
+        }
+
         Self {
             handle: service.build(),
-            sink_ase: sink_ase_char,
-            source_ase: source_ase_char,
             ase_control_point: ase_control_point_char,
+            ases: ase_chars,
         }
     }
 }
 
-impl<const ATT_MTU: usize> LeAudioServerService for AscsServer<ATT_MTU> {
+impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> LeAudioServerService
+    for AscsServer<MAX_ASES, MAX_CONNECTIONS>
+{
     fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
         if let Some(sink_ase) = &self.sink_ase {
             if event.handle() == sink_ase.handle {
@@ -143,7 +129,7 @@ impl FixedGattValue for Ase {
         }
     }
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
@@ -172,11 +158,25 @@ pub enum InitiatingDevice {
 }
 
 /// Represents the ASE Type (Sink or Source).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AseType {
-    Source,
-    Sink,
-    All, // Covers cases where the operation is valid for all types
+    Source(Ase),
+    Sink(Ase),
+}
+
+impl FixedGattValue for AseType {
+    const SIZE: usize = size_of::<Ase>();
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn as_gatt(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
 }
 
 #[derive(Default)]
@@ -191,68 +191,6 @@ pub enum AseState {
     Disabling(AseParamsOther) = 5,
     Releasing = 6,
     RFU,
-}
-
-impl AseState {
-    /// Transition the ASE state based on the operation, initiator, and ASE type.
-    pub fn transition(
-        self,
-        operation: AseControlOperation,
-        initiator: InitiatingDevice,
-        ase_type: AseType,
-    ) -> AseState {
-        use AseControlOperation::*;
-        use AseState::*;
-        use AseType::*;
-        use InitiatingDevice::*;
-
-        match (self, operation, initiator, ase_type) {
-            // Idle state transitions
-            (Idle, ConfigCodec, ClientOrServer, All) => CodecConfigured(Default::default()),
-
-            // CodecConfigured state transitions
-            (CodecConfigured(_), ConfigCodec, ClientOrServer, All) => {
-                CodecConfigured(Default::default())
-            }
-            (CodecConfigured(_), Release, ClientOrServer, All) => Releasing,
-            (CodecConfigured(_), ConfigQos, Client, All) => QosConfigured(Default::default()),
-
-            // QosConfigured state transitions
-            (QosConfigured(_), ConfigCodec, ClientOrServer, All) => {
-                CodecConfigured(Default::default())
-            }
-            (QosConfigured(_), ConfigQos, Client, All) => QosConfigured(Default::default()),
-            (QosConfigured(_), Release, ClientOrServer, All) => Releasing,
-            (QosConfigured(_), Enable, Client, All) => Enabling(Default::default()),
-
-            // Enabling state transitions
-            (Enabling(_), Release, ClientOrServer, All) => Releasing,
-            (Enabling(_), UpdateMetadata, ClientOrServer, All) => Enabling(Default::default()),
-            (Enabling(_), Disable, ClientOrServer, Source) => Disabling(Default::default()),
-            (Enabling(_), Disable, ClientOrServer, Sink) => QosConfigured(Default::default()),
-            (Enabling(_), ReceiverStartReady, Client, Source) => Streaming(Default::default()),
-            (Enabling(_), ReceiverStartReady, Server, Sink) => Streaming(Default::default()),
-
-            // Streaming state transitions
-            (Streaming(_), UpdateMetadata, ClientOrServer, All) => Streaming(Default::default()),
-            (Streaming(_), Disable, ClientOrServer, Source) => Disabling(Default::default()),
-            (Streaming(_), Disable, ClientOrServer, Sink) => QosConfigured(Default::default()),
-            (Streaming(_), Release, ClientOrServer, All) => Releasing,
-
-            // Disabling state transitions
-            (Disabling(_), ReceiverStopReady, Client, Source) => QosConfigured(Default::default()),
-            (Disabling(_), Release, ClientOrServer, Source) => Releasing,
-
-            // Releasing state transitions
-            (Releasing, Released, Server, All) => Idle,
-            // (Releasing, ReleasedCaching(_), Server, All) => CodecConfigured::default(),
-            _ => {
-                #[cfg(feature = "defmt")]
-                warn!("Invalid transition state");
-                Disabling(Default::default())
-            }
-        }
-    }
 }
 
 /// Additional Ase parameters for the State::CodedConfigured
@@ -349,4 +287,20 @@ pub enum AseControlOpcode {
     Release = 0x08,            // Releases resources associated with an ASE
     Released = 0x09,           // Transitions ASE to Idle or Codec Configured state
     Rfu = 0xFF,                // Reserved for future use
+}
+
+impl FixedGattValue for AseControlOpcode {
+    const SIZE: usize = 1;
+
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        if data.len() != Self::SIZE {
+            Err(FromGattError::InvalidLength)
+        } else {
+            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
+        }
+    }
+
+    fn as_gatt(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+    }
 }

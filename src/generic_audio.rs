@@ -57,12 +57,12 @@ impl FixedGattValue for AudioLocation {
         defmt::info!("Gatt len: {}, data: {:?}", data.len(), data);
         unsafe {
             Ok(transmute::<u32, AudioLocation>(
-                <u32 as trouble_host::prelude::GattValue>::from_gatt(data)?,
+                <u32 as trouble_host::prelude::FixedGattValue>::from_gatt(data)?,
             ))
         }
     }
 
-    fn to_gatt(&self) -> &[u8] {
+    fn as_gatt(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
