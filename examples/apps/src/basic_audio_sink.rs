@@ -1,10 +1,16 @@
+use bt_hci::AsHciBytes;
 #[cfg(feature = "defmt")]
 use defmt::{Debug2Format, error, info};
 
 use embassy_futures::{join::join, select::select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use trouble_audio::{MAX_SERVICES, ServerStorage, pacs::AudioContexts};
+use heapless::Vec;
+use trouble_audio::{
+    MAX_SERVICES,
+    ascs::{Ase, AseType},
+    pacs::AudioContexts,
+};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -44,39 +50,39 @@ where
         },
     };
 
-    // The size needed to store all le audio server data
-    let mut gatt_storage = ServerStorage::new(&mut [0u8; 25]);
-
     let supported_audio_contexts = AudioContexts::default();
     let available_audio_contexts = AudioContexts::default();
 
     loop {
         select(runner.run(), async {
             loop {
+                let mut ases = Vec::new();
+                ases.push(AseType::Sink(Ase::new(0)));
+
                 match advertise::<C>("Ble Audio Sink", &mut peripheral).await {
                     Ok(conn) => {
                         #[cfg(feature = "defmt")]
                         info!("[adv] connection established");
-                        let mut server_builder =
+                        let server =
                             trouble_audio::ServerBuilder::<L2CAP_MTU, 1, 1, NoopRawMutex>::new(
                                 b"Ble Audio Sink Example",
                                 &appearance::audio_sink::GENERIC_AUDIO_SINK,
-                                &mut gatt_storage,
-                            );
-                        server_builder.add_pacs(
-                            None,
-                            None,
-                            None,
-                            None,
-                            &supported_audio_contexts,
-                            &available_audio_contexts,
-                        );
-                        let server = server_builder.build();
+                            )
+                            .add_pacs(
+                                None,
+                                None,
+                                None,
+                                None,
+                                &supported_audio_contexts,
+                                &available_audio_contexts,
+                            )
+                            .add_ascs(ases)
+                            .build();
                         loop {
                             match conn.next().await {
-                                ConnectionEvent::Disconnected { reason } => {
+                                ConnectionEvent::Disconnected { reason: _reason } => {
                                     #[cfg(feature = "defmt")]
-                                    info!("[gatt] disconnected: {:?}", reason);
+                                    info!("[gatt] disconnected: {:?}", _reason);
                                     break;
                                 }
                                 ConnectionEvent::Gatt { data } => server.process(data).await,
@@ -124,8 +130,10 @@ async fn advertise<'a, C: Controller>(
             },
         )
         .await?;
+    #[cfg(feature = "defmt")]
     info!("[adv] advertising");
     let conn = advertiser.accept().await?;
+    #[cfg(feature = "defmt")]
     info!("[adv] connection established");
     Ok(conn)
 }

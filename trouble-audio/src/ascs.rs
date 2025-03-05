@@ -7,6 +7,7 @@
 use core::{mem::size_of, panic, slice};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
+use static_cell::StaticCell;
 use trouble_host::{connection::PhySet, prelude::*, types::gatt_traits::*};
 
 #[cfg(feature = "defmt")]
@@ -26,8 +27,6 @@ pub struct AscsServer<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> {
     // source_ase: Option<Characteristic<Ase>>,
 }
 
-pub const ASCS_ATTRIBUTES: usize = 6;
-
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, MAX_CONNECTIONS> {
     /// Create a new Ascs Gatt Service
     ///
@@ -35,10 +34,10 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
         ases: Vec<AseType, MAX_ASES>,
-        ase_control_point_store: &'a mut [u8],
     ) -> Self {
         let mut service = table.add_service(Service::new(service::AUDIO_STREAM_CONTROL));
 
+        static CONTROL_STORE: StaticCell<[u8; 90]> = StaticCell::new();
         let ase_control_point_char = service
             .add_characteristic(
                 characteristic::ASE_CONTROL_POINT,
@@ -48,12 +47,13 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
                     CharacteristicProp::Notify,
                 ],
                 AseControlOpcode::Disable,
-                ase_control_point_store,
+                CONTROL_STORE.init([0; 90]),
             )
             .build();
 
         let mut ase_chars: Vec<Characteristic<AseType>, MAX_ASES> = Vec::new();
         for ase in ases {
+            static ASE_STORE: StaticCell<[u8; 90]> = StaticCell::new();
             ase_chars
                 .push(match ase {
                     AseType::Source(_) => service
@@ -69,7 +69,7 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
                             characteristic::SINK_ASE,
                             &[CharacteristicProp::Read, CharacteristicProp::Notify],
                             ase,
-                            &mut [],
+                            ASE_STORE.init([0; 90]),
                         )
                         .build(),
                 })
@@ -110,6 +110,16 @@ pub struct Ase {
     state_id: u8,
     /// State of the ASE with respect to the ASE state machine
     pub state: AseState,
+}
+
+impl Ase {
+    pub fn new(id: u8) -> Self {
+        Self {
+            id,
+            state_id: 0,
+            state: AseState::Idle,
+        }
+    }
 }
 
 impl FixedGattValue for Ase {

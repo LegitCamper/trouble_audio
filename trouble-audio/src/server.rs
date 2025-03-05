@@ -16,31 +16,33 @@ use crate::{
 };
 
 pub const MAX_SERVICES: usize = 4 // att
-     + PACS_ATTRIBUTES // pacs
-  ;
+     + PACS_ATTRIBUTES  
+     + 15 // ascs
+     ;
 
 pub trait LeAudioServerService {
     fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>>;
     fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>>;
 }
 
-pub struct ServerStorage<'a, const ATT_MTU: usize> {
-    storage: ChunksExactMut<'a, u8>,
-    count: usize,
-}
+// pub struct ServerStorage<'a, const ATT_MTU: usize, const MAX_SERVICES: usize> {
+//     storage: [u8],
+//     count: usize,
+// }
 
-impl<'a, const ATT_MTU: usize> ServerStorage<'a, ATT_MTU> {
-    pub fn new(storage: &'a mut [u8]) -> Self {
-        Self {
-            storage: storage.chunks_exact_mut(ATT_MTU),
-            count: 0,
-        }
-    }
-    fn next(&mut self) -> Option<&'a mut [u8]> {
-        self.count += 1;
-        self.storage.nth(self.count)
-    }
-}
+// impl<'a, const ATT_MTU: usize> ServerStorage<'a, ATT_MTU> {
+//     pub fn new(storage: &'a mut [u8]) -> Self {
+//         Self {
+//             storage: storage.chunks_exact_mut(ATT_MTU),
+//             count: 0,
+//         }
+//     }
+//     fn next(&mut self) -> Option<&'a mut [u8]> {
+//         let chunk = self.storage.nth(self.count);
+//         self.count += 1;
+//         chunk
+//     }
+// }
 
 pub struct ServerBuilder<
     'a,
@@ -52,7 +54,7 @@ pub struct ServerBuilder<
     M: RawMutex,
 {
     table: AttributeTable<'a, M, MAX_SERVICES>,
-    storage: &'a mut ServerStorage<'a, ATT_MTU>,
+    // storage: &'a mut ServerStorage<'a, ATT_MTU>,
     pacs: Option<PacsServer<ATT_MTU>>,
     ascs: Option<AscsServer<MAX_ASES, MAX_CONNECTIONS>>,
 }
@@ -67,7 +69,7 @@ where
     pub fn new(
         name_id: &'a impl AsGatt,
         appearance: &'a impl AsGatt,
-        storage: &'a mut ServerStorage<'a, ATT_MTU>,
+        // storage: &'a mut ServerStorage<'a, ATT_MTU>,
     ) -> Self {
         let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
         let mut svc = table.add_service(trouble_host::attribute::Service::new(0x1800u16));
@@ -80,7 +82,7 @@ where
 
         Self {
             table,
-            storage,
+            // storage,
             pacs: None,
             ascs: None,
         }
@@ -95,14 +97,14 @@ where
     }
 
     pub fn add_pacs(
-        &mut self,
+        mut self,
         sink_pac: Option<&'a PAC>,
         sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
         source_pac: Option<&'a PAC>,
         source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
-    ) {
+    ) -> Self {
         let pacs = PacsServer::<ATT_MTU>::new(
             &mut self.table,
             sink_pac,
@@ -113,11 +115,13 @@ where
             available_audio_contexts,
         );
         self.pacs = Some(pacs);
+        self
     }
 
-    pub fn add_ascs(&mut self, ases: Vec<AseType, MAX_ASES>) {
-        let ascs = AscsServer::new(&mut self.table, ases, self.storage.next().unwrap());
+    pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>) -> Self {
+        let ascs = AscsServer::new(&mut self.table, ases);
         self.ascs = Some(ascs);
+        self
     }
 }
 
