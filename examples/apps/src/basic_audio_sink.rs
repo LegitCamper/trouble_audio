@@ -1,8 +1,10 @@
-use defmt::info;
+#[cfg(feature = "defmt")]
+use defmt::{Debug2Format, error, info};
+
 use embassy_futures::{join::join, select::select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use trouble_audio::{MAX_SERVICES, pacs::AudioContexts};
+use trouble_audio::{MAX_SERVICES, ServerStorage, pacs::AudioContexts};
 use trouble_host::prelude::*;
 
 /// Max number of connections
@@ -18,6 +20,7 @@ where
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
+    #[cfg(feature = "defmt")]
     info!("Our address = {:?}", address);
 
     let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
@@ -42,7 +45,7 @@ where
     };
 
     // The size needed to store all le audio server data
-    let mut gatt_storage = [0u8; 25];
+    let mut gatt_storage = ServerStorage::new(&mut [0u8; 25]);
 
     let supported_audio_contexts = AudioContexts::default();
     let available_audio_contexts = AudioContexts::default();
@@ -52,12 +55,13 @@ where
             loop {
                 match advertise::<C>("Ble Audio Sink", &mut peripheral).await {
                     Ok(conn) => {
+                        #[cfg(feature = "defmt")]
                         info!("[adv] connection established");
                         let mut server_builder =
-                            trouble_audio::ServerBuilder::<L2CAP_MTU, NoopRawMutex>::new(
+                            trouble_audio::ServerBuilder::<L2CAP_MTU, 1, 1, NoopRawMutex>::new(
                                 b"Ble Audio Sink Example",
                                 &appearance::audio_sink::GENERIC_AUDIO_SINK,
-                                gatt_storage.as_mut_slice(),
+                                &mut gatt_storage,
                             );
                         server_builder.add_pacs(
                             None,
@@ -71,6 +75,7 @@ where
                         loop {
                             match conn.next().await {
                                 ConnectionEvent::Disconnected { reason } => {
+                                    #[cfg(feature = "defmt")]
                                     info!("[gatt] disconnected: {:?}", reason);
                                     break;
                                 }
@@ -79,13 +84,16 @@ where
                         }
                     }
                     Err(e) => {
-                        let e = defmt::Debug2Format(&e);
-                        defmt::error!("[adv] error: {:?}", e);
+                        #[cfg(feature = "defmt")]
+                        let e = Debug2Format(&e);
+                        #[cfg(feature = "defmt")]
+                        error!("[adv] error: {:?}", e);
                     }
                 }
             }
         })
         .await;
+        #[cfg(feature = "defmt")]
         info!("Exiting Bluetooth");
     }
 }

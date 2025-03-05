@@ -31,10 +31,11 @@ pub const ASCS_ATTRIBUTES: usize = 6;
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, MAX_CONNECTIONS> {
     /// Create a new Ascs Gatt Service
     ///
+    /// MAX_ASES is the number of audio stream endpoints you wish to support PER client/connection
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
-        ases: Vec<(AseType, &'a mut [u8]), MAX_ASES>,
-        ase_control_point: (AseControlOpcode, &'a mut [u8]),
+        ases: Vec<AseType, MAX_ASES>,
+        ase_control_point_store: &'a mut [u8],
     ) -> Self {
         let mut service = table.add_service(Service::new(service::AUDIO_STREAM_CONTROL));
 
@@ -46,31 +47,34 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
                     CharacteristicProp::WriteWithoutResponse,
                     CharacteristicProp::Notify,
                 ],
-                ase_control_point.0,
-                ase_control_point.1,
+                AseControlOpcode::Disable,
+                ase_control_point_store,
             )
             .build();
 
         let mut ase_chars: Vec<Characteristic<AseType>, MAX_ASES> = Vec::new();
-        for (ase, store) in ases {
-            ase_chars.push(match ase {
-                AseType::Source(_) => service
-                    .add_characteristic(
-                        characteristic::SOURCE_ASE,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                        ase,
-                        store,
-                    )
-                    .build(),
-                AseType::Sink(_) => service
-                    .add_characteristic(
-                        characteristic::SINK_ASE,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                        ase,
-                        store,
-                    )
-                    .build(),
-            });
+        for ase in ases {
+            ase_chars
+                .push(match ase {
+                    AseType::Source(_) => service
+                        .add_characteristic(
+                            characteristic::SOURCE_ASE,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            ase,
+                            &mut [],
+                        )
+                        .build(),
+                    AseType::Sink(_) => service
+                        .add_characteristic(
+                            characteristic::SINK_ASE,
+                            &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                            ase,
+                            &mut [],
+                        )
+                        .build(),
+                })
+                .map_err(|_| "Adding ASE endpoint exceeded MAX_SERVICES")
+                .unwrap()
         }
 
         Self {
@@ -85,27 +89,17 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> LeAudioServerService
     for AscsServer<MAX_ASES, MAX_CONNECTIONS>
 {
     fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
-        // if let Some(sink_ase) = &self.sink_ase {
-        //     if event.handle() == sink_ase.handle {
-        //         return Some(Ok(()));
-        //     }
-        // }
-
-        // if let Some(source_ase) = &self.source_ase {
-        //     if event.handle() == source_ase.handle {
-        //         return Some(Ok(()));
-        //     }
-        // }
-
-        if event.handle() == self.ase_control_point.handle {
-            return Some(Ok(()));
+        for ase in self.ases.iter() {
+            if event.handle() == ase.handle {
+                return Some(Ok(()));
+            }
         }
 
         None
     }
 
     fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>> {
-        todo!()
+        unimplemented!()
     }
 }
 

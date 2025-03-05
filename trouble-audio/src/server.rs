@@ -1,14 +1,16 @@
+use core::slice::ChunksExactMut;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use heapless::Vec;
+use trouble_host::{
+    gatt::{GattData, GattEvent, ReadEvent, WriteEvent},
+    prelude::{AsGatt, AttErrorCode, AttributeServer, AttributeTable},
+};
+
 #[cfg(feature = "defmt")]
 use defmt::*;
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use trouble_host::{
-    gatt::{GattData, GattEvent, ReadEvent, WriteEvent},
-    prelude::{AsGatt, AttErrorCode, AttributeServer, AttributeTable, FixedGattValue},
-};
-
 use crate::{
-    ascs::AscsServer,
+    ascs::{AscsServer, AseType},
     generic_audio::AudioLocation,
     pacs::{AudioContexts, PacsServer, PAC, PACS_ATTRIBUTES},
 };
@@ -22,19 +24,50 @@ pub trait LeAudioServerService {
     fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>>;
 }
 
-pub struct ServerBuilder<'a, const ATT_MTU: usize, M: RawMutex> {
-    table: AttributeTable<'a, M, MAX_SERVICES>,
-    pacs: Option<PacsServer<ATT_MTU>>,
-    ascs: Option<AscsServer<10, 1>>,
+pub struct ServerStorage<'a, const ATT_MTU: usize> {
+    storage: ChunksExactMut<'a, u8>,
+    count: usize,
 }
 
-impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
+impl<'a, const ATT_MTU: usize> ServerStorage<'a, ATT_MTU> {
+    pub fn new(storage: &'a mut [u8]) -> Self {
+        Self {
+            storage: storage.chunks_exact_mut(ATT_MTU),
+            count: 0,
+        }
+    }
+    fn next(&mut self) -> Option<&'a mut [u8]> {
+        self.count += 1;
+        self.storage.nth(self.count)
+    }
+}
+
+pub struct ServerBuilder<
+    'a,
+    const ATT_MTU: usize,
+    const MAX_ASES: usize,
+    const MAX_CONNECTIONS: usize,
+    M,
+> where
+    M: RawMutex,
+{
+    table: AttributeTable<'a, M, MAX_SERVICES>,
+    storage: &'a mut ServerStorage<'a, ATT_MTU>,
+    pacs: Option<PacsServer<ATT_MTU>>,
+    ascs: Option<AscsServer<MAX_ASES, MAX_CONNECTIONS>>,
+}
+
+impl<'a, const ATT_MTU: usize, const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M>
+    ServerBuilder<'a, ATT_MTU, MAX_ASES, MAX_CONNECTIONS, M>
+where
+    M: RawMutex,
+{
     const STORAGE_SIZE: usize = MAX_SERVICES * ATT_MTU;
 
     pub fn new(
         name_id: &'a impl AsGatt,
         appearance: &'a impl AsGatt,
-        storage: &'a mut [u8],
+        storage: &'a mut ServerStorage<'a, ATT_MTU>,
     ) -> Self {
         let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
         let mut svc = table.add_service(trouble_host::attribute::Service::new(0x1800u16));
@@ -47,12 +80,13 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
 
         Self {
             table,
+            storage,
             pacs: None,
             ascs: None,
         }
     }
 
-    pub fn build(self) -> Server<'a, ATT_MTU, M> {
+    pub fn build(self) -> Server<'a, ATT_MTU, MAX_ASES, MAX_CONNECTIONS, M> {
         Server {
             server: AttributeServer::<M, MAX_SERVICES>::new(self.table),
             pacs: self.pacs.expect("Pacs is a mandatory service"),
@@ -80,15 +114,27 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
         );
         self.pacs = Some(pacs);
     }
+
+    pub fn add_ascs(&mut self, ases: Vec<AseType, MAX_ASES>) {
+        let ascs = AscsServer::new(&mut self.table, ases, self.storage.next().unwrap());
+        self.ascs = Some(ascs);
+    }
 }
 
-pub struct Server<'a, const ATT_MTU: usize, M: RawMutex> {
+pub struct Server<'a, const ATT_MTU: usize, const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M>
+where
+    M: RawMutex,
+{
     server: AttributeServer<'a, M, MAX_SERVICES>,
     pacs: PacsServer<ATT_MTU>,
-    ascs: Option<AscsServer<10, 1>>,
+    ascs: Option<AscsServer<MAX_ASES, MAX_CONNECTIONS>>,
 }
 
-impl<const ATT_MTU: usize, M: RawMutex> Server<'_, ATT_MTU, M> {
+impl<const ATT_MTU: usize, const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M>
+    Server<'_, ATT_MTU, MAX_ASES, MAX_CONNECTIONS, M>
+where
+    M: RawMutex,
+{
     pub async fn process(&self, gatt_data: GattData<'_>) {
         match gatt_data.process(&self.server).await {
             Ok(data) => {
