@@ -4,7 +4,7 @@
 //! which enables clients to discover, configure, establish,and
 //! control the ASEs and their associated unicast Audio Streams.
 
-use core::{mem::size_of, panic, slice};
+use core::{mem::size_of, slice};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use static_cell::StaticCell;
@@ -22,9 +22,7 @@ use crate::{CodecId, LeAudioServerService, MAX_SERVICES};
 pub struct AscsServer<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> {
     handle: u16,
     ase_control_point: Characteristic<AseControlOpcode>,
-    ases: Vec<Characteristic<AseType>, MAX_ASES>,
-    // sink_ase: Option<Characteristic<Ase>>,
-    // source_ase: Option<Characteristic<Ase>>,
+    ases: Vec<Vec<Characteristic<AseType>, MAX_CONNECTIONS>, MAX_ASES>,
 }
 
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, MAX_CONNECTIONS> {
@@ -51,28 +49,32 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
             )
             .build();
 
-        let mut ase_chars: Vec<Characteristic<AseType>, MAX_ASES> = Vec::new();
-        for ase in ases {
-            static ASE_STORE: StaticCell<[u8; 90]> = StaticCell::new();
-            ase_chars
-                .push(match ase {
+        let mut ase_chars = Vec::new();
+        for ase in ases.iter() {
+            let mut ases_handles = Vec::new();
+            for _ in 0..MAX_CONNECTIONS {
+                static ASE_STORE: StaticCell<[u8; 90]> = StaticCell::new();
+                ases_handles.push(match ase {
                     AseType::Source(_) => service
                         .add_characteristic(
                             characteristic::SOURCE_ASE,
                             &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            ase,
-                            &mut [],
+                            ase.clone(),
+                            ASE_STORE.init([0; 90]),
                         )
                         .build(),
                     AseType::Sink(_) => service
                         .add_characteristic(
                             characteristic::SINK_ASE,
                             &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                            ase,
+                            ase.clone(),
                             ASE_STORE.init([0; 90]),
                         )
                         .build(),
-                })
+                });
+            }
+            ase_chars
+                .push(ases_handles)
                 .map_err(|_| "Adding ASE endpoint exceeded MAX_SERVICES")
                 .unwrap()
         }
@@ -89,9 +91,15 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> LeAudioServerService
     for AscsServer<MAX_ASES, MAX_CONNECTIONS>
 {
     fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
+        if event.handle() == self.ase_control_point.handle {
+            return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
+        }
         for ase in self.ases.iter() {
-            if event.handle() == ase.handle {
-                return Some(Ok(()));
+            // TODO: need to retrieve which ase belongs to each client
+            for client_ase in ase {
+                if event.handle() == client_ase.handle {
+                    return Some(Ok(()));
+                }
             }
         }
 
@@ -99,11 +107,22 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> LeAudioServerService
     }
 
     fn handle_write_event(&self, event: &WriteEvent) -> Option<Result<(), AttErrorCode>> {
-        unimplemented!()
+        if event.handle() == self.ase_control_point.handle {
+            return Some(Ok(()));
+        }
+        for ase in self.ases.iter() {
+            for client_ase in ase {
+                if event.handle() == client_ase.handle {
+                    return Some(Err(AttErrorCode::WRITE_REQUEST_REJECTED));
+                }
+            }
+        }
+
+        None
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Ase {
     /// Identifier of this ASE, assigned by the server.
     pub id: u8,
@@ -119,22 +138,6 @@ impl Ase {
             state_id: 0,
             state: AseState::Idle,
         }
-    }
-}
-
-impl FixedGattValue for Ase {
-    const SIZE: usize = size_of::<Ase>();
-
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() != Self::SIZE {
-            Err(FromGattError::InvalidLength)
-        } else {
-            unsafe { Ok((data.as_ptr() as *const Self).read_unaligned()) }
-        }
-    }
-
-    fn as_gatt(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
     }
 }
 
@@ -162,6 +165,7 @@ pub enum InitiatingDevice {
 }
 
 /// Represents the ASE Type (Sink or Source).
+#[derive(Clone)]
 pub enum AseType {
     Source(Ase),
     Sink(Ase),
@@ -183,7 +187,7 @@ impl FixedGattValue for AseType {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[repr(u8)]
 pub enum AseState {
     #[default]
@@ -198,6 +202,7 @@ pub enum AseState {
 }
 
 /// Additional Ase parameters for the State::CodedConfigured
+#[derive(Clone)]
 pub struct AseParamsCodecConfigured {
     /// Server support for unframed ISOAL PDUs
     pub framing: u8,
@@ -242,6 +247,7 @@ impl Default for AseParamsCodecConfigured {
 }
 
 /// Additional Ase parameters for the State::QoSConfigured
+#[derive(Clone)]
 pub struct AseParamsQoSConfigured {
     pub cig_id: u8,
     pub cis_id: u8,
@@ -271,7 +277,7 @@ impl Default for AseParamsQoSConfigured {
 }
 
 /// Additional Ase parameters for the State::Enabling, State::Steaming, or State::Disabled
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AseParamsOther {
     pub cig_id: u8,
     pub cis_id: u8,

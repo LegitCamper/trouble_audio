@@ -15,7 +15,7 @@ mod configuration;
 pub use configuration::*;
 
 bitflags! {
-    #[derive(Default, Debug)]
+    #[derive(Default, Debug, Clone, Copy)]
     pub struct AudioLocation: u32 {
         const Mono = 0x00000000; // Mono Audio (no specified Audio Location)
         const FrontLeft = 0x00000001;

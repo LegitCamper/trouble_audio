@@ -3,16 +3,12 @@
 //! The Published Audio Capabilities (PACS) service exposes
 //! server audio capabilities and audio availability, allowing discovery by clients.
 
-use super::{generic_audio::*, CodecId, LeAudioServerService};
+use super::{generic_audio::*, CodecId, LeAudioServerService, MAX_SERVICES};
 use bt_hci::uuid::{characteristic, service};
 use core::slice;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::{prelude::*, types::gatt_traits::*};
-
-use super::MAX_SERVICES;
-#[cfg(feature = "defmt")]
-use defmt::assert;
 
 /// A Gatt service client for reading exposed Capabilities of an audio server
 pub struct PacsClient {
@@ -112,9 +108,9 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
         sink_pac: Option<&'a PAC>,
-        sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        sink_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         source_pac: Option<&'a PAC>,
-        source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        source_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
     ) -> Self {
@@ -130,25 +126,20 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
         };
 
         let sink_audio_locations_char = match sink_audio_locations {
-            Some((sink_audio_locations, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SINK_AUDIO_LOCATIONS,
-                            &[
-                                CharacteristicProp::Read,
-                                CharacteristicProp::Notify,
-                                CharacteristicProp::Write,
-                            ],
-                            sink_audio_locations,
-                            store,
-                        )
-                        .build(),
-                )
-            }
+            Some((sink_audio_locations, store)) => Some(
+                service
+                    .add_characteristic(
+                        characteristic::SINK_AUDIO_LOCATIONS,
+                        &[
+                            CharacteristicProp::Read,
+                            CharacteristicProp::Notify,
+                            CharacteristicProp::Write,
+                        ],
+                        *sink_audio_locations,
+                        store,
+                    )
+                    .build(),
+            ),
             None => None,
         };
 
@@ -162,25 +153,20 @@ impl<const ATT_MTU: usize> PacsServer<ATT_MTU> {
         };
 
         let source_audio_locations_char = match source_audio_locations {
-            Some((source_audio_locations, store)) => {
-                #[cfg(feature = "defmt")]
-                assert!(store.len() >= ATT_MTU);
-
-                Some(
-                    service
-                        .add_characteristic(
-                            characteristic::SOURCE_AUDIO_LOCATIONS,
-                            &[
-                                CharacteristicProp::Read,
-                                CharacteristicProp::Notify,
-                                CharacteristicProp::Write,
-                            ],
-                            source_audio_locations,
-                            store,
-                        )
-                        .build(),
-                )
-            }
+            Some((source_audio_locations, store)) => Some(
+                service
+                    .add_characteristic(
+                        characteristic::SOURCE_AUDIO_LOCATIONS,
+                        &[
+                            CharacteristicProp::Read,
+                            CharacteristicProp::Notify,
+                            CharacteristicProp::Write,
+                        ],
+                        *source_audio_locations,
+                        store,
+                    )
+                    .build(),
+            ),
             None => None,
         };
 

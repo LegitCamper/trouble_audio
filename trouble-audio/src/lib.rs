@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), no_std, no_main)]
 // #![warn(missing_docs)]
+#![feature(generic_const_exprs)]
 
 #[allow(dead_code)]
 pub mod ascs;

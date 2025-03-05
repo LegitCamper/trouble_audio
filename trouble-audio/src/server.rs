@@ -99,9 +99,9 @@ where
     pub fn add_pacs(
         mut self,
         sink_pac: Option<&'a PAC>,
-        sink_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        sink_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         source_pac: Option<&'a PAC>,
-        source_audio_locations: Option<(AudioLocation, &'a mut [u8])>,
+        source_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
     ) -> Self {
@@ -118,7 +118,8 @@ where
         self
     }
 
-    pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>) -> Self {
+    pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>) -> Self
+    {
         let ascs = AscsServer::new(&mut self.table, ases);
         self.ascs = Some(ascs);
         self

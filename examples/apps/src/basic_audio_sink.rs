@@ -6,10 +6,12 @@ use embassy_futures::{join::join, select::select};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use heapless::Vec;
+use static_cell::StaticCell;
 use trouble_audio::{
     MAX_SERVICES,
     ascs::{Ase, AseType},
-    pacs::AudioContexts,
+    generic_audio::AudioLocation,
+    pacs::{AudioContexts, PAC, PACRecord},
 };
 use trouble_host::prelude::*;
 
@@ -50,6 +52,9 @@ where
         },
     };
 
+    let sink_pac = PAC::default();
+    let sink_audio_locations = AudioLocation::all();
+    static sink_audio_locations_store: StaticCell<[u8; 90]> = StaticCell::new();
     let supported_audio_contexts = AudioContexts::default();
     let available_audio_contexts = AudioContexts::default();
 
@@ -69,8 +74,11 @@ where
                                 &appearance::audio_sink::GENERIC_AUDIO_SINK,
                             )
                             .add_pacs(
-                                None,
-                                None,
+                                Some(&sink_pac),
+                                Some((
+                                    &sink_audio_locations,
+                                    sink_audio_locations_store.init([0; 90]),
+                                )),
                                 None,
                                 None,
                                 &supported_audio_contexts,
