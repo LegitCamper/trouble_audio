@@ -14,7 +14,85 @@ use super::MAX_SERVICES;
 #[cfg(feature = "defmt")]
 use defmt::assert;
 
-/// A Gatt service exposing Capabilities of an audio device
+/// A Gatt service client for reading exposed Capabilities of an audio server
+pub struct PacsClient {
+    handle: ServiceHandle,
+    pub sink_pac: Option<Characteristic<PAC>>,
+    pub sink_audio_locations: Option<Characteristic<AudioLocation>>,
+    pub source_pac: Option<Characteristic<PAC>>,
+    pub source_audio_locations: Option<Characteristic<AudioLocation>>,
+    pub supported_audio_contexts: Characteristic<AudioContexts>,
+    pub available_audio_contexts: Characteristic<AudioContexts>,
+}
+
+impl PacsClient {
+    pub async fn new<'a, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>(
+        client: &'a mut GattClient<'a, T, MAX_SERVICES, L2CAP_MTU>,
+    ) -> Self {
+        let services = client
+            .services_by_uuid(&Uuid::new_short(
+                service::PUBLISHED_AUDIO_CAPABILITIES.into(),
+            ))
+            .await
+            .unwrap();
+        let handle = services.first().unwrap();
+
+        let sink_pac = client
+            .characteristic_by_uuid(&handle, &Uuid::new_short(characteristic::SINK_PAC.into()))
+            .await
+            .ok();
+
+        let sink_audio_locations = client
+            .characteristic_by_uuid(
+                &handle,
+                &Uuid::new_short(characteristic::SINK_AUDIO_LOCATIONS.into()),
+            )
+            .await
+            .ok();
+
+        let source_pac = client
+            .characteristic_by_uuid(&handle, &Uuid::new_short(characteristic::SOURCE_PAC.into()))
+            .await
+            .ok();
+
+        let source_audio_locations = client
+            .characteristic_by_uuid(
+                &handle,
+                &Uuid::new_short(characteristic::SOURCE_AUDIO_LOCATIONS.into()),
+            )
+            .await
+            .ok();
+
+        let supported_audio_contexts = client
+            .characteristic_by_uuid(
+                &handle,
+                &Uuid::new_short(characteristic::SUPPORTED_AUDIO_CONTEXTS.into()),
+            )
+            .await
+            .expect("The server Must support SUPPORTED_AUDIO_CONTEXTS");
+
+        let available_audio_contexts = client
+            .characteristic_by_uuid(
+                &handle,
+                &Uuid::new_short(characteristic::AVAILABLE_AUDIO_CONTEXTS.into()),
+            )
+            .await
+            .expect("The server Must support AVAILABLE_AUDIO_CONTEXTS");
+
+        Self {
+            handle: handle.clone(),
+            sink_pac,
+            sink_audio_locations,
+            source_pac,
+            source_audio_locations,
+            supported_audio_contexts,
+            available_audio_contexts,
+        }
+    }
+    // TODO: handle subscriptions
+}
+
+/// A Gatt service server exposing Capabilities of an audio device
 pub struct PacsServer<const ATT_MTU: usize> {
     handle: u16,
     sink_pac: Option<Characteristic<PAC>>,

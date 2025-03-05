@@ -4,7 +4,7 @@ use defmt::*;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use trouble_host::{
     gatt::{GattData, GattEvent, ReadEvent, WriteEvent},
-    prelude::{AttErrorCode, AttributeServer, AttributeTable, FixedGattValue},
+    prelude::{AsGatt, AttErrorCode, AttributeServer, AttributeTable, FixedGattValue},
 };
 
 use crate::{
@@ -32,19 +32,10 @@ impl<'a, const ATT_MTU: usize, M: RawMutex> ServerBuilder<'a, ATT_MTU, M> {
     const STORAGE_SIZE: usize = MAX_SERVICES * ATT_MTU;
 
     pub fn new(
-        name_id: &'a impl FixedGattValue,
-        appearance: &'a impl FixedGattValue,
+        name_id: &'a impl AsGatt,
+        appearance: &'a impl AsGatt,
         storage: &'a mut [u8],
     ) -> Self {
-        #[cfg(feature = "defmt")]
-        if storage.len() < Self::STORAGE_SIZE {
-            defmt::panic!(
-                "storage len: {}, but needs to be {}",
-                storage.len(),
-                Self::STORAGE_SIZE
-            );
-        }
-
         let mut table: AttributeTable<'_, M, MAX_SERVICES> = AttributeTable::new();
         let mut svc = table.add_service(trouble_host::attribute::Service::new(0x1800u16));
         let _ = svc.add_characteristic_ro(0x2a00u16, name_id);

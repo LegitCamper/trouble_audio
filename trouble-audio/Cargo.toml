@@ -12,7 +12,7 @@ embassy-sync = "0.6.1"
 embassy-futures = "0.1.1"
 embassy-time = "0.4.0"
 bt-hci = "0.2.0"
-trouble-host = { version = "0.1.0", features = [
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "06dc8f13b8f564075f53f4e017cffedfc36dbec6", features = [
   "derive",
   "gatt",
   "peripheral",
@@ -26,7 +26,3 @@ defmt = { version = "0.3.10", optional = true }
 static_cell = "2.1.0"
 heapless = "0.8.0"
 bitflags = "2.8.0"
-
-[patch.crates-io]
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "195b1a593a4f51ebc7ae61b5045c620a1dbd25d8" }
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "06dc8f13b8f564075f53f4e017cffedfc36dbec6" }

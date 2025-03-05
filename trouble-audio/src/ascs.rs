@@ -70,7 +70,7 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> AscsServer<MAX_ASES, M
                         store,
                     )
                     .build(),
-            })
+            });
         }
 
         Self {
@@ -85,17 +85,17 @@ impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize> LeAudioServerService
     for AscsServer<MAX_ASES, MAX_CONNECTIONS>
 {
     fn handle_read_event(&self, event: &ReadEvent) -> Option<Result<(), AttErrorCode>> {
-        if let Some(sink_ase) = &self.sink_ase {
-            if event.handle() == sink_ase.handle {
-                return Some(Ok(()));
-            }
-        }
+        // if let Some(sink_ase) = &self.sink_ase {
+        //     if event.handle() == sink_ase.handle {
+        //         return Some(Ok(()));
+        //     }
+        // }
 
-        if let Some(source_ase) = &self.source_ase {
-            if event.handle() == source_ase.handle {
-                return Some(Ok(()));
-            }
-        }
+        // if let Some(source_ase) = &self.source_ase {
+        //     if event.handle() == source_ase.handle {
+        //         return Some(Ok(()));
+        //     }
+        // }
 
         if event.handle() == self.ase_control_point.handle {
             return Some(Ok(()));
