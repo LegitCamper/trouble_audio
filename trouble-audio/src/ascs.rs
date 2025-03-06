@@ -15,6 +15,55 @@ use defmt::{assert, info, warn};
 
 use crate::{CodecId, LeAudioServerService, MAX_SERVICES};
 
+/// A Gatt service client for reading exposed Capabilities of an audio server
+pub struct AscsClient<const MAX_ASES: usize> {
+    handle: ServiceHandle,
+    ase_control_point: Characteristic<AseControlOpcode>,
+    // pub ases: Vec<Characteristic<AseType>, MAX_ASES>,
+    pub source_ase: Option<Characteristic<AseType>>,
+    pub sink_ase: Option<Characteristic<AseType>>,
+}
+
+impl<const MAX_ASES: usize> AscsClient<MAX_ASES> {
+    pub async fn new<'a, T: Controller, const MAX_SERVICES: usize, const L2CAP_MTU: usize>(
+        client: &'a mut GattClient<'a, T, MAX_SERVICES, L2CAP_MTU>,
+    ) -> Self {
+        let services = client
+            .services_by_uuid(&Uuid::new_short(service::AUDIO_STREAM_CONTROL.into()))
+            .await
+            .unwrap();
+        let handle = services.first().unwrap();
+
+        let ase_control_point = client
+            .characteristic_by_uuid(
+                &handle,
+                &Uuid::new_short(characteristic::ASE_CONTROL_POINT.into()),
+            )
+            .await
+            .expect("Ase Control point must exist on the server");
+
+        let sink_ase = client
+            .characteristic_by_uuid(&handle, &Uuid::new_short(characteristic::SINK_ASE.into()))
+            .await
+            .ok();
+
+        let source_ase = client
+            .characteristic_by_uuid(&handle, &Uuid::new_short(characteristic::SOURCE_ASE.into()))
+            .await
+            .ok();
+
+        // One of the following must me implemented on the servver
+        assert!(sink_ase.is_some() || source_ase.is_some());
+
+        Self {
+            handle: handle.clone(),
+            ase_control_point,
+            source_ase,
+            sink_ase,
+        }
+    }
+}
+
 /// A Gatt service for controlling unicast audio streams
 ///
 /// MAX_ASES is the max number of sink ases and source ases the device supports
