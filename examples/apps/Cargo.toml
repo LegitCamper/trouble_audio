@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "06dc8f13b8f564075f53f4e017cffedfc36dbec6", features = [
+trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "904171eecb04e4784d4ce8f4a9a020637634ec53", features = [
   "derive",
   "scan",
 ] }
-trouble_audio = { path = "../../trouble-audio" }
+trouble_audio = { path = "../../trouble-audio", default-features = false }
 bt-hci = { version = "0.2" }
 embassy-executor = { version = "0.7.0" }
 embassy-futures = "0.1.1"

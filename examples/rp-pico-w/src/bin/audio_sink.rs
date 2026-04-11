@@ -10,7 +10,7 @@ use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use static_cell::StaticCell;
-use trouble_audio_example_apps::basic_audio_sink;
+use trouble_audio_example_apps::basic_audio_sink::{self, run};
 use {defmt_rtt as _, embassy_time as _, panic_probe as _};
 
 /// Size of L2CAP packets
@@ -73,5 +73,5 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
 
-    basic_audio_sink::run::<_, L2CAP_MTU>(controller).await;
+    run::<_, L2CAP_MTU>(controller).await;
 }

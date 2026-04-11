@@ -238,6 +238,7 @@ impl<const ATT_MTU: usize> LeAudioServerService for PacsServer<ATT_MTU> {
         &self,
         event: &WriteEvent,
     ) -> Option<Result<(), trouble_host::prelude::AttErrorCode>> {
+        #[cfg(feature = "defmt")]
         if let Some(sink_pac) = &self.sink_pac {
             if event.handle() == sink_pac.handle {
                 return Some(Err(AttErrorCode::WRITE_NOT_PERMITTED));

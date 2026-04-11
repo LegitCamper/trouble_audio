@@ -211,6 +211,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "futures-util",
+ "log",
 ]
 
 [[package]]
@@ -566,6 +567,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+
+[[package]]
 name = "regex"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -685,7 +692,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=06dc8f13b8f564075f53f4e017cffedfc36dbec6#06dc8f13b8f564075f53f4e017cffedfc36dbec6"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=904171eecb04e4784d4ce8f4a9a020637634ec53#904171eecb04e4784d4ce8f4a9a020637634ec53"
 dependencies = [
  "bt-hci",
  "defmt",
@@ -695,6 +702,7 @@ dependencies = [
  "embedded-io",
  "futures",
  "heapless 0.8.0",
+ "rand_core",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",
@@ -703,7 +711,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=06dc8f13b8f564075f53f4e017cffedfc36dbec6#06dc8f13b8f564075f53f4e017cffedfc36dbec6"
+source = "git+https://github.com/embassy-rs/trouble.git?rev=904171eecb04e4784d4ce8f4a9a020637634ec53#904171eecb04e4784d4ce8f4a9a020637634ec53"
 dependencies = [
  "Inflector",
  "darling",

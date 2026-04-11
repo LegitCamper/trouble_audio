@@ -94,6 +94,7 @@ where
                                     break;
                                 }
                                 ConnectionEvent::Gatt { data } => server.process(data).await,
+                                _ => {}
                             }
                         }
                     }

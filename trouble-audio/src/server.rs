@@ -1,4 +1,3 @@
-use core::slice::ChunksExactMut;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::{
@@ -90,7 +89,7 @@ where
 
     pub fn build(self) -> Server<'a, ATT_MTU, MAX_ASES, MAX_CONNECTIONS, M> {
         Server {
-            server: AttributeServer::<M, MAX_SERVICES>::new(self.table),
+            server: AttributeServer::<M, ATT_MTU, MAX_ASES, MAX_CONNECTIONS>::new(self.table),
             pacs: self.pacs.expect("Pacs is a mandatory service"),
             ascs: self.ascs,
         }
@@ -130,7 +129,7 @@ pub struct Server<'a, const ATT_MTU: usize, const MAX_ASES: usize, const MAX_CON
 where
     M: RawMutex,
 {
-    server: AttributeServer<'a, M, MAX_SERVICES>,
+    server: AttributeServer<'a, M, ATT_MTU, MAX_ASES, MAX_CONNECTIONS>,
     pacs: PacsServer<ATT_MTU>,
     ascs: Option<AscsServer<MAX_ASES, MAX_CONNECTIONS>>,
 }
