@@ -2,8 +2,10 @@
 //!
 use bitflags::bitflags;
 
-use core::{mem::transmute, slice};
-use trouble_host::{prelude::*, types::gatt_traits::*};
+use trouble_host::types::gatt_traits::*;
+
+mod ltv;
+pub use ltv::*;
 
 mod metadata;
 pub use metadata::*;
@@ -15,9 +17,10 @@ mod configuration;
 pub use configuration::*;
 
 bitflags! {
-    #[derive(Debug, Clone, Copy)]
+    /// Audio_Location bitfield: identifies the physical location(s) of an audio channel.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct AudioLocation: u32 {
-        const Mono = 0x00000000; // Mono Audio (no specified Audio Location)
+        const Mono = 0x00000000;
         const FrontLeft = 0x00000001;
         const FrontRight = 0x00000002;
         const FrontCenter = 0x00000004;
@@ -51,25 +54,36 @@ bitflags! {
 
 impl Default for AudioLocation {
     fn default() -> Self {
-        Self::from_bits(0x00000000).unwrap()
+        Self::empty()
+    }
+}
+
+impl AsGatt for AudioLocation {
+    const MIN_SIZE: usize = 4;
+    const MAX_SIZE: usize = 4;
+
+    fn as_gatt(&self) -> &[u8] {
+        // SAFETY: `self.bits` is a plain u32; reinterpreting it as 4 little-endian
+        // octets matches its in-memory representation on all supported targets.
+        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 4) }
+    }
+}
+
+impl FromGatt for AudioLocation {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        let bytes: [u8; 4] = data.try_into().map_err(|_| FromGattError::InvalidLength)?;
+        Ok(Self::from_bits_truncate(u32::from_le_bytes(bytes)))
     }
 }
 
 impl FixedGattValue for AudioLocation {
-    const SIZE: usize = size_of::<Self>();
+    const SIZE: usize = 4;
+}
 
-    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        #[cfg(feature = "defmt")]
-        defmt::info!("Gatt len: {}, data: {:?}", data.len(), data);
-        unsafe {
-            Ok(transmute::<u32, AudioLocation>(
-                <u32 as trouble_host::prelude::FixedGattValue>::from_gatt(data)?,
-            ))
-        }
-    }
-
-    fn as_gatt(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self as *const Self as *const u8, Self::SIZE) }
+#[cfg(feature = "defmt")]
+impl defmt::Format for AudioLocation {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "AudioLocation({=u32:b})", self.bits())
     }
 }
 
@@ -77,38 +91,70 @@ impl FixedGattValue for AudioLocation {
 #[derive(Default, Debug)]
 pub enum AudioInputType {
     #[default]
-    Unspecified = 0x00, // Unspecified Input
-    Bluetooth = 0x01,  // Bluetooth Audio Stream
-    Microphone = 0x02, // Microphone
-    Analog = 0x03,     // Analog Interface
-    Digital = 0x04,    // Digital Interface
-    Radio = 0x05,      // AM/FM/XM/etc.
-    Streaming = 0x06,  // Streaming Audio Source
-    Ambient = 0x07,    // Transparency/Pass-through
+    Unspecified = 0x00,
+    Bluetooth = 0x01,
+    Microphone = 0x02,
+    Analog = 0x03,
+    Digital = 0x04,
+    Radio = 0x05,
+    Streaming = 0x06,
+    Ambient = 0x07,
     Undefined,
 }
 
-/// A bitfield of values that, when set to 0b1 for a bit,
-/// describes audio data as being intended for the use case represented by that bit.
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Default, Debug, Clone)]
-#[repr(u16)]
-pub enum ContextType {
-    #[default]
-    Prohibited = 0x0000,
-    Unspecified = 0x0001,
-    Conversational = 0x0002,
-    Media = 0x0004,
-    Game = 0x0008,
-    Instructional = 0x0010,
-    VoiceAssistants = 0x0020,
-    Live = 0x0040,
-    SoundEffects = 0x0080,
-    Notifications = 0x0100,
-    Ringtone = 0x0200,
-    Alerts = 0x0400,
-    Alarm = 0x0800,
-    Undefined,
+bitflags! {
+    /// Context_Type bitfield: describes audio data as being intended for the use case(s)
+    /// represented by each set bit. Multiple bits may be set simultaneously.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ContextType: u16 {
+        const Unspecified = 0x0001;
+        const Conversational = 0x0002;
+        const Media = 0x0004;
+        const Game = 0x0008;
+        const Instructional = 0x0010;
+        const VoiceAssistants = 0x0020;
+        const Live = 0x0040;
+        const SoundEffects = 0x0080;
+        const Notifications = 0x0100;
+        const Ringtone = 0x0200;
+        const Alerts = 0x0400;
+        const Alarm = 0x0800;
+    }
+}
+
+impl Default for ContextType {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl AsGatt for ContextType {
+    const MIN_SIZE: usize = 2;
+    const MAX_SIZE: usize = 2;
+
+    fn as_gatt(&self) -> &[u8] {
+        // SAFETY: bitflags types are `#[repr(transparent)]` over their bit type (u16 here),
+        // so reinterpreting as 2 little-endian octets matches the in-memory representation.
+        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 2) }
+    }
+}
+
+impl FromGatt for ContextType {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        let bytes: [u8; 2] = data.try_into().map_err(|_| FromGattError::InvalidLength)?;
+        Ok(Self::from_bits_truncate(u16::from_le_bytes(bytes)))
+    }
+}
+
+impl FixedGattValue for ContextType {
+    const SIZE: usize = 2;
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ContextType {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "ContextType({=u16:b})", self.bits())
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -119,6 +165,7 @@ pub struct OctetsPerCodecFrame {
 }
 
 impl OctetsPerCodecFrame {
+    /// Creates a new min/max octets-per-codec-frame range.
     pub fn new(min_octets: u16, max_octets: u16) -> Self {
         Self {
             min_octets,
@@ -126,13 +173,18 @@ impl OctetsPerCodecFrame {
         }
     }
 
-    fn encode(&self) -> u32 {
-        ((self.max_octets as u32) << 16) | self.min_octets as u32
+    /// Encodes as 4 octets: min (2, LE) then max (2, LE).
+    pub fn to_le_bytes(&self) -> [u8; 4] {
+        let mut out = [0u8; 4];
+        out[0..2].copy_from_slice(&self.min_octets.to_le_bytes());
+        out[2..4].copy_from_slice(&self.max_octets.to_le_bytes());
+        out
     }
 
-    fn decode(encoded: u32) -> Self {
-        let min_octets = (encoded & 0xFFFF) as u16;
-        let max_octets = (encoded >> 16) as u16;
+    /// Decodes from 4 octets: min (2, LE) then max (2, LE).
+    pub fn from_le_bytes(bytes: [u8; 4]) -> Self {
+        let min_octets = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let max_octets = u16::from_le_bytes([bytes[2], bytes[3]]);
         Self::new(min_octets, max_octets)
     }
 }

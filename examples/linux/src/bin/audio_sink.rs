@@ -14,6 +14,5 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let transport = Transport::new(dev)?;
     let controller = ExternalController::<_, 8>::new(transport);
-    basic_audio_sink::run(controller).await;
-    Ok(())
+    basic_audio_sink::run(controller).await
 }

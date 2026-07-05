@@ -1,148 +1,73 @@
-use bt_hci::AsHciBytes;
-#[cfg(feature = "defmt")]
-use defmt::{Debug2Format, error, info};
+//! A minimal LE Audio unicast sink peripheral. All the construction (HostResources, GATT server,
+//! advertising) and the event loop (ASE Control Point state machine included) live in
+//! `trouble_audio::le_audio::run_peripheral` - this just describes what a sink with one Sink ASE
+//! looks like and hands it off.
 
-use embassy_futures::{join::join, select::select};
+use alloc::vec;
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Timer};
-use heapless::Vec;
-use static_cell::StaticCell;
+use heapless::Vec as HVec;
 use trouble_audio::{
-    MAX_SERVICES,
     ascs::{Ase, AseType},
-    generic_audio::AudioLocation,
+    generic_audio::{AudioLocation, CodecSpecificCapabilities, ContextType, SamplingFrequency, SupportedSamplingFrequencies},
+    le_audio::{run_peripheral, PeripheralConfig},
     pacs::{AudioContexts, PAC, PACRecord},
+    CodecId,
 };
 use trouble_host::prelude::*;
 
-/// Max number of connections
+/// Max number of connections. This crate's `AscsServer` models a single active connection.
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(mut controller: C) -> !
+/// Max number of Sink/Source ASEs this device exposes.
+const MAX_ASES: usize = 1;
+
+/// Runs the audio sink peripheral forever on the given controller.
+pub async fn run<C>(controller: C) -> !
 where
     C: Controller,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
     let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
-    #[cfg(feature = "defmt")]
-    info!("Our address = {:?}", address);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
-
-    // NOTE: Modify this to match the address of the peripheral you want to connect to.
-    // Currently, it matches the address used by the peripheral examples
-    let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-
-    let config = ConnectConfig {
-        connect_params: Default::default(),
-        scan_config: ScanConfig {
-            filter_accept_list: &[(target.kind, &target.addr)],
-            ..Default::default()
+    let config = PeripheralConfig {
+        device_name: b"Ble Audio Sink",
+        appearance: appearance::audio_sink::GENERIC_AUDIO_SINK,
+        sink_pac: Some(PAC::new(&[PACRecord {
+            codec_id: CodecId::default(), // LC3
+            codec_specific_capabilities: vec![CodecSpecificCapabilities::SupportedSamplingFrequencies(
+                SupportedSamplingFrequencies::new(&[SamplingFrequency::Hz48000]),
+            )],
+            metadata: vec![],
+        }])),
+        sink_audio_locations: Some(AudioLocation::FrontLeft | AudioLocation::FrontRight),
+        source_pac: None,
+        source_audio_locations: None,
+        supported_audio_contexts: AudioContexts {
+            sink_contexts: ContextType::Media | ContextType::Conversational,
+            source_contexts: ContextType::empty(),
+        },
+        available_audio_contexts: AudioContexts {
+            sink_contexts: ContextType::Media | ContextType::Conversational,
+            source_contexts: ContextType::empty(),
         },
     };
 
-    let sink_pac = PAC::default();
-    let sink_audio_locations = AudioLocation::all();
-    static sink_audio_locations_store: StaticCell<[u8; 90]> = StaticCell::new();
-    let supported_audio_contexts = AudioContexts::default();
-    let available_audio_contexts = AudioContexts::default();
+    let mut ases = HVec::new();
+    let _ = ases.push(AseType::Sink(Ase::new(0)));
 
-    loop {
-        select(runner.run(), async {
-            loop {
-                let mut ases = Vec::new();
-                ases.push(AseType::Sink(Ase::new(0)));
-
-                match advertise::<C>("Ble Audio Sink", &mut peripheral).await {
-                    Ok(conn) => {
-                        #[cfg(feature = "defmt")]
-                        info!("[adv] connection established");
-                        let server =
-                            trouble_audio::ServerBuilder::<L2CAP_MTU, 1, 1, NoopRawMutex>::new(
-                                b"Ble Audio Sink Example",
-                                &appearance::audio_sink::GENERIC_AUDIO_SINK,
-                            )
-                            .add_pacs(
-                                Some(&sink_pac),
-                                Some((
-                                    &sink_audio_locations,
-                                    sink_audio_locations_store.init([0; 90]),
-                                )),
-                                None,
-                                None,
-                                &supported_audio_contexts,
-                                &available_audio_contexts,
-                            )
-                            .add_ascs(ases)
-                            .build();
-                        loop {
-                            match conn.next().await {
-                                ConnectionEvent::Disconnected { reason: _reason } => {
-                                    #[cfg(feature = "defmt")]
-                                    info!("[gatt] disconnected: {:?}", _reason);
-                                    break;
-                                }
-                                ConnectionEvent::Gatt { data } => server.process(data).await,
-                                _ => {}
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        #[cfg(feature = "defmt")]
-                        let e = Debug2Format(&e);
-                        #[cfg(feature = "defmt")]
-                        error!("[adv] error: {:?}", e);
-                    }
-                }
-            }
-        })
-        .await;
-        #[cfg(feature = "defmt")]
-        info!("Exiting Bluetooth");
-    }
-}
-
-/// Create an advertiser
-async fn advertise<'a, C: Controller>(
-    name: &'a str,
-    peripheral: &mut Peripheral<'a, C>,
-) -> Result<Connection<'a>, BleHostError<C::Error>> {
-    let mut advertiser_data = [0; 31];
-    AdStructure::encode_slice(
-        &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[
-                service::PUBLISHED_AUDIO_CAPABILITIES.into(),
-                service::AUDIO_STREAM_CONTROL.into(),
-            ]),
-            AdStructure::CompleteLocalName(name.as_bytes()),
-        ],
-        &mut advertiser_data[..],
-    )?;
-    let advertiser = peripheral
-        .advertise(
-            &Default::default(),
-            Advertisement::ConnectableScannableUndirected {
-                adv_data: &advertiser_data[..],
-                scan_data: &[],
-            },
-        )
-        .await?;
-    #[cfg(feature = "defmt")]
-    info!("[adv] advertising");
-    let conn = advertiser.accept().await?;
-    #[cfg(feature = "defmt")]
-    info!("[adv] connection established");
-    Ok(conn)
+    run_peripheral::<C, NoopRawMutex, MAX_ASES, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX>(
+        controller,
+        address,
+        // No display/keyboard on a typical audio sink: JustWorks pairing (encrypted, no MITM
+        // protection). Swap for `DisplayYesNo`/`KeyboardOnly`/etc. if the device has real IO.
+        IoCapabilities::NoInputNoOutput,
+        config,
+        ases,
+    )
+    .await
 }

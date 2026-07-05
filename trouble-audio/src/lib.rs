@@ -1,26 +1,119 @@
 #![cfg_attr(not(test), no_std, no_main)]
-// #![warn(missing_docs)]
 #![feature(generic_const_exprs)]
+
+//! LE Audio data structures are variable-length (PAC records, codec-specific
+//! configuration, metadata, ...) to a degree that doesn't fit `heapless`'s
+//! fixed-capacity collections well. This crate uses `alloc` instead, so the
+//! consuming binary must install a global allocator.
+extern crate alloc;
 
 #[allow(dead_code)]
 pub mod ascs;
+pub mod bap;
 mod server;
 pub use server::*;
 mod client;
 pub use client::*;
-// pub mod bap;
 pub mod generic_audio;
+pub mod le_audio;
 pub mod pacs;
 
 pub type ContentControlID = u8;
 
+/// Codec_ID: identifies a codec, either a standard Bluetooth SIG codec (`coding_format` alone,
+/// with `company_id`/`vendor_specific_codec_id` both zero) or a vendor-specific one. 5 octets on
+/// the wire: Coding_Format (1) | Company_ID (2, LE) | Vendor_Specific_Codec_ID (2, LE).
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct CodecId(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodecId {
+    pub coding_format: CodingFormat,
+    pub company_id: u16,
+    pub vendor_specific_codec_id: u16,
+}
+
+impl CodecId {
+    pub const SIZE: usize = 5;
+
+    /// Builds a standard (non-vendor-specific) Codec_ID for the given coding format.
+    pub const fn new(coding_format: CodingFormat) -> Self {
+        Self {
+            coding_format,
+            company_id: 0,
+            vendor_specific_codec_id: 0,
+        }
+    }
+
+    /// Encodes this Codec_ID into its 5-octet wire representation.
+    pub fn to_le_bytes(self) -> [u8; Self::SIZE] {
+        let mut out = [0u8; Self::SIZE];
+        out[0] = u8::from(self.coding_format);
+        out[1..3].copy_from_slice(&self.company_id.to_le_bytes());
+        out[3..5].copy_from_slice(&self.vendor_specific_codec_id.to_le_bytes());
+        out
+    }
+
+    /// Decodes a Codec_ID from its 5-octet wire representation.
+    pub fn from_le_bytes(bytes: [u8; Self::SIZE]) -> Self {
+        Self {
+            coding_format: CodingFormat::from(bytes[0]),
+            company_id: u16::from_le_bytes([bytes[1], bytes[2]]),
+            vendor_specific_codec_id: u16::from_le_bytes([bytes[3], bytes[4]]),
+        }
+    }
+}
 
 impl Default for CodecId {
     fn default() -> Self {
-        Self(0x000000000D)
+        Self::new(CodingFormat::LC3)
+    }
+}
+
+/// Coding_Format, as assigned by the Bluetooth SIG "Codec ID" assigned numbers table.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodingFormat {
+    ULaw,
+    ALaw,
+    Cvsd,
+    Transparent,
+    LinearPcm,
+    Msbc,
+    LC3,
+    G729A,
+    VendorSpecific,
+    Other(u8),
+}
+
+impl From<u8> for CodingFormat {
+    fn from(value: u8) -> Self {
+        match value {
+            0x00 => Self::ULaw,
+            0x01 => Self::ALaw,
+            0x02 => Self::Cvsd,
+            0x03 => Self::Transparent,
+            0x04 => Self::LinearPcm,
+            0x05 => Self::Msbc,
+            0x06 => Self::LC3,
+            0x07 => Self::G729A,
+            0xFF => Self::VendorSpecific,
+            other => Self::Other(other),
+        }
+    }
+}
+
+impl From<CodingFormat> for u8 {
+    fn from(value: CodingFormat) -> Self {
+        match value {
+            CodingFormat::ULaw => 0x00,
+            CodingFormat::ALaw => 0x01,
+            CodingFormat::Cvsd => 0x02,
+            CodingFormat::Transparent => 0x03,
+            CodingFormat::LinearPcm => 0x04,
+            CodingFormat::Msbc => 0x05,
+            CodingFormat::LC3 => 0x06,
+            CodingFormat::G729A => 0x07,
+            CodingFormat::VendorSpecific => 0xFF,
+            CodingFormat::Other(v) => v,
+        }
     }
 }
