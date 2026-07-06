@@ -10,11 +10,14 @@ extern crate alloc;
 #[allow(dead_code)]
 pub mod ascs;
 pub mod bap;
+pub mod cis;
 mod server;
 pub use server::*;
 mod client;
 pub use client::*;
 pub mod generic_audio;
+pub mod iso;
+pub mod lc3;
 pub mod le_audio;
 pub mod pacs;
 

@@ -69,7 +69,18 @@ pub async fn drive_ase_control_point<
                     match response {
                         Ok(new_state) => {
                             let new_ase = Ase::with_state(ase_id, new_state);
-                            let _ = characteristic.notify(conn, &new_ase, true).await;
+                            let subscribed = characteristic.should_notify(conn);
+                            let notify_result = characteristic.notify(conn, &new_ase, true).await;
+                            #[cfg(feature = "log")]
+                            log::info!(
+                                "[bap] ase {} -> new state, central subscribed={}, notify result={:?}",
+                                ase_id, subscribed, notify_result.is_ok()
+                            );
+                            #[cfg(feature = "defmt")]
+                            defmt::info!(
+                                "[bap] ase {} -> new state, central subscribed={}, notify result={}",
+                                ase_id, subscribed, notify_result.is_ok()
+                            );
                             results.push((ase_id, RESPONSE_SUCCESS, 0));
                         }
                         Err(reason) => results.push((ase_id, reason, 0)),

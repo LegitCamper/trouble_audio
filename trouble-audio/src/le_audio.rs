@@ -9,20 +9,37 @@
 //! what to *do* with the discovered characteristics is inherently application logic that can't be
 //! automated away the way the peripheral's event loop can.
 
-use embassy_futures::select::select;
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
+use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::prelude::*;
+pub use trouble_host::prelude::BondInformation;
 
 #[cfg(feature = "defmt")]
 use defmt::{info, warn, Debug2Format};
 
 use crate::{
     ascs::{AscsClient, AseType},
+    cis::{self, CisManager},
     generic_audio::AudioLocation,
+    iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
     pacs::{AudioContexts, PacsClient, PAC},
     Server, ServerBuilder,
 };
+
+/// Persists bond information across process restarts.
+///
+/// This crate's `AscsServer`/`run_peripheral` model a single active connection, so a single
+/// stored bond (the most recent) is enough. Without this, a peer that bonds once and then
+/// reconnects after this process restarts will have its reconnection fail authentication: the
+/// peer still remembers the old Long Term Key, but a fresh, empty security manager doesn't.
+pub trait BondStore {
+    /// Called once at startup to seed the security manager with a previously saved bond, if any.
+    fn load(&self) -> Option<BondInformation>;
+    /// Called whenever a new bond is created (see `GattConnectionEvent::PairingComplete`).
+    fn save(&self, bond: &BondInformation);
+}
 
 /// Everything needed to build the GATT side of an LE Audio unicast sink/source peripheral.
 ///
@@ -40,14 +57,24 @@ pub struct PeripheralConfig<'a> {
 }
 
 /// Runs an LE Audio unicast peripheral forever: advertises, accepts one connection at a time,
-/// and services GATT reads/writes (including driving the ASE Control Point state machine) until
-/// disconnected, then advertises again.
+/// and services GATT reads/writes (including driving the ASE Control Point state machine and,
+/// via `cis_manager`, real CIS/ISO setup) until disconnected, then advertises again.
 ///
 /// `MAX_ASES` bounds the number of ASE endpoints `ases` describes; `CONNECTIONS_MAX` is the
 /// number of simultaneous BLE connections the underlying stack allows (this crate's `AscsServer`
 /// itself only tracks one connection's ASE state at a time - see its docs).
+///
+/// `cis_manager` is caller-owned (rather than built internally) so the caller can concurrently
+/// drain [`CisManager::receive_pcm`] for decoded audio - this function never returns.
+///
+/// `bond_store`, if given, is used to persist bonds across restarts of this process (see
+/// [`BondStore`]) - pass `None` if you don't need reconnects to survive a restart.
 pub async fn run_peripheral<
-    C: Controller,
+    C: Controller
+        + ControllerCmdAsync<LeAcceptCisRequest>
+        + ControllerCmdSync<LeRejectCisRequest>
+        + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
+        + ControllerCmdSync<LeRemoveIsoDataPath>,
     M: RawMutex,
     const MAX_ASES: usize,
     const CONNECTIONS_MAX: usize,
@@ -58,6 +85,8 @@ pub async fn run_peripheral<
     io_capabilities: IoCapabilities,
     config: PeripheralConfig<'_>,
     ases: Vec<AseType, MAX_ASES>,
+    cis_manager: &CisManager<M, MAX_ASES>,
+    bond_store: Option<&dyn BondStore>,
 ) -> ! {
     let mut resources: HostResources<C, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
@@ -65,11 +94,19 @@ pub async fn run_peripheral<
         .set_random_address(address)
         .set_io_capabilities(io_capabilities)
         .build();
+    if let Some(store) = bond_store {
+        if let Some(bond) = store.load() {
+            let _ = stack.add_bond_information(bond);
+        }
+    }
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
 
+    let mut sink_pac_store = [0u8; 90];
+    let mut source_pac_store = [0u8; 90];
     let mut sink_audio_locations_store = [0u8; 90];
     let mut source_audio_locations_store = [0u8; 90];
+    let mut available_audio_contexts_store = [0u8; 90];
     let PeripheralConfig {
         device_name,
         appearance,
@@ -86,24 +123,26 @@ pub async fn run_peripheral<
     // against a long-lived `Peripheral` anyway.
     let server = ServerBuilder::<MAX_ASES, CONNECTIONS_MAX, M>::new(device_name, &appearance)
         .add_pacs(
-            sink_pac.as_ref(),
+            sink_pac.as_ref().map(|pac| (pac, &mut sink_pac_store[..])),
             sink_audio_locations
                 .as_ref()
                 .map(|loc| (loc, &mut sink_audio_locations_store[..])),
-            source_pac.as_ref(),
+            source_pac.as_ref().map(|pac| (pac, &mut source_pac_store[..])),
             source_audio_locations
                 .as_ref()
                 .map(|loc| (loc, &mut source_audio_locations_store[..])),
             &supported_audio_contexts,
             &available_audio_contexts,
+            &mut available_audio_contexts_store[..],
         )
         .add_ascs(ases)
+        .add_cis_manager(cis_manager)
         .build();
 
-    select(
+    select3(
         async {
             loop {
-                if let Err(_e) = runner.run().await {
+                if let Err(_e) = runner.run_with_handler(cis_manager).await {
                     #[cfg(feature = "log")]
                     log::warn!("[le_audio] host runner error: {:?}", _e);
                     #[cfg(feature = "defmt")]
@@ -111,6 +150,7 @@ pub async fn run_peripheral<
                 }
             }
         },
+        cis::drive_cis(&stack, cis_manager),
         async {
             loop {
                 match advertise(device_name, &mut peripheral, &server).await {
@@ -119,6 +159,11 @@ pub async fn run_peripheral<
                         log::info!("[le_audio] connected");
                         #[cfg(feature = "defmt")]
                         info!("[le_audio] connected");
+                        // A connection is not bondable by default, and must be marked as such
+                        // before pairing starts - otherwise `PairingComplete` always reports
+                        // `bond: None` (a temporary key only), even if the peer requests
+                        // bonding, and `bond_store`/the resolving-list update below never run.
+                        let _ = conn.raw().set_bondable(true);
                         loop {
                             match conn.next().await {
                                 GattConnectionEvent::Disconnected { reason: _reason } => {
@@ -130,6 +175,42 @@ pub async fn run_peripheral<
                                 }
                                 GattConnectionEvent::Gatt { event } => {
                                     server.handle(&conn, event).await;
+                                }
+                                GattConnectionEvent::PairingComplete { security_level: _sl, bond: Some(bond) } => {
+                                    #[cfg(feature = "log")]
+                                    log::info!(
+                                        "[le_audio] pairing complete, security_level={:?}, bond identity={:?}",
+                                        _sl, bond.identity
+                                    );
+                                    #[cfg(feature = "defmt")]
+                                    info!("[le_audio] pairing complete, security_level={}", Debug2Format(&_sl));
+                                    // The pairing flow itself already stores `bond` for LTK
+                                    // lookup, but only `Stack::add_bond_information` also queues
+                                    // the controller's resolving list to be updated with the
+                                    // peer's IRK - without it, a peer using a rotating private
+                                    // address (the common case) can pair successfully but then
+                                    // never be recognized on its next reconnect, since the
+                                    // controller has no way to resolve the new address back to
+                                    // this bond.
+                                    let _ = stack.add_bond_information(bond.clone());
+                                    if let Some(store) = bond_store {
+                                        store.save(&bond);
+                                    }
+                                }
+                                GattConnectionEvent::PairingComplete { security_level: _sl, bond: None } => {
+                                    #[cfg(feature = "log")]
+                                    log::warn!(
+                                        "[le_audio] pairing complete but NOT bonded (security_level={:?}) - reconnects will need to re-pair",
+                                        _sl
+                                    );
+                                    #[cfg(feature = "defmt")]
+                                    warn!("[le_audio] pairing complete but NOT bonded");
+                                }
+                                GattConnectionEvent::PairingFailed(_e) => {
+                                    #[cfg(feature = "log")]
+                                    log::warn!("[le_audio] pairing failed: {:?}", _e);
+                                    #[cfg(feature = "defmt")]
+                                    warn!("[le_audio] pairing failed");
                                 }
                                 _ => {}
                             }
@@ -170,6 +251,7 @@ async fn advertise<
             AdStructure::IncompleteServiceUuids16(&[
                 service::PUBLISHED_AUDIO_CAPABILITIES.to_le_bytes(),
                 service::AUDIO_STREAM_CONTROL.to_le_bytes(),
+                service::COMMON_AUDIO.to_le_bytes(),
             ]),
             AdStructure::CompleteLocalName(name),
         ],

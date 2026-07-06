@@ -81,6 +81,7 @@ dependencies = [
  "futures-intrusive",
  "heapless 0.9.3",
  "log",
+ "serde",
 ]
 
 [[package]]
@@ -90,6 +91,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5f48f1e9b0aad0a4f05d17bdeae0fa20ff798e272a03a6940ca27ad9c5a6ae7"
 dependencies = [
  "defmt 0.3.100",
+ "serde",
  "uuid",
 ]
 
@@ -859,6 +861,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 
 [[package]]
+name = "serde"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+dependencies = [
+ "serde_core",
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_core"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -953,7 +985,6 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=07bf6c06e974be4b53681e11a4d53c0404f13141#07bf6c06e974be4b53681e11a4d53c0404f13141"
 dependencies = [
  "aes",
  "bt-hci",
@@ -970,6 +1001,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
+ "serde",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",
@@ -978,7 +1010,6 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=07bf6c06e974be4b53681e11a4d53c0404f13141#07bf6c06e974be4b53681e11a4d53c0404f13141"
 dependencies = [
  "convert_case",
  "darling",
@@ -998,6 +1029,8 @@ dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
+ "embedded-io",
+ "embedded-io-async",
  "heapless 0.9.3",
  "lc3-codec",
  "log",

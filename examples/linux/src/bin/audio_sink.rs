@@ -1,6 +1,14 @@
 use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use linux_examples::{bond_store::FileBondStore, pipewire_sink};
+use trouble_audio::cis::CisManager;
 use trouble_audio_example_apps::basic_audio_sink;
+
+/// Only sampling frequency the sink example's PAC advertises, so it's the only one a real
+/// central can negotiate - the PipeWire stream is set up for it once, up front, rather than
+/// renegotiated per connection.
+const SAMPLE_RATE_HZ: u32 = 48_000;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), std::io::Error> {
@@ -14,5 +22,22 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let transport = Transport::new(dev)?;
     let controller = ExternalController::<_, 8>::new(transport);
-    basic_audio_sink::run(controller).await
+
+    let playback = pipewire_sink::spawn_playback(SAMPLE_RATE_HZ);
+    let cis_manager = CisManager::<NoopRawMutex, 1>::new();
+    let bond_store = FileBondStore::default();
+
+    let play_decoded_audio = async {
+        loop {
+            let pcm = cis_manager.receive_pcm().await;
+            if playback.send(pcm).is_err() {
+                log::error!("[audio_sink] PipeWire playback thread died");
+            }
+        }
+    };
+
+    tokio::select! {
+        r = basic_audio_sink::run(controller, &cis_manager, Some(&bond_store)) => r,
+        _ = play_decoded_audio => unreachable!("loops forever"),
+    }
 }

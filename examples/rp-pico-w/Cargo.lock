@@ -185,6 +185,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "futures-intrusive",
  "heapless 0.9.3",
+ "serde",
 ]
 
 [[package]]
@@ -194,6 +195,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5f48f1e9b0aad0a4f05d17bdeae0fa20ff798e272a03a6940ca27ad9c5a6ae7"
 dependencies = [
  "defmt 0.3.100",
+ "serde",
  "uuid",
 ]
 
@@ -2452,6 +2454,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
@@ -2973,12 +2976,12 @@ dependencies = [
  "static_cell",
  "trouble-audio-example-apps",
  "trouble-host",
+ "trouble_audio",
 ]
 
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=07bf6c06e974be4b53681e11a4d53c0404f13141#07bf6c06e974be4b53681e11a4d53c0404f13141"
 dependencies = [
  "aes",
  "bt-hci",
@@ -2994,6 +2997,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core 0.6.4",
+ "serde",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",
@@ -3002,7 +3006,6 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble.git?rev=07bf6c06e974be4b53681e11a4d53c0404f13141#07bf6c06e974be4b53681e11a4d53c0404f13141"
 dependencies = [
  "convert_case",
  "darling",
@@ -3022,6 +3025,8 @@ dependencies = [
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "heapless 0.9.3",
  "lc3-codec",
  "static_cell",

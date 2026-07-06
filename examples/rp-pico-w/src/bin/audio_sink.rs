@@ -7,13 +7,16 @@ use cyw43::Cyw43439;
 use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_futures::select::select;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_alloc::LlffHeap as Heap;
 use static_cell::StaticCell;
-use trouble_audio_example_apps::basic_audio_sink::run;
+use trouble_audio::cis::CisManager;
+use trouble_audio_example_apps::basic_audio_sink::{self, run, MAX_ASES};
 use trouble_host::prelude::ExternalController;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -97,5 +100,7 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
 
-    run(controller).await
+    let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
+    select(run(controller, &cis_manager, None), basic_audio_sink::count_decoded_frames(&cis_manager)).await;
+    core::unreachable!("both branches above loop forever")
 }

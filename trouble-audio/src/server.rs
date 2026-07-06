@@ -4,7 +4,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::{
     gatt::{GattConnection, GattEvent, ReadEvent, WriteEvent},
-    prelude::{AsGatt, AttErrorCode, AttributeServer, AttributeTable, DefaultPacketPool, PacketPool},
+    prelude::{service, AsGatt, AttErrorCode, AttributeServer, AttributeTable, DefaultPacketPool, PacketPool},
 };
 
 #[cfg(feature = "defmt")]
@@ -13,11 +13,13 @@ use defmt::*;
 use crate::{
     ascs::{AscsServer, AseType},
     bap,
+    cis::CisManager,
     generic_audio::AudioLocation,
     pacs::{AudioContexts, PacsServer, PAC, PACS_ATTRIBUTES},
 };
 
 pub const MAX_SERVICES: usize = 4 // gap + gatt
+     + 1 // cas
      + PACS_ATTRIBUTES
      + 15 // ascs
      ;
@@ -37,6 +39,7 @@ where
     table: AttributeTable<'a, M, MAX_SERVICES>,
     pacs: Option<PacsServer>,
     ascs: Option<AscsServer<MAX_ASES>>,
+    cis: Option<&'a CisManager<M, MAX_ASES>>,
     _p: PhantomData<P>,
 }
 
@@ -57,10 +60,17 @@ where
         // Generic attribute service (mandatory)
         table.add_service(trouble_host::attribute::Service::new(0x1801u16));
 
+        // Common Audio Service (mandatory for CAP compliance): marks this device as a valid LE
+        // Audio peripheral. No characteristics of its own for a non-coordinated single device;
+        // without it, some LE Audio-aware stacks (e.g. Android's system Bluetooth settings) will
+        // pair and encrypt successfully but then refuse the connection outright.
+        table.add_service(trouble_host::attribute::Service::new(service::COMMON_AUDIO));
+
         Self {
             table,
             pacs: None,
             ascs: None,
+            cis: None,
             _p: PhantomData,
         }
     }
@@ -71,18 +81,20 @@ where
             server: AttributeServer::<M, P, MAX_SERVICES, MAX_CONNECTIONS>::new(self.table),
             pacs: self.pacs.expect("Pacs is a mandatory service"),
             ascs: self.ascs,
+            cis: self.cis,
         }
     }
 
     /// Adds the (mandatory) Published Audio Capabilities service.
     pub fn add_pacs(
         mut self,
-        sink_pac: Option<&'a PAC>,
+        sink_pac: Option<(&'a PAC, &'a mut [u8])>,
         sink_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
-        source_pac: Option<&'a PAC>,
+        source_pac: Option<(&'a PAC, &'a mut [u8])>,
         source_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
+        available_audio_contexts_store: &'a mut [u8],
     ) -> Self {
         let pacs = PacsServer::new(
             &mut self.table,
@@ -92,6 +104,7 @@ where
             source_audio_locations,
             supported_audio_contexts,
             available_audio_contexts,
+            available_audio_contexts_store,
         );
         self.pacs = Some(pacs);
         self
@@ -101,6 +114,13 @@ where
     pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>) -> Self {
         let ascs = AscsServer::new(&mut self.table, ases);
         self.ascs = Some(ascs);
+        self
+    }
+
+    /// Wires up a [`CisManager`] so ASE Control Point writes feed its codec/CIG/CIS side-table
+    /// (see [`CisManager::observe_operation`]). Requires [`Self::add_ascs`] to have been called.
+    pub fn add_cis_manager(mut self, cis: &'a CisManager<M, MAX_ASES>) -> Self {
+        self.cis = Some(cis);
         self
     }
 }
@@ -113,6 +133,7 @@ where
     pub server: AttributeServer<'a, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
     pacs: PacsServer,
     ascs: Option<AscsServer<MAX_ASES>>,
+    cis: Option<&'a CisManager<M, MAX_ASES>>,
 }
 
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M, P> Server<'_, MAX_ASES, MAX_CONNECTIONS, M, P>
@@ -134,6 +155,9 @@ where
                     Err(_) => return true,
                 }
                 if let Ok(operation) = operation {
+                    if let Some(cis) = self.cis {
+                        cis.observe_operation(&self.server, ascs, &operation);
+                    }
                     let notification = bap::drive_ase_control_point(&self.server, ascs, conn, &operation).await;
                     // The Control Point characteristic's write value (`AseControlPointOperation`)
                     // and its notified response (`AseControlPointNotification`) are different
@@ -169,9 +193,15 @@ where
                 }
             }
             None => {
-                #[cfg(feature = "defmt")]
-                warn!("[le audio] no known handler for this event");
-                if let Ok(reply) = event.reject(AttErrorCode::INVALID_HANDLE) {
+                // Neither PACS nor ASCS recognizes this handle as one of their own
+                // characteristic *values* - which is also true of every CCCD (framework-managed,
+                // not an application-level value). By the time an event reaches here it has
+                // already passed `can_read`/`can_write`'s existence-and-permission check, so
+                // "unrecognized" doesn't mean "invalid" - it means "let the attribute server
+                // handle it generically" (e.g. actually storing a CCCD subscription). Rejecting
+                // here instead silently discarded every CCCD write with an Invalid Handle error,
+                // leaving centrals subscribed to nothing and notifications never delivered.
+                if let Ok(reply) = event.accept() {
                     reply.send().await;
                 }
             }

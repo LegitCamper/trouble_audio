@@ -91,7 +91,7 @@ pub struct PacsServer {
     available_audio_contexts: Characteristic<AudioContexts>,
 }
 
-pub const PACS_ATTRIBUTES: usize = 13;
+pub const PACS_ATTRIBUTES: usize = 16;
 
 impl PacsServer {
     /// Create a new PAC Gatt Service
@@ -99,22 +99,31 @@ impl PacsServer {
     /// If you enable a pac, you must also enable the corresponding location
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
-        sink_pac: Option<&'a PAC>,
+        sink_pac: Option<(&'a PAC, &'a mut [u8])>,
         sink_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
-        source_pac: Option<&'a PAC>,
+        source_pac: Option<(&'a PAC, &'a mut [u8])>,
         source_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
+        available_audio_contexts_store: &'a mut [u8],
     ) -> Self {
         let mut service = table.add_service(Service::new(service::PUBLISHED_AUDIO_CAPABILITIES));
 
         // The Common Audio Profile requires an encrypted link for every PACS/ASCS
         // characteristic, so every characteristic added by this service requires at least
-        // `PermissionLevel::EncryptionRequired` for both read and write.
+        // `PermissionLevel::EncryptionRequired` for both read and write. Per the PACS spec, PAC
+        // characteristics must support Notify (their records can change at runtime) - Android's
+        // LE Audio client actively disconnects devices that lack this (see the analogous, but
+        // fatal for Android, `AVAILABLE_AUDIO_CONTEXTS` case below).
         let sink_pac_char = match sink_pac {
-            Some(sink_pac) => Some(
+            Some((sink_pac, store)) => Some(
                 service
-                    .add_characteristic_ro(characteristic::SINK_PAC, sink_pac)
+                    .add_characteristic(
+                        characteristic::SINK_PAC,
+                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        sink_pac.clone(),
+                        store,
+                    )
                     .read_permission(PermissionLevel::EncryptionRequired)
                     .build(),
             ),
@@ -142,9 +151,14 @@ impl PacsServer {
         };
 
         let source_pac_char = match source_pac {
-            Some(source_pac) => Some(
+            Some((source_pac, store)) => Some(
                 service
-                    .add_characteristic_ro(characteristic::SOURCE_PAC, source_pac)
+                    .add_characteristic(
+                        characteristic::SOURCE_PAC,
+                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        source_pac.clone(),
+                        store,
+                    )
                     .read_permission(PermissionLevel::EncryptionRequired)
                     .build(),
             ),
@@ -176,8 +190,16 @@ impl PacsServer {
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
+        // Per the PACS spec, Available_Audio_Contexts must support Notify (its value can change
+        // at runtime) - unlike this, Android's LE Audio client actively disconnects devices whose
+        // Available_Audio_Contexts characteristic has no CCC descriptor.
         let available_audio_contexts_char = service
-            .add_characteristic_ro(characteristic::AVAILABLE_AUDIO_CONTEXTS, available_audio_contexts)
+            .add_characteristic(
+                characteristic::AVAILABLE_AUDIO_CONTEXTS,
+                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                *available_audio_contexts,
+                available_audio_contexts_store,
+            )
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
