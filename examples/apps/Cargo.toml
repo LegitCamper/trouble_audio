@@ -10,6 +10,7 @@ trouble-host = { path = "../../../trouble/host", features = [
   "peripheral",
   "scan",
   "security",
+  "iso",
   "default-packet-pool",
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false }

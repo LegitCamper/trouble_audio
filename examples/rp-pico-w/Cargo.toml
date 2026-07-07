@@ -28,7 +28,10 @@ embassy-sync = { version = "0.8", features = ["defmt"] }
 futures = { version = "0.3", default-features = false, features = [
   "async-await",
 ] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt", "uuid"] }
+bt-hci = { version = "0.9", default-features = false, features = [
+  "defmt",
+  "uuid",
+] }
 trouble-host = { path = "../../../trouble/host" }
 cyw43 = { version = "0.7.0", features = [
   "defmt",
