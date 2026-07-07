@@ -28,6 +28,7 @@ pub mod mcs;
 pub mod mics;
 pub mod ots;
 pub mod pacs;
+pub mod scenario;
 pub mod tbs;
 pub mod tmas;
 pub mod vcs;

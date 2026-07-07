@@ -107,8 +107,8 @@ pub async fn run_peripheral<
             let _ = stack.add_bond_information(bond);
         }
     }
-    let mut runner = stack.runner();
-    let mut peripheral = stack.peripheral();
+    let runner = stack.runner();
+    let peripheral = stack.peripheral();
 
     let mut sink_pac_store = [0u8; 90];
     let mut source_pac_store = [0u8; 90];
@@ -147,6 +147,36 @@ pub async fn run_peripheral<
         .add_cis_manager(cis_manager)
         .build();
 
+    run_event_loop(&stack, runner, peripheral, cis_manager, &server, device_name, bond_store).await
+}
+
+/// The forever event loop shared by [`run_peripheral`] and [`crate::scenario::Scenario::run`]:
+/// drives the BLE host's RX runner (with `cis_manager` as the `EventHandler`), the CIS/ISO HCI
+/// command side (`cis::drive_cis`), the one-shot CIS host-feature opt-in, and the advertise/
+/// accept/dispatch loop against `server`. Generic over an already-built [`Server`] - it doesn't
+/// care which optional GATT services that `Server` has, only that PACS/ASCS (mandatory for any
+/// LE Audio peripheral) are present and `cis_manager` matches its ASE Control Point driving.
+pub(crate) async fn run_event_loop<
+    'values,
+    C: Controller
+        + ControllerCmdAsync<LeAcceptCisRequest>
+        + ControllerCmdSync<LeRejectCisRequest>
+        + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
+        + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    M: RawMutex,
+    const MAX_ASES: usize,
+    const CONNECTIONS_MAX: usize,
+>(
+    stack: &Stack<'_, C, DefaultPacketPool>,
+    mut runner: Runner<'_, C, DefaultPacketPool>,
+    mut peripheral: Peripheral<'values, C, DefaultPacketPool>,
+    cis_manager: &CisManager<M, MAX_ASES>,
+    server: &Server<'values, MAX_ASES, CONNECTIONS_MAX, M>,
+    device_name: &'values [u8],
+    bond_store: Option<&dyn BondStore>,
+) -> ! {
     select4(
         async {
             loop {
@@ -158,7 +188,7 @@ pub async fn run_peripheral<
                 }
             }
         },
-        cis::drive_cis(&stack, cis_manager),
+        cis::drive_cis(stack, cis_manager),
         async {
             // Its own branch rather than sitting in front of the advertise loop below: doing these
             // HCI round trips there previously delayed `peripheral.advertise()` long enough to
@@ -200,7 +230,7 @@ pub async fn run_peripheral<
         },
         async {
             loop {
-                match advertise(device_name, &mut peripheral, &server).await {
+                match advertise(device_name, &mut peripheral, server).await {
                     Ok(conn) => {
                         #[cfg(feature = "log")]
                         log::info!("[le_audio] connected");

@@ -2,6 +2,10 @@
 //! advertising) and the event loop (ASE Control Point state machine included) live in
 //! `trouble_audio::le_audio::run_peripheral` - this just describes what a sink with one Sink ASE
 //! looks like and hands it off.
+//!
+//! For the higher-level equivalent that doesn't require knowing PACS/ASCS by name, see
+//! `trouble_audio::scenario::Scenario::headset(..)` (and `microphone.rs`/`headset_with_mic.rs` in
+//! this crate for worked examples) - this file remains as the lower-level, more-control version.
 
 use alloc::vec;
 
