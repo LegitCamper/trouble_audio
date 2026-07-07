@@ -9,8 +9,9 @@
 //! what to *do* with the discovered characteristics is inherently application logic that can't be
 //! automated away the way the peripheral's event loop can.
 
+use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use embassy_futures::select::select3;
+use embassy_futures::select::{select, select4, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::prelude::*;
@@ -27,6 +28,11 @@ use crate::{
     pacs::{AudioContexts, PacsClient, PAC},
     Server, ServerBuilder,
 };
+
+/// LE feature bit for "Connected Isochronous Stream (Host Support)" (Core 6, Vol 6, Part B,
+/// Section 4.6) - set via `HCI_LE_Set_Host_Feature` to opt in to using CIS. Without it, a peer's
+/// link-layer feature exchange sees CIS as unsupported and never attempts `LE_Create_CIS`.
+const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
 
 /// Persists bond information across process restarts.
 ///
@@ -74,7 +80,9 @@ pub async fn run_peripheral<
         + ControllerCmdAsync<LeAcceptCisRequest>
         + ControllerCmdSync<LeRejectCisRequest>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
-        + ControllerCmdSync<LeRemoveIsoDataPath>,
+        + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
     M: RawMutex,
     const MAX_ASES: usize,
     const CONNECTIONS_MAX: usize,
@@ -139,7 +147,7 @@ pub async fn run_peripheral<
         .add_cis_manager(cis_manager)
         .build();
 
-    select3(
+    select4(
         async {
             loop {
                 if let Err(_e) = runner.run_with_handler(cis_manager).await {
@@ -151,6 +159,45 @@ pub async fn run_peripheral<
             }
         },
         cis::drive_cis(&stack, cis_manager),
+        async {
+            // Its own branch rather than sitting in front of the advertise loop below: doing these
+            // HCI round trips there previously delayed `peripheral.advertise()` long enough to
+            // lose a race against a startup resolving-list sync, which then got rejected with
+            // "Command Disallowed" for running after advertising had already started.
+            #[cfg(any(feature = "log", feature = "defmt"))]
+            if let Ok(_features) = stack.command(LeReadLocalSupportedFeatures::new()).await {
+                #[cfg(feature = "log")]
+                log::info!(
+                    "[le_audio] controller CIS support: peripheral={} central={}",
+                    _features.supports_connected_isochronous_stream_peripheral(),
+                    _features.supports_connected_isochronous_stream_central()
+                );
+                #[cfg(feature = "defmt")]
+                info!(
+                    "[le_audio] controller CIS support: peripheral={} central={}",
+                    _features.supports_connected_isochronous_stream_peripheral(),
+                    _features.supports_connected_isochronous_stream_central()
+                );
+            }
+            match stack
+                .command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, 1))
+                .await
+            {
+                Ok(_) => {
+                    #[cfg(feature = "log")]
+                    log::info!("[le_audio] enabled Isochronous Channels (Host Support)");
+                    #[cfg(feature = "defmt")]
+                    info!("[le_audio] enabled Isochronous Channels (Host Support)");
+                }
+                Err(_e) => {
+                    #[cfg(feature = "log")]
+                    log::warn!("[le_audio] LE Set Host Feature (CIS) failed: {:?}", _e);
+                    #[cfg(feature = "defmt")]
+                    warn!("[le_audio] LE Set Host Feature (CIS) failed");
+                }
+            }
+            core::future::pending::<()>().await
+        },
         async {
             loop {
                 match advertise(device_name, &mut peripheral, &server).await {
@@ -165,7 +212,14 @@ pub async fn run_peripheral<
                         // bonding, and `bond_store`/the resolving-list update below never run.
                         let _ = conn.raw().set_bondable(true);
                         loop {
-                            match conn.next().await {
+                            let event = match select(conn.next(), cis_manager.next_streaming_ase()).await {
+                                Either::First(event) => event,
+                                Either::Second(ase_id) => {
+                                    server.notify_ase_streaming(&conn, ase_id).await;
+                                    continue;
+                                }
+                            };
+                            match event {
                                 GattConnectionEvent::Disconnected { reason: _reason } => {
                                     #[cfg(feature = "log")]
                                     log::info!("[le_audio] disconnected: {:?}", _reason);

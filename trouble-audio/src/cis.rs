@@ -90,7 +90,9 @@ enum Codec {
 enum CisAction {
     Accept(ConnHandle),
     Reject(ConnHandle, u8),
-    SetupDataPath(ConnHandle, u8),
+    /// `Some(ase_id)` if this is a Sink ASE, whose autonomous Enabling->Streaming transition
+    /// should be queued onto `CisManager::streaming` once the data path is confirmed up.
+    SetupDataPath(ConnHandle, u8, Option<u8>),
 }
 
 /// Bridges the ASE Control Point state machine to real CIS/ISO setup for up to `MAX_ASES`
@@ -100,6 +102,7 @@ pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
     codecs: RefCell<[Option<Codec>; MAX_ASES]>,
     actions: Channel<M, CisAction, 4>,
     pcm_out: Channel<M, PcmFrame, 4>,
+    streaming: Channel<M, u8, 4>,
 }
 
 impl<M: RawMutex, const MAX_ASES: usize> Default for CisManager<M, MAX_ASES> {
@@ -116,6 +119,7 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
             codecs: RefCell::new(core::array::from_fn(|_| None)),
             actions: Channel::new(),
             pcm_out: Channel::new(),
+            streaming: Channel::new(),
         }
     }
 
@@ -168,6 +172,13 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     /// Waits for the next decoded PCM frame from any Sink ASE.
     pub async fn receive_pcm(&self) -> PcmFrame {
         self.pcm_out.receive().await
+    }
+
+    /// Waits for the next Sink ASE ready to autonomously move `Enabling` -> `Streaming`. The
+    /// caller must apply that transition itself, e.g. via [`crate::bap::notify_ase_streaming`] -
+    /// this manager has no access to the `AttributeServer`/`GattConnection` needed to do so.
+    pub async fn next_streaming_ase(&self) -> u8 {
+        self.streaming.receive().await
     }
 }
 
@@ -259,11 +270,16 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             AseDirection::Sink => data_path_direction::OUTPUT,
             AseDirection::Source => data_path_direction::INPUT,
         };
+        // Only a Sink ASE's Enabling->Streaming transition is autonomous; a Source ASE instead
+        // waits for the client's Receiver Start Ready operation.
+        let streaming_ase_id = matches!(direction, AseDirection::Sink).then_some(()).and(slot.ase_id);
         #[cfg(feature = "log")]
         log::info!("[cis] CIS established, setting up ISO data path");
         #[cfg(feature = "defmt")]
         info!("[cis] CIS established, setting up ISO data path");
-        let _ = self.actions.try_send(CisAction::SetupDataPath(event.handle, data_path_direction));
+        let _ = self
+            .actions
+            .try_send(CisAction::SetupDataPath(event.handle, data_path_direction, streaming_ase_id));
     }
 
     fn on_iso_data(&self, packet: &IsoPacket<'_>) {
@@ -336,7 +352,7 @@ where
                     warn!("[cis] LE Reject CIS Request failed");
                 }
             }
-            CisAction::SetupDataPath(handle, direction) => {
+            CisAction::SetupDataPath(handle, direction, streaming_ase_id) => {
                 let result = iso
                     .command(LeSetupIsoDataPath::new(
                         handle,
@@ -355,6 +371,9 @@ where
                         log::info!("[cis] ISO data path set up for handle {}", handle.raw());
                         #[cfg(feature = "defmt")]
                         info!("[cis] ISO data path set up for handle {}", handle.raw());
+                        if let Some(ase_id) = streaming_ase_id {
+                            let _ = manager.streaming.try_send(ase_id);
+                        }
                     }
                     Err(_e) => {
                         #[cfg(feature = "log")]
@@ -489,9 +508,10 @@ mod tests {
 
         manager.on_cis_established(&established_event(0x11));
         match manager.actions.try_receive() {
-            Ok(CisAction::SetupDataPath(handle, direction)) => {
+            Ok(CisAction::SetupDataPath(handle, direction, streaming_ase_id)) => {
                 assert_eq!(handle.raw(), 0x11);
                 assert_eq!(direction, data_path_direction::OUTPUT); // Sink ASE
+                assert_eq!(streaming_ase_id, Some(0)); // Sink ASE: autonomous transition
             }
             other => panic!("expected SetupDataPath, got {:?}", other.is_ok()),
         }

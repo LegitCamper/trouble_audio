@@ -5,6 +5,7 @@
 
 use alloc::vec;
 
+use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::Vec as HVec;
@@ -47,7 +48,9 @@ where
         + ControllerCmdAsync<LeAcceptCisRequest>
         + ControllerCmdSync<LeRejectCisRequest>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
-        + ControllerCmdSync<LeRemoveIsoDataPath>,
+        + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).

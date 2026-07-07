@@ -190,3 +190,38 @@ pub async fn drive_ase_control_point<
 
     AseControlPointNotification::new(operation.opcode(), &results)
 }
+
+/// Transitions a Sink ASE from `Enabling` to `Streaming` once its CIS/ISO data path is up. Unlike
+/// a Source ASE (which reaches `Streaming` via the client's Receiver Start Ready operation), a
+/// Sink ASE has no client-driven operation for this, so it's done autonomously here. No-op if the
+/// ASE isn't currently `Enabling`.
+pub async fn notify_ase_streaming<
+    M: RawMutex,
+    P: PacketPool,
+    const MAX_ASES: usize,
+    const MAX_CONNECTIONS: usize,
+>(
+    server: &AttributeServer<'_, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
+    ascs: &AscsServer<MAX_ASES>,
+    conn: &GattConnection<'_, '_, P>,
+    ase_id: u8,
+) {
+    let Some((characteristic, current)) = find_ase(server, ascs, ase_id) else {
+        return;
+    };
+    let Ok(AseState::Enabling { cig_id, cis_id, metadata }) = current.state() else {
+        return;
+    };
+    let new_ase = Ase::with_state(ase_id, AseState::Streaming { cig_id, cis_id, metadata });
+    let notify_result = characteristic.notify(conn, &new_ase, true).await;
+    #[cfg(feature = "log")]
+    log::info!(
+        "[bap] ase {} -> Streaming (autonomous, CIS established), notify result={:?}",
+        ase_id, notify_result.is_ok()
+    );
+    #[cfg(feature = "defmt")]
+    defmt::info!(
+        "[bap] ase {} -> Streaming (autonomous, CIS established), notify result={}",
+        ase_id, notify_result.is_ok()
+    );
+}

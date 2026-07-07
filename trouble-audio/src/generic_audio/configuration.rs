@@ -27,7 +27,9 @@ impl Ltv for CodecSpecificConfiguration {
 
     fn encode_value(&self, out: &mut alloc::vec::Vec<u8>) {
         match self {
-            Self::SamplingFrequency(v) => out.push(*v as u8),
+            // Sampling_Frequency's wire values are 1-indexed, unlike this enum's discriminants
+            // (which are 0-indexed to match `SupportedSamplingFrequencies`' bit positions).
+            Self::SamplingFrequency(v) => out.push(*v as u8 + 1),
             Self::FrameDuration(v) => out.push(*v as u8),
             Self::AudioChannelAllocation(v) => out.extend_from_slice(&v.bits().to_le_bytes()),
             Self::OctetsPerCodecFrame(v) => out.extend_from_slice(&v.to_le_bytes()),
@@ -84,21 +86,23 @@ pub enum SamplingFrequency {
 impl TryFrom<u8> for SamplingFrequency {
     type Error = FromGattError;
 
+    /// `value` is 1-indexed on the wire (a real central sends `0x08` for 48 kHz) - shift down by
+    /// 1 to match this enum's 0-indexed discriminants.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Hz8000),
-            1 => Ok(Self::Hz11025),
-            2 => Ok(Self::Hz16000),
-            3 => Ok(Self::Hz22050),
-            4 => Ok(Self::Hz24000),
-            5 => Ok(Self::Hz32000),
-            6 => Ok(Self::Hz44100),
-            7 => Ok(Self::Hz48000),
-            8 => Ok(Self::Hz88200),
-            9 => Ok(Self::Hz96000),
-            10 => Ok(Self::Hz176400),
-            11 => Ok(Self::Hz192000),
-            12 => Ok(Self::Hz384000),
+        match value.checked_sub(1) {
+            Some(0) => Ok(Self::Hz8000),
+            Some(1) => Ok(Self::Hz11025),
+            Some(2) => Ok(Self::Hz16000),
+            Some(3) => Ok(Self::Hz22050),
+            Some(4) => Ok(Self::Hz24000),
+            Some(5) => Ok(Self::Hz32000),
+            Some(6) => Ok(Self::Hz44100),
+            Some(7) => Ok(Self::Hz48000),
+            Some(8) => Ok(Self::Hz88200),
+            Some(9) => Ok(Self::Hz96000),
+            Some(10) => Ok(Self::Hz176400),
+            Some(11) => Ok(Self::Hz192000),
+            Some(12) => Ok(Self::Hz384000),
             _ => Err(FromGattError::InvalidLength),
         }
     }
@@ -122,5 +126,24 @@ impl TryFrom<u8> for FrameDuration {
             1 => Ok(Self::Duration10MS),
             _ => Err(FromGattError::InvalidLength),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `0x08` is the literal byte a real central sends for 48 kHz - anchoring to that catches an
+    /// indexing mismatch that a pure encode/decode round trip wouldn't.
+    #[test]
+    fn sampling_frequency_decodes_the_wire_value_a_real_central_sends_for_48khz() {
+        assert_eq!(SamplingFrequency::try_from(0x08).unwrap(), SamplingFrequency::Hz48000);
+    }
+
+    #[test]
+    fn sampling_frequency_encode_decode_round_trips_to_the_spec_wire_value() {
+        let mut out = alloc::vec::Vec::new();
+        CodecSpecificConfiguration::SamplingFrequency(SamplingFrequency::Hz48000).encode_value(&mut out);
+        assert_eq!(out, alloc::vec![0x08]);
     }
 }

@@ -209,6 +209,14 @@ where
         true
     }
 
+    /// Autonomously transitions a Sink ASE to `Streaming` once its CIS/ISO data path is up (see
+    /// [`bap::notify_ase_streaming`]). No-op if this server has no ASCS.
+    pub async fn notify_ase_streaming(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
+        if let Some(ascs) = &self.ascs {
+            bap::notify_ase_streaming(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
     fn handle_read(&self, event: &ReadEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
         if let Some(res) = self.pacs.handle_read_event(event) {
             Some(res)
