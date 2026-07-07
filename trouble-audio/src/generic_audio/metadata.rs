@@ -12,7 +12,7 @@ fn string_from_utf8(value: &[u8]) -> Result<String, FromGattError> {
 
 /// A single entry of the Metadata LTV structure.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[repr(u8)]
 pub enum Metadata {
     PreferredAudioContexts(ContextType) = 1,
@@ -150,7 +150,7 @@ impl TryFrom<u8> for ParentalRating {
 
 /// Vendor_Specific metadata: a SIG-assigned Company_ID followed by vendor-defined bytes.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VenderSpecific {
     pub company_id: u16,
     pub vender_specific_metadata: Vec<u8>,

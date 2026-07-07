@@ -7,9 +7,11 @@
 //! consuming binary must install a global allocator.
 extern crate alloc;
 
+pub mod aics;
 #[allow(dead_code)]
 pub mod ascs;
 pub mod bap;
+pub mod bass;
 pub mod cis;
 pub mod csis;
 mod server;
@@ -17,13 +19,19 @@ pub use server::*;
 mod client;
 pub use client::*;
 pub mod generic_audio;
+pub mod gmas;
+pub mod has;
 pub mod iso;
 pub mod lc3;
 pub mod le_audio;
 pub mod mcs;
 pub mod mics;
+pub mod ots;
 pub mod pacs;
+pub mod tbs;
+pub mod tmas;
 pub mod vcs;
+pub mod vocs;
 
 pub type ContentControlID = u8;
 
