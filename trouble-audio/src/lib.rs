@@ -11,6 +11,7 @@ extern crate alloc;
 pub mod ascs;
 pub mod bap;
 pub mod cis;
+pub mod csis;
 mod server;
 pub use server::*;
 mod client;
@@ -19,7 +20,10 @@ pub mod generic_audio;
 pub mod iso;
 pub mod lc3;
 pub mod le_audio;
+pub mod mcs;
+pub mod mics;
 pub mod pacs;
+pub mod vcs;
 
 pub type ContentControlID = u8;
 

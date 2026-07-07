@@ -14,14 +14,22 @@ use crate::{
     ascs::{AscsServer, AseType},
     bap,
     cis::CisManager,
+    csis::{CsisServer, Lock, Sirk, CSIS_ATTRIBUTES},
     generic_audio::AudioLocation,
+    mcs::{self, McsServer, MCS_ATTRIBUTES},
+    mics::{Mute, MicsServer, MICS_ATTRIBUTES},
     pacs::{AudioContexts, PacsServer, PAC, PACS_ATTRIBUTES},
+    vcs::{self, VcsServer, VCS_ATTRIBUTES},
 };
 
 pub const MAX_SERVICES: usize = 4 // gap + gatt
      + 1 // cas
      + PACS_ATTRIBUTES
      + 15 // ascs
+     + MICS_ATTRIBUTES
+     + VCS_ATTRIBUTES
+     + CSIS_ATTRIBUTES
+     + MCS_ATTRIBUTES
      ;
 
 /// Implemented by each LE Audio GATT service (PACS, ASCS, ...) so [`Server`] can dispatch
@@ -40,6 +48,10 @@ where
     pacs: Option<PacsServer>,
     ascs: Option<AscsServer<MAX_ASES>>,
     cis: Option<&'a CisManager<M, MAX_ASES>>,
+    mics: Option<MicsServer>,
+    vcs: Option<VcsServer>,
+    csis: Option<CsisServer>,
+    mcs: Option<McsServer>,
     _p: PhantomData<P>,
 }
 
@@ -71,6 +83,10 @@ where
             pacs: None,
             ascs: None,
             cis: None,
+            mics: None,
+            vcs: None,
+            csis: None,
+            mcs: None,
             _p: PhantomData,
         }
     }
@@ -82,6 +98,10 @@ where
             pacs: self.pacs.expect("Pacs is a mandatory service"),
             ascs: self.ascs,
             cis: self.cis,
+            mics: self.mics,
+            vcs: self.vcs,
+            csis: self.csis,
+            mcs: self.mcs,
         }
     }
 
@@ -123,6 +143,73 @@ where
         self.cis = Some(cis);
         self
     }
+
+    /// Adds the (optional) Microphone Control service.
+    pub fn add_mics(mut self, initial: Mute, store: &'a mut [u8]) -> Self {
+        self.mics = Some(MicsServer::new(&mut self.table, initial, store));
+        self
+    }
+
+    /// Adds the (optional) Volume Control service.
+    pub fn add_vcs(
+        mut self,
+        initial: vcs::VolumeState,
+        flags: vcs::VolumeFlags,
+        step: u8,
+        volume_state_store: &'a mut [u8],
+        volume_control_point_store: &'a mut [u8],
+        volume_flags_store: &'a mut [u8],
+    ) -> Self {
+        self.vcs = Some(VcsServer::new(
+            &mut self.table,
+            initial,
+            flags,
+            step,
+            volume_state_store,
+            volume_control_point_store,
+            volume_flags_store,
+        ));
+        self
+    }
+
+    /// Adds the (optional) Coordinated Set Identification service.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_csis(
+        mut self,
+        sirk: Sirk,
+        set_size: Option<u8>,
+        lock: Lock,
+        rank: Option<u8>,
+        sirk_store: &'a mut [u8],
+        set_size_store: &'a mut [u8],
+        lock_store: &'a mut [u8],
+        rank_store: &'a mut [u8],
+    ) -> Self {
+        self.csis = Some(CsisServer::new(
+            &mut self.table,
+            sirk,
+            set_size,
+            lock,
+            rank,
+            sirk_store,
+            set_size_store,
+            lock_store,
+            rank_store,
+        ));
+        self
+    }
+
+    /// Adds the (optional) (Generic) Media Control service.
+    pub fn add_mcs(
+        mut self,
+        init: mcs::McsInit,
+        playing_orders_supported: &'a mcs::PlayingOrdersSupported,
+        opcodes_supported: &'a mcs::MediaControlPointOpcodesSupported,
+        store: mcs::McsStore<'a>,
+    ) -> Self {
+        self.mcs = Some(McsServer::new(&mut self.table, init, playing_orders_supported, opcodes_supported, store));
+        self
+    }
 }
 
 pub struct Server<'a, const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M, P = DefaultPacketPool>
@@ -134,6 +221,10 @@ where
     pacs: PacsServer,
     ascs: Option<AscsServer<MAX_ASES>>,
     cis: Option<&'a CisManager<M, MAX_ASES>>,
+    mics: Option<MicsServer>,
+    vcs: Option<VcsServer>,
+    csis: Option<CsisServer>,
+    mcs: Option<McsServer>,
 }
 
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M, P> Server<'_, MAX_ASES, MAX_CONNECTIONS, M, P>
@@ -147,6 +238,96 @@ where
     /// notification the spec requires. Returns `false` for events this server doesn't otherwise
     /// touch (e.g. `GattEvent::Other`/`NotAllowed`), so the caller can still inspect them.
     pub async fn handle(&self, conn: &GattConnection<'_, '_, P>, event: GattEvent<'_, '_, P>) -> bool {
+        if let (GattEvent::Write(write_event), Some(mics)) = (&event, &self.mics) {
+            if write_event.handle() == mics.mute().handle {
+                let outcome = write_event.value(mics.mute()).map_err(|_| AttErrorCode::WRITE_REQUEST_REJECTED).and_then(|requested| {
+                    let current = mics.mute().get(&self.server).unwrap_or_default();
+                    Mute::validate_client_write(current, requested)
+                });
+                match outcome {
+                    Ok(new_mute) => {
+                        if let Ok(reply) = event.accept() {
+                            reply.send().await;
+                        }
+                        let _ = mics.mute().notify(conn, &new_mute, true).await;
+                    }
+                    Err(err) => {
+                        if let Ok(reply) = event.reject(err) {
+                            reply.send().await;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        if let (GattEvent::Write(write_event), Some(vcs)) = (&event, &self.vcs) {
+            if write_event.handle() == vcs.volume_control_point().handle {
+                let operation = write_event.value(vcs.volume_control_point());
+                let outcome = match operation {
+                    Ok(operation) => vcs::drive_volume_control_point(&self.server, vcs, conn, &operation).await,
+                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
+                };
+                match outcome {
+                    Ok(()) => {
+                        if let Ok(reply) = event.accept() {
+                            reply.send().await;
+                        }
+                    }
+                    Err(err) => {
+                        if let Ok(reply) = event.reject(err) {
+                            reply.send().await;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        if let (GattEvent::Write(write_event), Some(csis)) = (&event, &self.csis) {
+            if write_event.handle() == csis.lock().handle {
+                let raw_byte = write_event.with_data(|_, data| data.first().copied());
+                let outcome = match raw_byte {
+                    Some(raw_byte) => {
+                        let current = csis.lock().get(&self.server).unwrap_or_default();
+                        Lock::validate_client_write(current, raw_byte)
+                    }
+                    None => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
+                };
+                match outcome {
+                    Ok(new_lock) => {
+                        if let Ok(reply) = event.accept() {
+                            reply.send().await;
+                        }
+                        let _ = csis.lock().notify(conn, &new_lock, true).await;
+                    }
+                    Err(err) => {
+                        if let Ok(reply) = event.reject(err) {
+                            reply.send().await;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        if let (GattEvent::Write(write_event), Some(mcs)) = (&event, &self.mcs) {
+            if write_event.handle() == mcs.media_control_point().handle {
+                let operation = write_event.value(mcs.media_control_point());
+                match event.accept() {
+                    Ok(reply) => reply.send().await,
+                    Err(_) => return true,
+                }
+                if let Ok(operation) = operation {
+                    mcs::drive_media_control_point(&self.server, mcs, conn, &operation).await;
+                } else {
+                    #[cfg(feature = "defmt")]
+                    warn!("[le audio] malformed Media Control Point write");
+                }
+                return true;
+            }
+        }
+
         if let (GattEvent::Write(write_event), Some(ascs)) = (&event, &self.ascs) {
             if write_event.handle() == ascs.ase_control_point().handle {
                 let operation = write_event.value(ascs.ase_control_point());
@@ -219,21 +400,45 @@ where
 
     fn handle_read(&self, event: &ReadEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
         if let Some(res) = self.pacs.handle_read_event(event) {
-            Some(res)
-        } else if let Some(ascs) = &self.ascs {
-            ascs.handle_read_event(event)
-        } else {
-            None
+            return Some(res);
         }
+        if let Some(res) = self.ascs.as_ref().and_then(|ascs| ascs.handle_read_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.mics.as_ref().and_then(|mics| mics.handle_read_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.vcs.as_ref().and_then(|vcs| vcs.handle_read_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.csis.as_ref().and_then(|csis| csis.handle_read_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.mcs.as_ref().and_then(|mcs| mcs.handle_read_event(event)) {
+            return Some(res);
+        }
+        None
     }
 
     fn handle_write(&self, event: &WriteEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
         if let Some(res) = self.pacs.handle_write_event(event) {
-            Some(res)
-        } else if let Some(ascs) = &self.ascs {
-            ascs.handle_write_event(event)
-        } else {
-            None
+            return Some(res);
         }
+        if let Some(res) = self.ascs.as_ref().and_then(|ascs| ascs.handle_write_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.mics.as_ref().and_then(|mics| mics.handle_write_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.vcs.as_ref().and_then(|vcs| vcs.handle_write_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.csis.as_ref().and_then(|csis| csis.handle_write_event(event)) {
+            return Some(res);
+        }
+        if let Some(res) = self.mcs.as_ref().and_then(|mcs| mcs.handle_write_event(event)) {
+            return Some(res);
+        }
+        None
     }
 }
