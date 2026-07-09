@@ -5,3 +5,4 @@
 extern crate alloc;
 
 pub mod basic_audio_sink;
+pub mod sink;

@@ -1,7 +1,7 @@
 //! A minimal LE Audio unicast sink peripheral. All the construction (HostResources, GATT server,
 //! advertising) and the event loop (ASE Control Point state machine included) live in
-//! `trouble_audio::le_audio::run_peripheral` - this just describes what a sink with one Sink ASE
-//! looks like and hands it off.
+//! [`crate::sink::run_peripheral`] - this just describes what a sink with one Sink ASE looks like
+//! and hands it off.
 
 use alloc::vec;
 
@@ -17,11 +17,12 @@ use trouble_audio::{
         SupportedFrameDurations, SupportedSamplingFrequencies,
     },
     iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
-    le_audio::{run_peripheral, BondStore, PeripheralConfig},
     pacs::{AudioContexts, PAC, PACRecord},
     CodecId,
 };
 use trouble_host::prelude::*;
+
+use crate::sink::{run_peripheral, BondStore, PeripheralConfig};
 
 #[cfg(feature = "defmt")]
 use defmt::info;

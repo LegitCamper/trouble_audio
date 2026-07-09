@@ -1,9 +1,9 @@
 //! Persists a single bond to a JSON file, so reconnecting after restarting this process doesn't
-//! fail authentication (see `trouble_audio::le_audio::BondStore`).
+//! fail authentication (see `trouble_audio_example_apps::sink::BondStore`).
 
 use std::path::{Path, PathBuf};
 
-use trouble_audio::le_audio::{BondInformation, BondStore};
+use trouble_audio_example_apps::sink::{BondInformation, BondStore};
 
 pub struct FileBondStore {
     path: PathBuf,
