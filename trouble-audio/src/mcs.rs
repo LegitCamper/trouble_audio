@@ -575,23 +575,24 @@ pub struct McsClient {
 
 impl McsClient {
     /// Discovers the (Generic) MCS service and its characteristics on an already-connected
-    /// `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// `GattClient`. Returns `None` if the peer doesn't expose MCS (it's an optional service) -
+    /// see [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
+    ) -> Option<Self> {
         let services = client
             .services_by_uuid(&Uuid::from(service::GENERIC_MEDIA_CONTROL))
             .await
-            .unwrap();
-        let handle = services.first().unwrap();
+            .ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory MCS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             media_player_name: required!(characteristic::MEDIA_PLAYER_NAME),
             track_title: required!(characteristic::TRACK_TITLE),
@@ -605,7 +606,7 @@ impl McsClient {
             media_control_point: required!(characteristic::MEDIA_CONTROL_POINT),
             media_control_point_opcodes_supported: required!(characteristic::MEDIA_CONTROL_POINT_OPCODES_SUPPORTED),
             content_control_id: required!(characteristic::CONTENT_CONTROL_ID),
-        }
+        })
     }
 }
 

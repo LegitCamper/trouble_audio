@@ -668,19 +668,21 @@ pub struct OtsClient {
 
 impl OtsClient {
     /// Discovers the OTS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose OTS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::OBJECT_TRANSFER)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::OBJECT_TRANSFER)).await.ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory OTS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             feature: required!(characteristic::OTS_FEATURE),
             object_name: required!(characteristic::OBJECT_NAME),
@@ -689,7 +691,7 @@ impl OtsClient {
             object_properties: required!(characteristic::OBJECT_PROPERTIES),
             object_action_control_point: required!(characteristic::OBJECT_ACTION_CONTROL_POINT),
             object_list_control_point: required!(characteristic::OBJECT_LIST_CONTROL_POINT),
-        }
+        })
     }
 }
 

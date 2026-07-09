@@ -7,32 +7,21 @@
 //! This lives here rather than in `trouble_audio` itself since it's opinionated glue code that
 //! only really proves out the sink role - `PeripheralConfig` has `source_*` fields, but nothing
 //! actually exercises a real audio *source* (mic) end to end yet. The GATT *client* discovery
-//! helper for the complementary hub/central role (`trouble_audio::le_audio::LeAudioClient`) is
-//! role-agnostic and stays in the core crate.
+//! helper for the complementary hub/central role (`trouble_audio::LeAudioClient`) is role-agnostic
+//! and stays in the core crate.
 
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select, select4, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
-use trouble_audio::{
-    ascs::AseType,
-    cis::{self, CisManager},
-    generic_audio::AudioLocation,
-    iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
-    pacs::{AudioContexts, PAC},
-    Server, ServerBuilder,
-};
+use trouble_audio::cis;
+use trouble_audio::prelude::*;
 use trouble_host::prelude::*;
 pub use trouble_host::prelude::BondInformation;
 
 #[cfg(feature = "defmt")]
 use defmt::{info, warn, Debug2Format};
-
-/// LE feature bit for "Connected Isochronous Stream (Host Support)" (Core 6, Vol 6, Part B,
-/// Section 4.6) - set via `HCI_LE_Set_Host_Feature` to opt in to using CIS. Without it, a peer's
-/// link-layer feature exchange sees CIS as unsupported and never attempts `LE_Create_CIS`.
-const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
 
 /// Persists bond information across process restarts.
 ///
@@ -50,7 +39,10 @@ pub trait BondStore {
 /// Everything needed to build the GATT side of an LE Audio unicast sink/source peripheral.
 ///
 /// `sink_*`/`source_*` mirror the optional PACS characteristics: enable whichever direction(s)
-/// this device supports (a sink-only device, e.g. earbuds, only needs `sink_*`).
+/// this device supports (a sink-only device, e.g. earbuds, only needs `sink_*`). `Clone` so a
+/// caller can build one `PeripheralConfig` and reuse it every time [`run_peripheral`] needs to be
+/// (re)started, rather than reconstructing the whole thing by hand each time.
+#[derive(Clone)]
 pub struct PeripheralConfig<'a> {
     pub device_name: &'a [u8],
     pub appearance: BluetoothUuid16,
@@ -60,6 +52,61 @@ pub struct PeripheralConfig<'a> {
     pub source_audio_locations: Option<AudioLocation>,
     pub supported_audio_contexts: AudioContexts,
     pub available_audio_contexts: AudioContexts,
+}
+
+/// Backing storage for [`PeripheralConfig`]'s variable-length characteristics (PAC records, audio
+/// locations, available audio contexts). Kept separate from `PeripheralConfig` itself since it's
+/// pure scratch space with no meaningful value of its own - declare one alongside your config and
+/// pass both to [`PeripheralConfig::build_server`].
+pub struct PeripheralConfigStorage {
+    sink_pac: [u8; 90],
+    source_pac: [u8; 90],
+    sink_audio_locations: [u8; 90],
+    source_audio_locations: [u8; 90],
+    available_audio_contexts: [u8; 90],
+}
+
+impl Default for PeripheralConfigStorage {
+    fn default() -> Self {
+        Self {
+            sink_pac: [0; 90],
+            source_pac: [0; 90],
+            sink_audio_locations: [0; 90],
+            source_audio_locations: [0; 90],
+            available_audio_contexts: [0; 90],
+        }
+    }
+}
+
+impl<'a> PeripheralConfig<'a> {
+    /// Builds the GATT server this config describes. `self` and `storage` are borrowed for as
+    /// long as the returned `Server` is used, so both need to live at least that long - in
+    /// practice that means declaring them right next to each other and keeping them both around
+    /// for the life of the peripheral (see [`run_peripheral`]).
+    pub fn build_server<'s, const MAX_ASES: usize, const CONNECTIONS_MAX: usize, M: RawMutex>(
+        &'s self,
+        storage: &'s mut PeripheralConfigStorage,
+        ases: Vec<AseType, MAX_ASES>,
+        cis_manager: &'s CisManager<M, MAX_ASES>,
+    ) -> Server<'s, MAX_ASES, CONNECTIONS_MAX, M> {
+        ServerBuilder::<MAX_ASES, CONNECTIONS_MAX, M>::new(self.device_name, &self.appearance)
+            .add_pacs(
+                self.sink_pac.as_ref().map(|pac| (pac, &mut storage.sink_pac[..])),
+                self.sink_audio_locations
+                    .as_ref()
+                    .map(|loc| (loc, &mut storage.sink_audio_locations[..])),
+                self.source_pac.as_ref().map(|pac| (pac, &mut storage.source_pac[..])),
+                self.source_audio_locations
+                    .as_ref()
+                    .map(|loc| (loc, &mut storage.source_audio_locations[..])),
+                &self.supported_audio_contexts,
+                &self.available_audio_contexts,
+                &mut storage.available_audio_contexts[..],
+            )
+            .add_ascs(ases)
+            .add_cis_manager(cis_manager)
+            .build()
+    }
 }
 
 /// Runs an LE Audio unicast peripheral forever: advertises, accepts one connection at a time,
@@ -110,42 +157,30 @@ pub async fn run_peripheral<
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
 
-    let mut sink_pac_store = [0u8; 90];
-    let mut source_pac_store = [0u8; 90];
-    let mut sink_audio_locations_store = [0u8; 90];
-    let mut source_audio_locations_store = [0u8; 90];
-    let mut available_audio_contexts_store = [0u8; 90];
-    let PeripheralConfig {
-        device_name,
-        appearance,
-        sink_pac,
-        sink_audio_locations,
-        source_pac,
-        source_audio_locations,
-        supported_audio_contexts,
-        available_audio_contexts,
-    } = config;
+    // Computed once and reused across reconnects, same as `server` below - the advertising
+    // payload (name + service UUIDs) never changes for the life of this call, so there's no
+    // reason to re-encode it on every single reconnect.
+    let mut advertiser_data = [0; 31];
+    let adv_data_len = AdStructure::encode_slice(
+        &[
+            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
+            AdStructure::IncompleteServiceUuids16(&[
+                service::PUBLISHED_AUDIO_CAPABILITIES.to_le_bytes(),
+                service::AUDIO_STREAM_CONTROL.to_le_bytes(),
+                service::COMMON_AUDIO.to_le_bytes(),
+            ]),
+            AdStructure::CompleteLocalName(config.device_name),
+        ],
+        &mut advertiser_data[..],
+    )
+    .expect("static advertising data always fits in 31 bytes");
+    let advertiser_data = &advertiser_data[..adv_data_len];
 
     // Built once and reused across reconnects, matching `Peripheral`'s own lifetime - rebuilding
     // the GATT table on every connection isn't necessary and doesn't lifetime-check cleanly
     // against a long-lived `Peripheral` anyway.
-    let server = ServerBuilder::<MAX_ASES, CONNECTIONS_MAX, M>::new(device_name, &appearance)
-        .add_pacs(
-            sink_pac.as_ref().map(|pac| (pac, &mut sink_pac_store[..])),
-            sink_audio_locations
-                .as_ref()
-                .map(|loc| (loc, &mut sink_audio_locations_store[..])),
-            source_pac.as_ref().map(|pac| (pac, &mut source_pac_store[..])),
-            source_audio_locations
-                .as_ref()
-                .map(|loc| (loc, &mut source_audio_locations_store[..])),
-            &supported_audio_contexts,
-            &available_audio_contexts,
-            &mut available_audio_contexts_store[..],
-        )
-        .add_ascs(ases)
-        .add_cis_manager(cis_manager)
-        .build();
+    let mut storage = PeripheralConfigStorage::default();
+    let server = config.build_server::<MAX_ASES, CONNECTIONS_MAX, M>(&mut storage, ases, cis_manager);
 
     select4(
         async {
@@ -160,47 +195,12 @@ pub async fn run_peripheral<
         },
         cis::drive_cis(&stack, cis_manager),
         async {
-            // Its own branch rather than sitting in front of the advertise loop below: doing these
-            // HCI round trips there previously delayed `peripheral.advertise()` long enough to
-            // lose a race against a startup resolving-list sync, which then got rejected with
-            // "Command Disallowed" for running after advertising had already started.
-            #[cfg(any(feature = "log", feature = "defmt"))]
-            if let Ok(_features) = stack.command(LeReadLocalSupportedFeatures::new()).await {
-                #[cfg(feature = "log")]
-                log::info!(
-                    "[le_audio] controller CIS support: peripheral={} central={}",
-                    _features.supports_connected_isochronous_stream_peripheral(),
-                    _features.supports_connected_isochronous_stream_central()
-                );
-                #[cfg(feature = "defmt")]
-                info!(
-                    "[le_audio] controller CIS support: peripheral={} central={}",
-                    _features.supports_connected_isochronous_stream_peripheral(),
-                    _features.supports_connected_isochronous_stream_central()
-                );
-            }
-            match stack
-                .command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, 1))
-                .await
-            {
-                Ok(_) => {
-                    #[cfg(feature = "log")]
-                    log::info!("[le_audio] enabled Isochronous Channels (Host Support)");
-                    #[cfg(feature = "defmt")]
-                    info!("[le_audio] enabled Isochronous Channels (Host Support)");
-                }
-                Err(_e) => {
-                    #[cfg(feature = "log")]
-                    log::warn!("[le_audio] LE Set Host Feature (CIS) failed: {:?}", _e);
-                    #[cfg(feature = "defmt")]
-                    warn!("[le_audio] LE Set Host Feature (CIS) failed");
-                }
-            }
+            cis::enable_cis_host_support(&stack).await;
             core::future::pending::<()>().await
         },
         async {
             loop {
-                match advertise(device_name, &mut peripheral, &server).await {
+                match advertise(advertiser_data, &mut peripheral, &server).await {
                     Ok(conn) => {
                         #[cfg(feature = "log")]
                         log::info!("[le_audio] connected");
@@ -294,30 +294,14 @@ async fn advertise<
     const CONNECTIONS_MAX: usize,
     M: RawMutex,
 >(
-    name: &'values [u8],
+    adv_data: &[u8],
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values, MAX_ASES, CONNECTIONS_MAX, M>,
 ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
-    let mut advertiser_data = [0; 31];
-    let len = AdStructure::encode_slice(
-        &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::IncompleteServiceUuids16(&[
-                service::PUBLISHED_AUDIO_CAPABILITIES.to_le_bytes(),
-                service::AUDIO_STREAM_CONTROL.to_le_bytes(),
-                service::COMMON_AUDIO.to_le_bytes(),
-            ]),
-            AdStructure::CompleteLocalName(name),
-        ],
-        &mut advertiser_data[..],
-    )?;
     let advertiser = peripheral
         .advertise(
             &Default::default(),
-            Advertisement::ConnectableScannableUndirected {
-                adv_data: &advertiser_data[..len],
-                scan_data: &[],
-            },
+            Advertisement::ConnectableScannableUndirected { adv_data, scan_data: &[] },
         )
         .await?;
     #[cfg(feature = "log")]

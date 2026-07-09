@@ -122,29 +122,28 @@ pub struct GmasClient {
 
 impl GmasClient {
     /// Discovers the GMAS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose GMAS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::GAMING_AUDIO)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::GAMING_AUDIO)).await.ok()?;
+        let handle = services.first()?;
 
-        let role = client
-            .characteristic_by_uuid(handle, &Uuid::from(characteristic::GMAP_ROLE))
-            .await
-            .expect("GMAP Role is mandatory on GMAS");
+        let role = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::GMAP_ROLE)).await.ok()?;
         let ugg_features = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::UGG_FEATURES)).await.ok();
         let ugt_features = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::UGT_FEATURES)).await.ok();
         let bgs_features = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::BGS_FEATURES)).await.ok();
         let bgr_features = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::BGR_FEATURES)).await.ok();
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             role,
             ugg_features,
             ugt_features,
             bgs_features,
             bgr_features,
-        }
+        })
     }
 }
 

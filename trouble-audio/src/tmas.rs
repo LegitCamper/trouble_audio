@@ -66,22 +66,21 @@ pub struct TmasClient {
 }
 
 impl TmasClient {
-    /// Discovers the TMAS service and its role characteristic on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Discovers the TMAS service and its role characteristic on an already-connected
+    /// `GattClient`. Returns `None` if the peer doesn't expose TMAS (it's an optional service) -
+    /// see [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
+    ) -> Option<Self> {
         let services = client
             .services_by_uuid(&Uuid::from(service::TELEPHONY_AND_MEDIA_AUDIO))
             .await
-            .unwrap();
-        let handle = services.first().unwrap();
+            .ok()?;
+        let handle = services.first()?;
 
-        let role = client
-            .characteristic_by_uuid(handle, &Uuid::from(characteristic::TMAP_ROLE))
-            .await
-            .expect("TMAP Role is mandatory on TMAS");
+        let role = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::TMAP_ROLE)).await.ok()?;
 
-        Self { handle: handle.clone(), role }
+        Some(Self { handle: handle.clone(), role })
     }
 }
 

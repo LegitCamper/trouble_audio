@@ -15,7 +15,7 @@ embassy-time = "0.5.1"
 bt-hci = { version = "0.9", features = ["uuid"] }
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
-trouble-host = { path = "../../trouble/host", features = [
+trouble-host = { git = "https://github.com/embassy-rs/trouble", rev = "0caf63a", features = [
   "derive",
   "gatt",
   "peripheral",
@@ -34,3 +34,6 @@ log = { version = "0.4", optional = true }
 static_cell = "2.1.0"
 heapless = "0.9"
 bitflags = "2.8.0"
+
+[patch.crates-io]
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }

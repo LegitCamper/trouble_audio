@@ -9,20 +9,10 @@ use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::Vec as HVec;
-use trouble_audio::{
-    ascs::{Ase, AseType},
-    cis::CisManager,
-    generic_audio::{
-        AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame, SamplingFrequency,
-        SupportedFrameDurations, SupportedSamplingFrequencies,
-    },
-    iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
-    pacs::{AudioContexts, PAC, PACRecord},
-    CodecId,
-};
+use trouble_audio::prelude::*;
 use trouble_host::prelude::*;
 
-use crate::sink::{run_peripheral, BondStore, PeripheralConfig};
+use crate::sink::{BondStore, PeripheralConfig, run_peripheral};
 
 #[cfg(feature = "defmt")]
 use defmt::info;
@@ -43,7 +33,11 @@ pub const MAX_ASES: usize = 1;
 /// [`CisManager::receive_pcm`] for decoded audio - e.g. to actually play it. This function never
 /// returns; run it alongside whatever drains `cis_manager` (see [`count_decoded_frames`] for a
 /// minimal example, or wire it to real audio output like the `linux` example's PipeWire sink).
-pub async fn run<C>(controller: C, cis_manager: &CisManager<NoopRawMutex, 1>, bond_store: Option<&dyn BondStore>) -> !
+pub async fn run<C>(
+    controller: C,
+    cis_manager: &CisManager<NoopRawMutex, 1>,
+    bond_store: Option<&dyn BondStore>,
+) -> !
 where
     C: Controller
         + ControllerCmdAsync<LeAcceptCisRequest>
@@ -63,15 +57,19 @@ where
         sink_pac: Some(PAC::new(&[PACRecord {
             codec_id: CodecId::default(), // LC3
             codec_specific_capabilities: vec![
-                CodecSpecificCapabilities::SupportedSamplingFrequencies(SupportedSamplingFrequencies::new(&[
-                    SamplingFrequency::Hz48000,
-                ])),
+                CodecSpecificCapabilities::SupportedSamplingFrequencies(
+                    SupportedSamplingFrequencies::new(&[SamplingFrequency::Hz48000]),
+                ),
                 // Both of these are mandatory per the PACS spec - without them a central can't
                 // derive any valid stream configuration from this PAC record at all (Android's LE
                 // Audio client silently falls back to the phone speaker in exactly this case,
                 // logging "Stream configuration is not valid").
-                CodecSpecificCapabilities::SupportedFrameDurations(SupportedFrameDurations::default()), // 10ms only
-                CodecSpecificCapabilities::SupportedOctetsPerCodecFrame(OctetsPerCodecFrame::new(26, 155)),
+                CodecSpecificCapabilities::SupportedFrameDurations(
+                    SupportedFrameDurations::default(),
+                ), // 10ms only
+                CodecSpecificCapabilities::SupportedOctetsPerCodecFrame(OctetsPerCodecFrame::new(
+                    26, 155,
+                )),
             ],
             metadata: vec![],
         }])),

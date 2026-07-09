@@ -413,19 +413,21 @@ pub struct AicsClient {
 
 impl AicsClient {
     /// Discovers the AICS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose AICS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::AUDIO_INPUT_CONTROL)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::AUDIO_INPUT_CONTROL)).await.ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory AICS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             audio_input_state: required!(characteristic::AUDIO_INPUT_STATE),
             gain_settings_attribute: required!(characteristic::GAIN_SETTINGS_ATTRIBUTE),
@@ -433,7 +435,7 @@ impl AicsClient {
             audio_input_status: required!(characteristic::AUDIO_INPUT_STATUS),
             audio_input_control_point: required!(characteristic::AUDIO_INPUT_CONTROL_POINT),
             audio_input_description: required!(characteristic::AUDIO_INPUT_DESCRIPTION),
-        }
+        })
     }
 }
 

@@ -16,6 +16,7 @@
 
 use core::cell::RefCell;
 
+use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::IsoPacket;
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
@@ -383,6 +384,53 @@ where
                     }
                 }
             }
+        }
+    }
+}
+
+/// LE feature bit for "Connected Isochronous Stream (Host Support)" (Core 6, Vol 6, Part B,
+/// Section 4.6) - set via `HCI_LE_Set_Host_Feature` to opt in to using CIS. Without it, a peer's
+/// link-layer feature exchange sees CIS as unsupported and never attempts `LE_Create_CIS`.
+const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
+
+/// Enables "Connected Isochronous Stream (Host Support)" on `stack`'s controller - required once
+/// at startup before any CIS can be created, whether this side initiates it or a peer does:
+/// without it, a peer's link-layer feature exchange sees CIS as unsupported and never attempts
+/// `LE_Create_CIS`. Await this concurrently with [`drive_cis`] and the host's connection runner
+/// (e.g. via `select`), and start it before advertising/scanning: doing these HCI round trips too
+/// late risks losing a race against a startup resolving-list sync, which then gets rejected with
+/// "Command Disallowed" for running after advertising had already started.
+pub async fn enable_cis_host_support<C>(stack: &Stack<'_, C, impl PacketPool>)
+where
+    C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+{
+    #[cfg(any(feature = "log", feature = "defmt"))]
+    if let Ok(_features) = stack.command(LeReadLocalSupportedFeatures::new()).await {
+        #[cfg(feature = "log")]
+        log::info!(
+            "[cis] controller CIS support: peripheral={} central={}",
+            _features.supports_connected_isochronous_stream_peripheral(),
+            _features.supports_connected_isochronous_stream_central()
+        );
+        #[cfg(feature = "defmt")]
+        info!(
+            "[cis] controller CIS support: peripheral={} central={}",
+            _features.supports_connected_isochronous_stream_peripheral(),
+            _features.supports_connected_isochronous_stream_central()
+        );
+    }
+    match stack.command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, 1)).await {
+        Ok(_) => {
+            #[cfg(feature = "log")]
+            log::info!("[cis] enabled Isochronous Channels (Host Support)");
+            #[cfg(feature = "defmt")]
+            info!("[cis] enabled Isochronous Channels (Host Support)");
+        }
+        Err(_e) => {
+            #[cfg(feature = "log")]
+            log::warn!("[cis] LE Set Host Feature (CIS) failed: {:?}", _e);
+            #[cfg(feature = "defmt")]
+            warn!("[cis] LE Set Host Feature (CIS) failed");
         }
     }
 }

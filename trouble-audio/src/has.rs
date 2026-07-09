@@ -347,24 +347,26 @@ pub struct HasClient {
 
 impl HasClient {
     /// Discovers the HAS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose HAS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::HEARING_ACCESS)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::HEARING_ACCESS)).await.ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory HAS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             hearing_aid_features: required!(characteristic::HEARING_AID_FEATURES),
             preset_control_point: required!(characteristic::HEARING_AID_PRESET_CONTROL_POINT),
             active_preset_index: required!(characteristic::ACTIVE_PRESET_INDEX),
-        }
+        })
     }
 }
 

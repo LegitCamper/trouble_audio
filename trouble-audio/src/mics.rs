@@ -89,22 +89,18 @@ pub struct MicsClient {
 }
 
 impl MicsClient {
-    /// Discovers the MICS service and its Mute characteristic on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Discovers the MICS service and its Mute characteristic on an already-connected
+    /// `GattClient`. Returns `None` if the peer doesn't expose MICS (it's an optional service) -
+    /// see [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client
-            .services_by_uuid(&Uuid::from(service::MICROPHONE_CONTROL))
-            .await
-            .unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::MICROPHONE_CONTROL)).await.ok()?;
+        let handle = services.first()?;
 
-        let mute = client
-            .characteristic_by_uuid(handle, &Uuid::from(characteristic::MUTE))
-            .await
-            .expect("Mute is mandatory on MICS");
+        let mute = client.characteristic_by_uuid(handle, &Uuid::from(characteristic::MUTE)).await.ok()?;
 
-        Self { handle: handle.clone(), mute }
+        Some(Self { handle: handle.clone(), mute })
     }
 }
 

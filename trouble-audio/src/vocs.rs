@@ -139,25 +139,27 @@ pub struct VocsClient {
 
 impl VocsClient {
     /// Discovers the VOCS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose VOCS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::VOLUME_OFFSET_CONTROL)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::VOLUME_OFFSET_CONTROL)).await.ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory VOCS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             volume_offset_state: required!(characteristic::VOLUME_OFFSET_STATE),
             audio_location: required!(characteristic::AUDIO_LOCATION),
             volume_offset_control_point: required!(characteristic::VOLUME_OFFSET_CONTROL_POINT),
             audio_output_description: required!(characteristic::AUDIO_OUTPUT_DESCRIPTION),
-        }
+        })
     }
 }
 

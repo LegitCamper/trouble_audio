@@ -270,31 +270,33 @@ pub struct VcsClient {
 
 impl VcsClient {
     /// Discovers the VCS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose VCS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::VOLUME_CONTROL)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::VOLUME_CONTROL)).await.ok()?;
+        let handle = services.first()?;
 
         let volume_state = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::VOLUME_STATE))
             .await
-            .expect("Volume State is mandatory on VCS");
+            .ok()?;
         let volume_control_point = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::VOLUME_CONTROL_POINT))
             .await
-            .expect("Volume Control Point is mandatory on VCS");
+            .ok()?;
         let volume_flags = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::VOLUME_FLAGS))
             .await
-            .expect("Volume Flags is mandatory on VCS");
+            .ok()?;
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             volume_state,
             volume_control_point,
             volume_flags,
-        }
+        })
     }
 }
 

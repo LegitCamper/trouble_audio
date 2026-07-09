@@ -23,7 +23,6 @@ pub mod gmas;
 pub mod has;
 pub mod iso;
 pub mod lc3;
-pub mod le_audio;
 pub mod mcs;
 pub mod mics;
 pub mod ots;
@@ -32,6 +31,20 @@ pub mod tbs;
 pub mod tmas;
 pub mod vcs;
 pub mod vocs;
+
+pub mod prelude {
+    pub use crate::{
+        ascs::{Ase, AseType},
+        cis::CisManager,
+        generic_audio::{
+            AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame,
+            SamplingFrequency, SupportedFrameDurations, SupportedSamplingFrequencies,
+        },
+        iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
+        pacs::{AudioContexts, PACRecord, PAC},
+        CodecId, Server, ServerBuilder,
+    };
+}
 
 pub type ContentControlID = u8;
 

@@ -511,23 +511,24 @@ pub struct TbsClient {
 
 impl TbsClient {
     /// Discovers the (Generic) TBS service and its characteristics on an already-connected
-    /// `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// `GattClient`. Returns `None` if the peer doesn't expose TBS (it's an optional service) -
+    /// see [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
+    ) -> Option<Self> {
         let services = client
             .services_by_uuid(&Uuid::from(service::GENERIC_TELEPHONE_BEARER))
             .await
-            .unwrap();
-        let handle = services.first().unwrap();
+            .ok()?;
+        let handle = services.first()?;
 
         macro_rules! required {
             ($uuid:expr) => {
-                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.expect("mandatory TBS characteristic missing")
+                client.characteristic_by_uuid(handle, &Uuid::from($uuid)).await.ok()?
             };
         }
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             bearer_provider_name: required!(characteristic::BEARER_PROVIDER_NAME),
             bearer_technology: required!(characteristic::BEARER_TECHNOLOGY),
@@ -537,7 +538,7 @@ impl TbsClient {
             content_control_id: required!(characteristic::CONTENT_CONTROL_ID),
             status_flags: required!(characteristic::STATUS_FLAGS),
             call_control_point: required!(characteristic::CALL_CONTROL_POINT),
-        }
+        })
     }
 }
 

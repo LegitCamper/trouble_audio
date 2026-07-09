@@ -351,9 +351,8 @@ checksum = "2fc328bf943af66b80b98755db9106bf7e7471b0cf47dc8559cd9a6be504cc9c"
 
 [[package]]
 name = "embassy-futures"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f878075b9794c1e4ac788c95b728f26aa6366d32eeb10c7051389f898f7d067"
+version = "0.1.2"
+source = "git+https://github.com/embassy-rs/embassy.git?rev=b87c67be691bcb9aa0e1f3813d90d9eb04dd1751#b87c67be691bcb9aa0e1f3813d90d9eb04dd1751"
 
 [[package]]
 name = "embassy-sync"
@@ -985,6 +984,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
+source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1010,6 +1010,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
+source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "convert_case",
  "darling",

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-trouble-host = { path = "../../../trouble/host", features = [
+trouble-host = { git = "https://github.com/embassy-rs/trouble", rev = "0caf63a", features = [
   "derive",
   "gatt",
   "peripheral",
@@ -37,3 +37,6 @@ defmt = [
   "embedded-hal/defmt-03",
 ]
 log = ["dep:log", "trouble-host/log", "trouble_audio/log", "bt-hci/log"]
+
+[patch.crates-io]
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }

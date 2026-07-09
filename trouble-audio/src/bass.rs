@@ -530,16 +530,18 @@ pub struct BassClient {
 
 impl BassClient {
     /// Discovers the BASS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose BASS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client.services_by_uuid(&Uuid::from(service::BROADCAST_AUDIO_SCAN)).await.unwrap();
-        let handle = services.first().unwrap();
+    ) -> Option<Self> {
+        let services = client.services_by_uuid(&Uuid::from(service::BROADCAST_AUDIO_SCAN)).await.ok()?;
+        let handle = services.first()?;
 
         let control_point = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::BROADCAST_AUDIO_SCAN_CONTROL_POINT))
             .await
-            .expect("Broadcast Audio Scan Control Point is mandatory on BASS");
+            .ok()?;
 
         let mut receive_states = HVec::new();
         while let Ok(characteristic) = client
@@ -551,7 +553,7 @@ impl BassClient {
             }
         }
 
-        Self { handle: handle.clone(), control_point, receive_states }
+        Some(Self { handle: handle.clone(), control_point, receive_states })
     }
 }
 

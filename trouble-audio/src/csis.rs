@@ -168,19 +168,21 @@ pub struct CsisClient {
 
 impl CsisClient {
     /// Discovers the CSIS service and its characteristics on an already-connected `GattClient`.
-    pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
+    /// Returns `None` if the peer doesn't expose CSIS (it's an optional service) - see
+    /// [`crate::LeAudioClient`].
+    pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
+    ) -> Option<Self> {
         let services = client
             .services_by_uuid(&Uuid::from(service::COORDINATED_SET_IDENTIFICATION))
             .await
-            .unwrap();
-        let handle = services.first().unwrap();
+            .ok()?;
+        let handle = services.first()?;
 
         let sirk = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::SET_IDENTITY_RESOLVING_KEY))
             .await
-            .expect("SIRK is mandatory on CSIS");
+            .ok()?;
         let set_size = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::COORDINATED_SET_SIZE))
             .await
@@ -188,19 +190,19 @@ impl CsisClient {
         let lock = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::SET_MEMBER_LOCK))
             .await
-            .expect("Set Member Lock is mandatory on CSIS");
+            .ok()?;
         let rank = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::SET_MEMBER_RANK))
             .await
             .ok();
 
-        Self {
+        Some(Self {
             handle: handle.clone(),
             sirk,
             set_size,
             lock,
             rank,
-        }
+        })
     }
 }
 
