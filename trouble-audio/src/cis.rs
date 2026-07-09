@@ -393,13 +393,10 @@ where
 /// link-layer feature exchange sees CIS as unsupported and never attempts `LE_Create_CIS`.
 const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
 
-/// Enables "Connected Isochronous Stream (Host Support)" on `stack`'s controller - required once
-/// at startup before any CIS can be created, whether this side initiates it or a peer does:
-/// without it, a peer's link-layer feature exchange sees CIS as unsupported and never attempts
-/// `LE_Create_CIS`. Await this concurrently with [`drive_cis`] and the host's connection runner
-/// (e.g. via `select`), and start it before advertising/scanning: doing these HCI round trips too
-/// late risks losing a race against a startup resolving-list sync, which then gets rejected with
-/// "Command Disallowed" for running after advertising had already started.
+/// Enables CIS host support on `stack`'s controller - required once at startup before any CIS
+/// can be created, by either side. Await concurrently with [`drive_cis`] and the connection
+/// runner, and start it before advertising/scanning: doing this too late risks losing a race
+/// against a startup resolving-list sync, rejected with "Command Disallowed".
 pub async fn enable_cis_host_support<C>(stack: &Stack<'_, C, impl PacketPool>)
 where
     C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<LeReadLocalSupportedFeatures>,

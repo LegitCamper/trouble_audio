@@ -32,6 +32,10 @@ pub mod tmas;
 pub mod vcs;
 pub mod vocs;
 
+/// Re-exports the types most commonly needed to build an LE Audio peripheral/central, so callers
+/// don't need to remember which of this crate's 14+ per-service modules each one lives in.
+/// Deliberately excludes optional-service types that collide by name across services (e.g.
+/// `mics::Mute` vs `vcs::Mute`) - import those from their own module.
 pub mod prelude {
     pub use crate::{
         ascs::{Ase, AseType},
