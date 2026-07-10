@@ -31,7 +31,7 @@ use defmt::{info, warn};
 
 use crate::{
     ascs::{AscsServer, AseControlPointOperation, AseDirection},
-    generic_audio::{decode_list, CodecSpecificConfiguration, FrameDuration, SamplingFrequency},
+    generic_audio::{decode_list, AudioLocation, CodecSpecificConfiguration, FrameDuration, SamplingFrequency},
     iso::{data_path_direction, LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath, DATA_PATH_ID_HCI},
     lc3::{Lc3MonoDecoder, Lc3MonoEncoder},
     CodingFormat, MAX_SERVICES,
@@ -48,26 +48,41 @@ pub const MAX_PCM_SAMPLES_PER_FRAME: usize = 480;
 /// One decoded LC3 frame's worth of PCM samples.
 pub type PcmFrame = HVec<i16, MAX_PCM_SAMPLES_PER_FRAME>;
 
+/// A decoded LC3 frame from one Sink ASE, tagged with which ASE (and, if the central declared
+/// one via Config Codec's `Audio_Channel_Allocation`, which audio channel location) it came from
+/// - needed to tell e.g. left from right when more than one ASE is streaming, since [`CisManager`]
+/// multiplexes every ASE's decoded audio onto one [`CisManager::receive_pcm`] queue.
+#[derive(Debug, Clone)]
+pub struct DecodedPcm {
+    pub ase_id: u8,
+    pub channel_allocation: Option<AudioLocation>,
+    pub samples: PcmFrame,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct AudioParams {
     sampling_frequency: SamplingFrequency,
     frame_duration: FrameDuration,
+    channel_allocation: Option<AudioLocation>,
 }
 
 fn audio_params_from_config(config: &[u8]) -> Option<AudioParams> {
     let entries: alloc::vec::Vec<CodecSpecificConfiguration> = decode_list(config).ok()?;
     let mut sampling_frequency = None;
     let mut frame_duration = None;
+    let mut channel_allocation = None;
     for entry in entries {
         match entry {
             CodecSpecificConfiguration::SamplingFrequency(v) => sampling_frequency = Some(v),
             CodecSpecificConfiguration::FrameDuration(v) => frame_duration = Some(v),
+            CodecSpecificConfiguration::AudioChannelAllocation(v) => channel_allocation = Some(v),
             _ => {}
         }
     }
     Some(AudioParams {
         sampling_frequency: sampling_frequency?,
         frame_duration: frame_duration?,
+        channel_allocation,
     })
 }
 
@@ -102,7 +117,7 @@ pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
     slots: RefCell<[AseSlot; MAX_ASES]>,
     codecs: RefCell<[Option<Codec>; MAX_ASES]>,
     actions: Channel<M, CisAction, 4>,
-    pcm_out: Channel<M, PcmFrame, 4>,
+    pcm_out: Channel<M, DecodedPcm, 4>,
     streaming: Channel<M, u8, 4>,
 }
 
@@ -170,8 +185,9 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
         }
     }
 
-    /// Waits for the next decoded PCM frame from any Sink ASE.
-    pub async fn receive_pcm(&self) -> PcmFrame {
+    /// Waits for the next decoded PCM frame from any Sink ASE, tagged with which ASE it came
+    /// from - see [`DecodedPcm`].
+    pub async fn receive_pcm(&self) -> DecodedPcm {
         self.pcm_out.receive().await
     }
 
@@ -285,21 +301,30 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
 
     fn on_iso_data(&self, packet: &IsoPacket<'_>) {
         let handle = packet.handle().raw();
-        let Some(idx) = self.slots.borrow().iter().position(|s| s.cis_handle == Some(handle)) else {
-            return;
+        let (idx, ase_id, channel_allocation) = {
+            let slots = self.slots.borrow();
+            let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
+                return;
+            };
+            let Some(ase_id) = slots[idx].ase_id else { return };
+            (idx, ase_id, slots[idx].audio.and_then(|a| a.channel_allocation))
         };
         let mut codecs = self.codecs.borrow_mut();
         let Some(Codec::Decoder(decoder)) = &mut codecs[idx] else {
             return;
         };
 
-        let mut pcm = PcmFrame::new();
-        if pcm.resize_default(decoder.samples_per_frame).is_err() {
+        let mut samples = PcmFrame::new();
+        if samples.resize_default(decoder.samples_per_frame).is_err() {
             return;
         }
-        match decoder.decode(packet.data(), &mut pcm) {
+        match decoder.decode(packet.data(), &mut samples) {
             Ok(()) => {
-                let _ = self.pcm_out.try_send(pcm);
+                let _ = self.pcm_out.try_send(DecodedPcm {
+                    ase_id,
+                    channel_allocation,
+                    samples,
+                });
             }
             Err(_e) => {
                 #[cfg(feature = "log")]
@@ -574,6 +599,7 @@ mod tests {
         manager.on_iso_data(&packet);
 
         let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame");
-        assert_eq!(pcm_out.len(), encoder.samples_per_frame);
+        assert_eq!(pcm_out.ase_id, 0);
+        assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
 }

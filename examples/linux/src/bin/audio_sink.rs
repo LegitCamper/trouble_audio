@@ -3,7 +3,7 @@ use bt_hci_linux::Transport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use linux_examples::{bond_store::FileBondStore, pipewire_sink};
 use trouble_audio::cis::CisManager;
-use trouble_audio_example_apps::basic_audio_sink;
+use trouble_audio_example_apps::basic_audio_sink::{self, MAX_ASES};
 
 /// Only sampling frequency the sink example's PAC advertises, so it's the only one a real
 /// central can negotiate - the PipeWire stream is set up for it once, up front, rather than
@@ -24,7 +24,7 @@ async fn main() -> Result<(), std::io::Error> {
     let controller = ExternalController::<_, 8>::new(transport);
 
     let playback = pipewire_sink::spawn_playback(SAMPLE_RATE_HZ);
-    let cis_manager = CisManager::<NoopRawMutex, 1>::new();
+    let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
     let bond_store = FileBondStore::default();
 
     let play_decoded_audio = async {

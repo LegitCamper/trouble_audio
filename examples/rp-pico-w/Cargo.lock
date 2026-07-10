@@ -2948,7 +2948,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "heapless 0.9.3",
  "static_cell",
- "trouble-host",
+ "trouble-host 0.7.0 (git+https://github.com/embassy-rs/trouble?rev=0caf63a)",
  "trouble_audio",
 ]
 
@@ -2975,13 +2975,30 @@ dependencies = [
  "reqwest",
  "static_cell",
  "trouble-audio-example-apps",
- "trouble-host",
+ "trouble-host 0.7.0",
  "trouble_audio",
 ]
 
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
+dependencies = [
+ "bt-hci",
+ "embassy-futures",
+ "embassy-sync",
+ "embassy-time",
+ "embedded-io 0.7.1",
+ "futures",
+ "heapless 0.9.3",
+ "static_cell",
+ "trouble-host-macros 0.5.0",
+ "zerocopy",
+]
+
+[[package]]
+name = "trouble-host"
+version = "0.7.0"
+source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "aes",
  "bt-hci",
@@ -2999,13 +3016,26 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "static_cell",
- "trouble-host-macros",
+ "trouble-host-macros 0.5.0 (git+https://github.com/embassy-rs/trouble?rev=0caf63a)",
  "zerocopy",
 ]
 
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
+dependencies = [
+ "convert_case",
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+ "uuid",
+]
+
+[[package]]
+name = "trouble-host-macros"
+version = "0.5.0"
+source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "convert_case",
  "darling",
@@ -3030,7 +3060,7 @@ dependencies = [
  "heapless 0.9.3",
  "lc3-codec",
  "static_cell",
- "trouble-host",
+ "trouble-host 0.7.0 (git+https://github.com/embassy-rs/trouble?rev=0caf63a)",
 ]
 
 [[package]]

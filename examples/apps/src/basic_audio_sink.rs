@@ -1,7 +1,7 @@
 //! A minimal LE Audio unicast sink peripheral. All the construction (HostResources, GATT server,
 //! advertising) and the event loop (ASE Control Point state machine included) live in
-//! [`crate::sink::run_peripheral`] - this just describes what a sink with one Sink ASE looks like
-//! and hands it off.
+//! [`crate::sink::run_peripheral`] - this just describes what a stereo sink with two Sink ASEs
+//! (front left/right) looks like and hands it off.
 
 use alloc::vec;
 
@@ -23,9 +23,9 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-/// Max number of Sink/Source ASEs this device exposes. Public so callers can size their own
-/// `CisManager<M, MAX_ASES>` to match (see [`run`]).
-pub const MAX_ASES: usize = 1;
+/// Max number of Sink/Source ASEs this device exposes: one per stereo channel. Public so callers
+/// can size their own `CisManager<M, MAX_ASES>` to match (see [`run`]).
+pub const MAX_ASES: usize = 2;
 
 /// Runs the audio sink peripheral forever on the given controller.
 ///
@@ -35,7 +35,7 @@ pub const MAX_ASES: usize = 1;
 /// minimal example, or wire it to real audio output like the `linux` example's PipeWire sink).
 pub async fn run<C>(
     controller: C,
-    cis_manager: &CisManager<NoopRawMutex, 1>,
+    cis_manager: &CisManager<NoopRawMutex, 2>,
     bond_store: Option<&dyn BondStore>,
 ) -> !
 where
@@ -73,13 +73,15 @@ where
             ],
             metadata: vec![],
         }])),
-        // A single location (mono), matching the single Sink ASE this example actually exposes
-        // (`MAX_ASES = 1` below). Declaring both `FrontLeft | FrontRight` here previously made
-        // Android's LE Audio client (correctly) decide it needed a 2-CIS stereo group
-        // (`STEREO_TWO_CISES_PER_DEVICE`) - since only one ASE ever shows up, the group never
-        // reaches "all ASEs configured" and CIG creation never fires, silently stalling until
-        // Android's own state-machine timeout disconnects the link.
-        sink_audio_locations: Some(AudioLocation::FrontLeft),
+        // Both locations, matching the two Sink ASEs this example exposes (`MAX_ASES = 2`
+        // above) - one per channel. A central negotiates a 2-CIS stereo group
+        // (`STEREO_TWO_CISES_PER_DEVICE`) by Config Codec'ing each ASE with one of these
+        // locations. Declaring both locations with only one ASE previously made Android's LE
+        // Audio client (correctly) pick that same group type, but since only one ASE ever
+        // showed up the group never reached "all ASEs configured" and CIG creation never
+        // fired, silently stalling until Android's own state-machine timeout disconnected the
+        // link - so the ASE count and the declared locations must match.
+        sink_audio_locations: Some(AudioLocation::FrontLeft | AudioLocation::FrontRight),
         source_pac: None,
         source_audio_locations: None,
         supported_audio_contexts: AudioContexts {
@@ -94,6 +96,7 @@ where
 
     let mut ases = HVec::new();
     let _ = ases.push(AseType::Sink(Ase::new(0)));
+    let _ = ases.push(AseType::Sink(Ase::new(1)));
 
     run_peripheral::<C, NoopRawMutex, MAX_ASES, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX>(
         controller,
@@ -111,7 +114,7 @@ where
 
 /// A minimal way to drain [`CisManager::receive_pcm`]: just counts and periodically logs decoded
 /// frames, for platforms/examples with no real audio output wired up.
-pub async fn count_decoded_frames(cis_manager: &CisManager<NoopRawMutex, 1>) -> ! {
+pub async fn count_decoded_frames(cis_manager: &CisManager<NoopRawMutex, 2>) -> ! {
     let mut frames: u32 = 0;
     loop {
         let _pcm = cis_manager.receive_pcm().await;
