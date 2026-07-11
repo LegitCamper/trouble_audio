@@ -1683,7 +1683,6 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1708,7 +1707,6 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
 dependencies = [
  "convert_case",
  "darling",

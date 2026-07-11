@@ -421,8 +421,9 @@ const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
 /// Enables CIS host support on `stack`'s controller - required once at startup before any CIS
 /// can be created, by either side. Await concurrently with [`drive_cis`] and the connection
 /// runner, and start it before advertising/scanning: doing this too late risks losing a race
-/// against a startup resolving-list sync, rejected with "Command Disallowed".
-pub async fn enable_cis_host_support<C>(stack: &Stack<'_, C, impl PacketPool>)
+/// against a startup resolving-list sync, rejected with "Command Disallowed" - in which case this
+/// returns `false` and callers should retry after a short delay rather than give up permanently.
+pub async fn enable_cis_host_support<C>(stack: &Stack<'_, C, impl PacketPool>) -> bool
 where
     C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
@@ -447,12 +448,14 @@ where
             log::info!("[cis] enabled Isochronous Channels (Host Support)");
             #[cfg(feature = "defmt")]
             info!("[cis] enabled Isochronous Channels (Host Support)");
+            true
         }
         Err(_e) => {
             #[cfg(feature = "log")]
             log::warn!("[cis] LE Set Host Feature (CIS) failed: {:?}", _e);
             #[cfg(feature = "defmt")]
             warn!("[cis] LE Set Host Feature (CIS) failed");
+            false
         }
     }
 }

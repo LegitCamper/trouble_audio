@@ -29,6 +29,18 @@ Stereo aux output is wired via two PIO-PWM channels (`src/pio_audio.rs`):
 Each needs an RC low-pass filter between the GPIO and the aux jack tip/ring to turn the PWM output
 into an analog signal - the PIO program only produces the PWM square wave itself.
 
+## Logging (rp-pico-w)
+
+`audio_sink` logs over USB-serial (`embassy-usb-logger`, via `log::`), not defmt/RTT - no debug
+probe needed, and it matches this crate's `elf2uf2-rs` flashing runner (drag-and-drop over
+BOOTSEL, not probe-rs). After flashing, connect with any serial terminal, e.g.:
+
+```sh
+screen /dev/ttyACM0 115200
+```
+
+(device name varies by OS - check `dmesg`/`ls /dev/tty.*` after plugging in).
+
 ## Running it
 
 1. **Flash the sink** onto the Pico W (from `examples/rp-pico-w`):

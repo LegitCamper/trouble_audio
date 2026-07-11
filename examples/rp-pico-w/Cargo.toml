@@ -9,53 +9,61 @@ embassy-executor = { version = "0.10.0", default-features = false, features = [
   "platform-cortex-m",
   "executor-thread",
   "executor-interrupt",
-  "defmt",
+  "log",
 ] }
 embassy-time = { version = "0.5.1", default-features = false, features = [
-  "defmt",
-  "defmt-timestamp-uptime",
+  "log",
 ] }
 embassy-rp = { version = "0.10.0", features = [
-  "defmt",
+  "log",
   "unstable-pac",
   "time-driver",
   "critical-section-impl",
   "rp2040",
 ] }
 embassy-futures = "0.1.2"
-embassy-sync = { version = "0.8", features = ["defmt"] }
+embassy-sync = { version = "0.8", features = ["log"] }
 
 futures = { version = "0.3", default-features = false, features = [
   "async-await",
 ] }
 bt-hci = { version = "0.9", default-features = false, features = [
-  "defmt",
+  "log",
   "uuid",
 ] }
 trouble-host = { path = "../../../trouble/host" }
 cyw43 = { version = "0.7.0", features = [
-  "defmt",
+  "log",
   "firmware-logs",
   "bluetooth",
 ] }
-cyw43-pio = { version = "0.10.0", features = ["defmt"] }
+# No "log" alternative for cyw43-pio (only an optional "defmt" feature it doesn't need for this
+# example to work) - leaving it disabled just means cyw43-pio's own handful of debug prints don't
+# show up; unrelated to this crate's own logging.
+cyw43-pio = { version = "0.10.0" }
 
-defmt = "1.0.1"
-defmt-rtt = "1.0.0"
+# USB-serial logging via `embassy-usb-logger` (implements `log::Log`) instead of defmt/RTT, so
+# nothing here needs a debug probe - connect with any serial terminal (e.g.
+# `screen /dev/ttyACM0 115200`).
+log = "0.4"
+embassy-usb-logger = "0.6.0"
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 fixed = "1.28.0"
-panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+# No print feature: printing a panic message would need defmt (`print-defmt`) or RTT
+# (`print-rtt`), both back on a probe/defmt - a panic still safely halts the MCU, it just won't
+# show up over the USB log.
+panic-probe = { version = "1.0.0" }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 embedded-alloc = "0.6.0"
 
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
-  "defmt",
+  "log",
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
-  "defmt",
+  "log",
 ] }
 
 [build-dependencies]
@@ -84,6 +92,8 @@ embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67b
 embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
+embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }

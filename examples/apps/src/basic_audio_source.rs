@@ -82,13 +82,31 @@ where
             }
         },
         cig::drive_cig(&stack, &cig_manager),
+        // `enable_cis_host_support`'s `LE Set Host Feature` command can lose a race against the
+        // controller's startup resolving-list sync ("Command Disallowed") - that sync only runs
+        // once the connection state machine goes idle, so retry a few times with a settling delay
+        // rather than giving up after one attempt. It doesn't report success/failure, so this
+        // just retries unconditionally a bounded number of times.
         async {
-            cis::enable_cis_host_support(&stack).await;
+            for _ in 0..5 {
+                if cis::enable_cis_host_support(&stack).await {
+                    break;
+                }
+                embassy_time::Timer::after(embassy_time::Duration::from_secs(2)).await;
+            }
             core::future::pending::<()>().await
         },
         async {
+            // Give the controller a moment to finish its own startup housekeeping (the same
+            // resolving-list sync above) before the very first attempt, then a real delay between
+            // retries - hammering `connect()` in a tight loop never lets that sync run (it only
+            // fires once the connection state machine has been idle for a moment), which is what
+            // was producing a self-perpetuating stream of instant `Command Disallowed`/`Timeout`
+            // failures.
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
             loop {
                 connect_and_stream(&stack, &mut central, target, &cig_manager).await;
+                embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
             }
         },
     )
@@ -111,18 +129,31 @@ async fn connect_and_stream<C: Controller>(
         },
     };
 
-    #[cfg(feature = "log")]
-    log::info!("[le_audio_source] connecting");
-    #[cfg(feature = "defmt")]
-    info!("[le_audio_source] connecting");
-    let conn = match central.connect(&config).await {
-        Ok(conn) => conn,
-        Err(_e) => {
-            #[cfg(feature = "log")]
-            log::warn!("[le_audio_source] connect failed: {:?}", _e);
-            #[cfg(feature = "defmt")]
-            warn!("[le_audio_source] connect failed");
-            return;
+    // `Central::connect` has no timeout of its own - it waits forever for a matching
+    // advertisement, indistinguishable from a real hang without one of our own. Retrying in a
+    // bounded loop instead gives a "still waiting" heartbeat, so silence past the first one means
+    // the peer genuinely isn't reachable (not advertising, wrong address, RF issue, ...) rather
+    // than this code being stuck.
+    let conn = loop {
+        #[cfg(feature = "log")]
+        log::info!("[le_audio_source] connecting to {:?}", target);
+        #[cfg(feature = "defmt")]
+        info!("[le_audio_source] connecting");
+        match embassy_time::with_timeout(embassy_time::Duration::from_secs(10), central.connect(&config)).await {
+            Ok(Ok(conn)) => break conn,
+            Ok(Err(_e)) => {
+                #[cfg(feature = "log")]
+                log::warn!("[le_audio_source] connect failed: {:?}", _e);
+                #[cfg(feature = "defmt")]
+                warn!("[le_audio_source] connect failed");
+                return;
+            }
+            Err(_timeout) => {
+                #[cfg(feature = "log")]
+                log::warn!("[le_audio_source] still waiting for the sink to be reachable...");
+                #[cfg(feature = "defmt")]
+                warn!("[le_audio_source] still waiting for the sink to be reachable...");
+            }
         }
     };
 

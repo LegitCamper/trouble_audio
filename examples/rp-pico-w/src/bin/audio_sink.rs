@@ -5,21 +5,20 @@
 use cyw43::aligned_bytes;
 use cyw43::Cyw43439;
 use cyw43_pio::PioSpi;
-use defmt::*;
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
-use embassy_rp::{bind_interrupts, dma};
+use embassy_rp::{bind_interrupts, dma, usb};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_alloc::LlffHeap as Heap;
+use panic_probe as _;
 use static_cell::StaticCell;
 use trouble_audio::cis::CisManager;
 use trouble_audio_example_apps::basic_audio_sink::{run, MAX_ASES};
 use trouble_audio_examples::{ble_bridge, pio_audio, Audio};
 use trouble_host::prelude::ExternalController;
-use {defmt_rtt as _, panic_probe as _};
 
 const CONTROLLER_SLOTS: usize = 10;
 
@@ -35,6 +34,7 @@ bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     PIO1_IRQ_0 => InterruptHandler<PIO1>;
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>, dma::InterruptHandler<DMA_CH2>, dma::InterruptHandler<DMA_CH3>;
+    USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 
 #[embassy_executor::task]
@@ -42,6 +42,14 @@ async fn cyw43_task(
     runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>, Cyw43439>,
 ) -> ! {
     runner.run().await
+}
+
+/// Serves `log::info!`/etc calls (this crate's dependencies' `"log"`-feature output) over a USB
+/// CDC-ACM serial port - connect with any serial terminal (e.g. `screen /dev/ttyACM0 115200`)
+/// rather than needing a debug probe.
+#[embassy_executor::task]
+async fn logger_task(driver: usb::Driver<'static, USB>) {
+    embassy_usb_logger::run!(1024, log::LevelFilter::Debug, driver);
 }
 
 #[embassy_executor::main]
@@ -56,6 +64,8 @@ async fn main(spawner: Spawner) {
     }
 
     let p = embassy_rp::init(Default::default());
+
+    spawner.spawn(logger_task(usb::Driver::new(p.USB, Irqs)).unwrap());
 
     #[cfg(feature = "skip-cyw43-firmware")]
     let (fw, clm, btfw, nvram) = {
@@ -97,7 +107,7 @@ async fn main(spawner: Spawner) {
     let state = STATE.init(cyw43::State::new());
     let (_net_device, bt_device, mut control, runner) =
         cyw43::new_with_bluetooth(state, pwr, spi, fw, btfw, nvram).await;
-    spawner.spawn(unwrap!(cyw43_task(runner)));
+    spawner.spawn(cyw43_task(runner).unwrap());
     control.init(clm).await;
 
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
@@ -114,7 +124,7 @@ async fn main(spawner: Spawner) {
         dma0: dma::Channel::new(p.DMA_CH2, Irqs),
         dma1: dma::Channel::new(p.DMA_CH3, Irqs),
     };
-    spawner.spawn(unwrap!(pio_audio::audio_handler(audio)));
+    spawner.spawn(pio_audio::audio_handler(audio).unwrap());
 
     let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
     select(run(controller, &cis_manager, None), ble_bridge::play_decoded_audio(&cis_manager)).await;
