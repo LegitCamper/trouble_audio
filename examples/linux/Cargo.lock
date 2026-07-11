@@ -1673,6 +1673,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-io",
  "heapless 0.9.3",
+ "libm",
  "log",
  "static_cell",
  "trouble-host",

@@ -9,14 +9,15 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, PIO0};
+use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_alloc::LlffHeap as Heap;
 use static_cell::StaticCell;
 use trouble_audio::cis::CisManager;
-use trouble_audio_example_apps::basic_audio_sink::{self, run, MAX_ASES};
+use trouble_audio_example_apps::basic_audio_sink::{run, MAX_ASES};
+use trouble_audio_examples::{ble_bridge, pio_audio, Audio};
 use trouble_host::prelude::ExternalController;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -32,7 +33,8 @@ static HEAP: Heap = Heap::empty();
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
-    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>;
+    PIO1_IRQ_0 => InterruptHandler<PIO1>;
+    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>, dma::InterruptHandler<DMA_CH2>, dma::InterruptHandler<DMA_CH3>;
 });
 
 #[embassy_executor::task]
@@ -100,7 +102,21 @@ async fn main(spawner: Spawner) {
 
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
 
+    // PIO1 (PIO0 is taken by the cyw43 Wi-Fi/Bluetooth SPI above) drives the stereo PWM aux
+    // output: SM0/GP12 for left, SM1/GP11 for right.
+    let pio1 = Pio::new(p.PIO1, Irqs);
+    let audio = Audio {
+        pio: pio1.common,
+        sm0: pio1.sm0,
+        sm1: pio1.sm1,
+        left: p.PIN_12,
+        right: p.PIN_11,
+        dma0: dma::Channel::new(p.DMA_CH2, Irqs),
+        dma1: dma::Channel::new(p.DMA_CH3, Irqs),
+    };
+    spawner.spawn(unwrap!(pio_audio::audio_handler(audio)));
+
     let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
-    select(run(controller, &cis_manager, None), basic_audio_sink::count_decoded_frames(&cis_manager)).await;
+    select(run(controller, &cis_manager, None), ble_bridge::play_decoded_audio(&cis_manager)).await;
     core::unreachable!("both branches above loop forever")
 }

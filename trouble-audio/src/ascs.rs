@@ -38,18 +38,33 @@ fn phy_set_from_u8(value: u8) -> Result<PhySet, FromGattError> {
     }
 }
 
-/// A Gatt service client for discovering and controlling an audio server's ASEs
+/// Max number of characteristics [`AscsClient`] discovers under the ASCS service: the ASE Control
+/// Point plus up to 2 Sink and 2 Source ASEs - matches this crate's stereo-only scope (one ASE
+/// per channel), not the spec's general per-connection limit.
+const MAX_ASCS_CHARACTERISTICS: usize = 5;
+
+/// A Gatt service client for discovering and controlling an audio server's ASEs.
+///
+/// ASEs are untyped (`Characteristic<[u8]>`, not `Characteristic<Ase>`) - `characteristic_by_uuid`
+/// only ever returns the *first* characteristic matching a UUID, so a server with more than one
+/// same-direction ASE (e.g. a 2-ASE stereo sink) needs the UUID-agnostic
+/// [`GattClient::characteristics`] instead, filtered here by UUID; that returns
+/// `Characteristic<[u8]>`, and `Characteristic::phantom` is private to `trouble-host`, so there's
+/// no way to retype the result as `Characteristic<Ase>` from outside it. Decode with
+/// [`Ase::from_gatt`] after reading.
 pub struct AscsClient {
     handle: ServiceHandle,
     pub ase_control_point: Characteristic<AseControlPointOperation>,
-    pub source_ase: Option<Characteristic<Ase>>,
-    pub sink_ase: Option<Characteristic<Ase>>,
+    ases: Vec<Characteristic<[u8]>, MAX_ASCS_CHARACTERISTICS>,
 }
 
 impl AscsClient {
     /// Discovers the ASCS service and its characteristics on an already-connected `GattClient`.
+    /// Takes `&GattClient` (not `&mut`) since discovery only needs shared access - letting a
+    /// caller run this concurrently with `client.task()` (itself `&self`) via `select`/`join`
+    /// rather than needing them sequenced.
     pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
-        client: &mut GattClient<'_, T, P, MAX_SERVICES>,
+        client: &GattClient<'_, T, P, MAX_SERVICES>,
     ) -> Self {
         let services = client
             .services_by_uuid(&Uuid::from(service::AUDIO_STREAM_CONTROL))
@@ -62,25 +77,29 @@ impl AscsClient {
             .await
             .expect("Ase Control point must exist on the server");
 
-        let sink_ase = client
-            .characteristic_by_uuid(handle, &Uuid::from(characteristic::SINK_ASE))
-            .await
-            .ok();
-
-        let source_ase = client
-            .characteristic_by_uuid(handle, &Uuid::from(characteristic::SOURCE_ASE))
-            .await
-            .ok();
+        let ases: Vec<Characteristic<[u8]>, MAX_ASCS_CHARACTERISTICS> = client.characteristics(handle).await.unwrap();
 
         // One of the following must be implemented on the server
-        assert!(sink_ase.is_some() || source_ase.is_some());
+        assert!(
+            ases.iter()
+                .any(|c| c.uuid == Uuid::from(characteristic::SINK_ASE) || c.uuid == Uuid::from(characteristic::SOURCE_ASE))
+        );
 
         Self {
             handle: handle.clone(),
             ase_control_point,
-            source_ase,
-            sink_ase,
+            ases,
         }
+    }
+
+    /// This server's Sink ASE characteristics (one per channel for a stereo sink).
+    pub fn sink_ases(&self) -> impl Iterator<Item = &Characteristic<[u8]>> {
+        self.ases.iter().filter(|c| c.uuid == Uuid::from(characteristic::SINK_ASE))
+    }
+
+    /// This server's Source ASE characteristics (one per channel for a stereo source).
+    pub fn source_ases(&self) -> impl Iterator<Item = &Characteristic<[u8]>> {
+        self.ases.iter().filter(|c| c.uuid == Uuid::from(characteristic::SOURCE_ASE))
     }
 }
 
@@ -879,6 +898,16 @@ impl AseControlPointNotification {
         }
         Self { encoded }
     }
+
+    /// The Opcode this notification is responding to.
+    pub fn opcode(&self) -> u8 {
+        self.encoded.first().copied().unwrap_or(0)
+    }
+
+    /// The per-ASE (ase_id, response_code, reason) results.
+    pub fn results(&self) -> impl Iterator<Item = (u8, u8, u8)> + '_ {
+        self.encoded.get(2..).unwrap_or(&[]).chunks_exact(3).map(|c| (c[0], c[1], c[2]))
+    }
 }
 
 impl AsGatt for AseControlPointNotification {
@@ -887,5 +916,15 @@ impl AsGatt for AseControlPointNotification {
 
     fn as_gatt(&self) -> &[u8] {
         &self.encoded
+    }
+}
+
+impl FromGatt for AseControlPointNotification {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        let count = *data.get(1).ok_or(FromGattError::InvalidLength)? as usize;
+        if data.len() != 2 + count * 3 {
+            return Err(FromGattError::InvalidLength);
+        }
+        Ok(Self { encoded: AVec::from(data) })
     }
 }

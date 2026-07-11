@@ -27,6 +27,10 @@ const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 /// can size their own `CisManager<M, MAX_ASES>` to match (see [`run`]).
 pub const MAX_ASES: usize = 2;
 
+/// This device's fixed "random" address - public so `basic_audio_source` (or any other central)
+/// knows what to connect to.
+pub const ADDRESS: [u8; 6] = [0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff];
+
 /// Runs the audio sink peripheral forever on the given controller.
 ///
 /// `cis_manager` is caller-owned so the caller can concurrently drain
@@ -49,7 +53,7 @@ where
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
-    let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
+    let address: Address = Address::random(ADDRESS);
 
     let config = PeripheralConfig {
         device_name: b"Ble Audio Sink",

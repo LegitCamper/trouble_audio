@@ -45,6 +45,7 @@ defmt-rtt = "1.0.0"
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
+fixed = "1.28.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
