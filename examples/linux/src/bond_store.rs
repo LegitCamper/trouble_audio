@@ -40,14 +40,21 @@ impl BondStore for FileBondStore {
 
 impl Default for FileBondStore {
     fn default() -> Self {
-        Self::new(default_path())
+        Self::new(state_dir().join("trouble_audio_bond.json"))
     }
 }
 
-fn default_path() -> PathBuf {
-    let dir = std::env::var_os("XDG_STATE_HOME")
+impl FileBondStore {
+    /// Returns a `FileBondStore` for the source role, using a separate file from the sink's
+    /// default so both can coexist on the same machine without clobbering each other's bonds.
+    pub fn for_source() -> Self {
+        Self::new(state_dir().join("trouble_audio_source_bond.json"))
+    }
+}
+
+fn state_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    dir.join("trouble_audio_bond.json")
+        .unwrap_or_else(|| PathBuf::from("."))
 }

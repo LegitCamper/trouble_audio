@@ -9,10 +9,10 @@
 //! time (the common case for LE Audio unicast sinks/sources such as earbuds), so each ASE slot
 //! is a single, ordinary characteristic rather than a per-connection one.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec as AVec;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
-use static_cell::StaticCell;
 use trouble_host::{
     connection::PhySet,
     gatt::{ReadEvent, WriteEvent},
@@ -132,7 +132,12 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
 
         // The Common Audio Profile requires an encrypted link for the ASE Control Point and
         // every ASE characteristic.
-        static CONTROL_STORE: StaticCell<[u8; 90]> = StaticCell::new();
+        //
+        // Each characteristic needs `&'static mut [u8]` backing storage.  Using `Box::leak`
+        // gives one independent allocation per call, so:
+        //   - calling `new()` more than once doesn't panic (unlike a `StaticCell`), and
+        //   - each ASE in the loop gets its own backing buffer (a `static` inside a loop is the
+        //     same static on every iteration, so the second iteration's `.init()` would panic).
         let ase_control_point_char = service
             .add_characteristic(
                 characteristic::ASE_CONTROL_POINT,
@@ -142,14 +147,13 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
                     CharacteristicProp::Notify,
                 ],
                 AseControlPointOperation::default(),
-                CONTROL_STORE.init([0; 90]),
+                Box::leak(Box::new([0u8; 90])),
             )
             .write_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let mut ase_chars = Vec::new();
         for ase in ases.iter() {
-            static ASE_STORE: StaticCell<[u8; 90]> = StaticCell::new();
             let (direction, uuid, value) = match ase {
                 AseType::Source(ase) => (AseDirection::Source, characteristic::SOURCE_ASE, ase.clone()),
                 AseType::Sink(ase) => (AseDirection::Sink, characteristic::SINK_ASE, ase.clone()),
@@ -159,7 +163,7 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
                     uuid,
                     &[CharacteristicProp::Read, CharacteristicProp::Notify],
                     value,
-                    ASE_STORE.init([0; 90]),
+                    Box::leak(Box::new([0u8; 90])),
                 )
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build();

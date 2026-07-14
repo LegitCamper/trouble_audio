@@ -17,9 +17,11 @@ use trouble_audio::cig::{self, AseQos, CigManager};
 use trouble_audio::generic_audio::{
     encode_list, AudioLocation, CodecSpecificConfiguration, ContextType, FrameDuration, Metadata, SamplingFrequency,
 };
-use trouble_audio::iso::{LeCreateCis, LeRemoveIsoDataPath, LeSetCigParameters, LeSetupIsoDataPath};
+use trouble_audio::iso::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParameters, LeSetupIsoDataPath};
 use trouble_audio::{ase_client, cis, iso_tx, CodecId};
 use trouble_host::prelude::*;
+
+use crate::sink::BondStore;
 
 #[cfg(feature = "defmt")]
 use defmt::{info, warn, Debug2Format};
@@ -51,13 +53,19 @@ const RETRANSMISSION_NUMBER: u8 = 2;
 /// Runs the audio source central forever on the given controller: connects to `target` (a
 /// "random" address, e.g. [`crate::basic_audio_sink::ADDRESS`]), then streams a generated stereo
 /// test tone to it. Never returns.
-pub async fn run<C>(controller: C, our_address: [u8; 6], target: [u8; 6]) -> !
+///
+/// `bond_store`, if given, persists the bond so that reconnects after a process restart don't need
+/// to re-pair (the sink remembers the LTK; without a stored bond on the source side, it won't know
+/// to resume encryption rather than pair fresh, which can fail if the peer enforces re-pairing
+/// prevention).
+pub async fn run<C>(controller: C, our_address: [u8; 6], target: [u8; 6], bond_store: Option<&dyn BondStore>) -> !
 where
     C: Controller
         + ControllerCmdSync<LeSetCigParameters>
         + ControllerCmdAsync<LeCreateCis>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
         + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeRemoveCig>
         + ControllerCmdSync<LeSetHostFeature>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
@@ -65,7 +73,14 @@ where
     let mut resources: HostResources<C, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(Address::random(our_address))
+        // Match the sink's NoInputNoOutput → JustWorks pairing on both sides.
+        .set_io_capabilities(IoCapabilities::NoInputNoOutput)
         .build();
+    // Seed the security manager with any previously saved bond so that a reconnect after a
+    // process restart can resume encryption rather than pair from scratch.
+    if let Some(bond) = bond_store.and_then(|s| s.load()) {
+        let _ = stack.add_bond_information(bond);
+    }
     let mut runner = stack.runner();
     let mut central = stack.central();
     let cig_manager = CigManager::<NoopRawMutex>::new();
@@ -105,7 +120,7 @@ where
             // failures.
             embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
             loop {
-                connect_and_stream(&stack, &mut central, target, &cig_manager).await;
+                connect_and_stream(&stack, &mut central, target, &cig_manager, bond_store).await;
                 embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
             }
         },
@@ -120,7 +135,13 @@ async fn connect_and_stream<C: Controller>(
     central: &mut Central<'_, C, DefaultPacketPool>,
     target: Address,
     cig_manager: &CigManager<NoopRawMutex>,
+    bond_store: Option<&dyn BondStore>,
 ) {
+    // Clear stale state from the previous connection.  This also queues a `LeRemoveCig` action
+    // for `drive_cig` to execute before the next `LE Set CIG Parameters` so the controller
+    // doesn't reject the re-create with `Command Disallowed (0x0C)`.
+    cig_manager.reset();
+
     let config = ConnectConfig {
         connect_params: Default::default(),
         scan_config: ScanConfig {
@@ -167,9 +188,42 @@ async fn connect_and_stream<C: Controller>(
         warn!("[le_audio_source] request_security failed");
         return;
     }
+
+    // Wait for the link to become encrypted, handling bond events along the way.
+    //
+    // For fresh pairings (LESC):    PairingComplete fires first (with bond), then Encrypted.
+    // For bonded reconnects:        only Encrypted fires (with the stored bond).
+    // For legacy pairing:           Encrypted fires first (STK, bond=None), then PairingComplete.
+    //
+    // We always break on Encrypted.  For the legacy-pairing case PairingComplete may arrive
+    // after we've already broken out; in practice both sides use LESC (NoInputNoOutput +
+    // modern controllers), so PairingComplete reliably precedes Encrypted.
+    let mut pending_bond: Option<BondInformation> = None;
     loop {
         match conn.next().await {
-            ConnectionEvent::Encrypted { .. } => break,
+            ConnectionEvent::PairingComplete { bond: Some(bond), .. } => {
+                // Keep the bond info; we'll persist it once Encrypted confirms the link is up.
+                let _ = stack.add_bond_information(bond.clone());
+                pending_bond = Some(bond);
+            }
+            ConnectionEvent::Encrypted { bond: Some(bond), .. } => {
+                // Bonded reconnect: encryption resumed with a stored LTK.
+                let _ = stack.add_bond_information(bond.clone());
+                if let Some(store) = bond_store {
+                    store.save(&bond);
+                }
+                break;
+            }
+            ConnectionEvent::Encrypted { bond: None, .. } => {
+                // Fresh pairing: bond info already captured in PairingComplete above (LESC), or
+                // will arrive in a subsequent PairingComplete (Legacy - saved on next reconnect).
+                if let Some(bond) = pending_bond.take() {
+                    if let Some(store) = bond_store {
+                        store.save(&bond);
+                    }
+                }
+                break;
+            }
             ConnectionEvent::Disconnected { .. } => return,
             _ => {}
         }

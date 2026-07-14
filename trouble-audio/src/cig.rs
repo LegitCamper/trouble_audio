@@ -24,7 +24,8 @@ use defmt::{info, warn};
 use crate::{
     generic_audio::{FrameDuration, SamplingFrequency},
     iso::{
-        data_path_direction, LeCreateCis, LeSetCigParameters, LeSetupIsoDataPath, DATA_PATH_ID_HCI, LeRemoveIsoDataPath,
+        data_path_direction, LeCreateCis, LeRemoveCig, LeSetCigParameters, LeSetupIsoDataPath, DATA_PATH_ID_HCI,
+        LeRemoveIsoDataPath,
     },
     lc3::Lc3MonoEncoder,
     CodingFormat,
@@ -90,6 +91,10 @@ struct CigAseSlot {
 /// [`CigManager::cig_parameters_set`]/the [`EventHandler`] impl), to be carried out by
 /// [`drive_cig`] since it requires awaiting an HCI command.
 enum CigAction {
+    /// Remove the CIG with this CIG_ID from the controller before recreating it.  Queued by
+    /// [`CigManager::reset`] so reconnect attempts don't hit `Command Disallowed (0x0C)` when
+    /// they re-issue `LE Set CIG Parameters` with the same CIG_ID.
+    RemoveCig(u8),
     SetCigParameters(LeSetCigParameters),
     CreateCis {
         cis_0: ConnHandle,
@@ -106,6 +111,9 @@ pub struct CigManager<M: RawMutex> {
     slots: RefCell<[CigAseSlot; CIS_COUNT]>,
     encoders: RefCell<[Option<Lc3MonoEncoder>; CIS_COUNT]>,
     acl_handle: RefCell<Option<ConnHandle>>,
+    /// The CIG_ID most recently passed to [`Self::configure`]; needed by [`Self::reset`] so it
+    /// can queue a `RemoveCig` action without the caller having to pass the ID in again.
+    cig_id: RefCell<Option<u8>>,
     actions: Channel<M, CigAction, 4>,
     ready: Channel<M, u8, 4>,
 }
@@ -123,8 +131,31 @@ impl<M: RawMutex> CigManager<M> {
             slots: RefCell::new([CigAseSlot::default(); CIS_COUNT]),
             encoders: RefCell::new(core::array::from_fn(|_| None)),
             acl_handle: RefCell::new(None),
+            cig_id: RefCell::new(None),
             actions: Channel::new(),
             ready: Channel::new(),
+        }
+    }
+
+    /// Resets the manager to its initial empty state, ready to service a new connection.
+    ///
+    /// Call this at the start of each new connection attempt (before [`Self::set_acl_handle`] and
+    /// [`Self::configure`]) to clear stale slots/encoders/handles from the previous connection.
+    /// If a CIG was created during the previous connection, this queues a `LE Remove CIG` action
+    /// for [`drive_cig`] to execute before the next `LE Set CIG Parameters` — without it the
+    /// controller rejects the re-create with `Command Disallowed (0x0C)`.
+    pub fn reset(&self) {
+        *self.slots.borrow_mut() = [CigAseSlot::default(); CIS_COUNT];
+        *self.encoders.borrow_mut() = core::array::from_fn(|_| None);
+        *self.acl_handle.borrow_mut() = None;
+        // Drain any stale queued actions/readiness signals from the previous connection so
+        // they don't fire for the new one.
+        while self.actions.try_receive().is_ok() {}
+        while self.ready.try_receive().is_ok() {}
+        // Queue CIG removal if we ever created one: the controller won't accept a new
+        // LE Set CIG Parameters for the same CIG_ID until the old one is removed.
+        if let Some(cig_id) = *self.cig_id.borrow() {
+            let _ = self.actions.try_send(CigAction::RemoveCig(cig_id));
         }
     }
 
@@ -159,6 +190,7 @@ impl<M: RawMutex> CigManager<M> {
         }
         // Every ASE is configured - build LE Set CIG Parameters from both slots' QoS.
         let (Some(q0), Some(q1)) = (slots[0].qos, slots[1].qos) else { return };
+        *self.cig_id.borrow_mut() = Some(q0.cig_id);
         debug_assert_eq!(q0.cig_id, q1.cig_id, "both ASEs of one CIG must share a CIG_ID");
         let params = LeSetCigParameters::new(
             q0.cig_id,
@@ -285,11 +317,21 @@ where
         + ControllerCmdSync<LeSetCigParameters>
         + ControllerCmdAsync<LeCreateCis>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
-        + ControllerCmdSync<LeRemoveIsoDataPath>,
+        + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeRemoveCig>,
 {
     let iso = stack.iso();
     loop {
         match manager.actions.receive().await {
+            CigAction::RemoveCig(cig_id) => {
+                // Errors are expected on the very first connection (no CIG yet) or if the
+                // controller already removed the CIG when the ACL dropped. Ignore them.
+                let _ = iso.command(LeRemoveCig::new(cig_id)).await;
+                #[cfg(feature = "log")]
+                log::info!("[cig] removed CIG {cig_id} (or it was already gone)");
+                #[cfg(feature = "defmt")]
+                info!("[cig] removed CIG {} (or it was already gone)", cig_id);
+            }
             CigAction::SetCigParameters(params) => match iso.command(params).await {
                 Ok(ret) => manager.cig_parameters_set(ret.connection_handle_0, ret.connection_handle_1),
                 Err(_e) => {
