@@ -560,6 +560,7 @@ pub fn apply_media_operation(
 pub struct McsClient {
     handle: ServiceHandle,
     pub media_player_name: Characteristic<HString<32>>,
+    pub track_changed: Characteristic<()>,
     pub track_title: Characteristic<HString<64>>,
     pub track_duration: Characteristic<i32>,
     pub track_position: Characteristic<i32>,
@@ -595,6 +596,7 @@ impl McsClient {
         Some(Self {
             handle: handle.clone(),
             media_player_name: required!(characteristic::MEDIA_PLAYER_NAME),
+            track_changed: required!(characteristic::TRACK_CHANGED),
             track_title: required!(characteristic::TRACK_TITLE),
             track_duration: required!(characteristic::TRACK_DURATION),
             track_position: required!(characteristic::TRACK_POSITION),
@@ -625,6 +627,7 @@ pub struct McsInit {
 /// Backing storage buffers for [`McsServer::new`], sized to each characteristic's `MAX_SIZE`.
 pub struct McsStore<'a> {
     pub media_player_name: &'a mut [u8],
+    pub track_changed: &'a mut [u8],
     pub track_title: &'a mut [u8],
     pub track_duration: &'a mut [u8],
     pub track_position: &'a mut [u8],
@@ -640,6 +643,7 @@ pub struct McsStore<'a> {
 pub struct McsServer {
     handle: u16,
     media_player_name: Characteristic<HString<32>>,
+    track_changed: Characteristic<()>,
     track_title: Characteristic<HString<64>>,
     track_duration: Characteristic<i32>,
     track_position: Characteristic<i32>,
@@ -655,7 +659,7 @@ pub struct McsServer {
     content_control_id: Characteristic<u8>,
 }
 
-pub const MCS_ATTRIBUTES: usize = 38;
+pub const MCS_ATTRIBUTES: usize = 41;
 
 impl McsServer {
     /// Creates a new (Generic) MCS Gatt service. `Playing Orders Supported`/`Media Control Point
@@ -678,6 +682,12 @@ impl McsServer {
                 store.media_player_name,
             )
             .read_permission(PermissionLevel::EncryptionRequired)
+            .build();
+
+        // No value of its own (just a signal) and so no read/write permission to set - matches
+        // OTS's Object Changed characteristic (see `ots::OtsServer::new`).
+        let track_changed = service
+            .add_characteristic(characteristic::TRACK_CHANGED, &[CharacteristicProp::Notify], (), store.track_changed)
             .build();
 
         let track_title = service
@@ -786,6 +796,7 @@ impl McsServer {
         Self {
             handle: service.build(),
             media_player_name,
+            track_changed,
             track_title,
             track_duration,
             track_position,
@@ -804,6 +815,13 @@ impl McsServer {
 
     pub fn media_player_name(&self) -> &Characteristic<HString<32>> {
         &self.media_player_name
+    }
+    /// Notify-only, no value of its own - notify it (`.notify(conn, &(), ...)`) whenever the
+    /// current track changes, e.g. after loading a new Track Title/Duration, or after a
+    /// successful track-navigation Media Control Point operation (see
+    /// [`drive_media_control_point`], which already does the latter automatically).
+    pub fn track_changed(&self) -> &Characteristic<()> {
+        &self.track_changed
     }
     pub fn track_title(&self) -> &Characteristic<HString<64>> {
         &self.track_title
@@ -895,13 +913,25 @@ impl<P: PacketPool> LeAudioServerService<P> for McsServer {
     }
 }
 
+/// Whether a Media Control Point operation, given the [`apply_media_operation`] result code it
+/// produced, moved the player onto a different current track - i.e. a track-navigation opcode
+/// that succeeded. This crate has no real playlist to pull the new track's Title/Duration from
+/// (see the module doc comment), but the fact that the current track *changed* is still known,
+/// and worth telling a client so it knows to re-read Track Title/Duration itself.
+fn changes_track(opcode: MediaControlPointOpcode, result_code: u8) -> bool {
+    use MediaControlPointOpcode::*;
+    result_code == RESULT_SUCCESS
+        && matches!(opcode, PreviousTrack | NextTrack | FirstTrack | LastTrack | GotoTrack(_))
+}
+
 /// Applies a Media Control Point write end to end: reads the current [`MediaPlayerState`] back
 /// out of the individual characteristics it's spread across, applies `operation` (see
-/// [`apply_media_operation`]), stores + notifies whichever characteristics changed, and sends
-/// the resulting [`MediaControlPointNotification`] on the Media Control Point characteristic
-/// itself (mirroring `bap::drive_ase_control_point`'s accept-then-notify handling of the ASE
-/// Control Point). Unlike VCS's Control Point, this never rejects the ATT write itself - MCS
-/// conveys failure only through the notification's Result_Code.
+/// [`apply_media_operation`]), stores + notifies whichever characteristics changed (including
+/// [`McsServer::track_changed`] on a successful track-navigation opcode - see [`changes_track`]),
+/// and sends the resulting [`MediaControlPointNotification`] on the Media Control Point
+/// characteristic itself (mirroring `bap::drive_ase_control_point`'s accept-then-notify handling
+/// of the ASE Control Point). Unlike VCS's Control Point, this never rejects the ATT write itself
+/// - MCS conveys failure only through the notification's Result_Code.
 pub async fn drive_media_control_point<M: RawMutex, P: PacketPool, const MAX_CONNECTIONS: usize>(
     server: &AttributeServer<'_, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
     mcs: &McsServer,
@@ -924,6 +954,9 @@ pub async fn drive_media_control_point<M: RawMutex, P: PacketPool, const MAX_CON
     }
     if next.seeking_speed != current.seeking_speed {
         let _ = mcs.seeking_speed.notify(conn, &next.seeking_speed, true).await;
+    }
+    if changes_track(operation.opcode, result_code) {
+        let _ = mcs.track_changed.notify(conn, &(), true).await;
     }
 
     let notification = MediaControlPointNotification {
@@ -1101,6 +1134,7 @@ mod tests {
             trouble_host::attribute::AttributeTable::new();
 
         static NAME: static_cell::StaticCell<[u8; 32]> = static_cell::StaticCell::new();
+        static CHANGED: static_cell::StaticCell<[u8; 0]> = static_cell::StaticCell::new();
         static TITLE: static_cell::StaticCell<[u8; 64]> = static_cell::StaticCell::new();
         static DURATION: static_cell::StaticCell<[u8; 4]> = static_cell::StaticCell::new();
         static POSITION: static_cell::StaticCell<[u8; 4]> = static_cell::StaticCell::new();
@@ -1129,6 +1163,7 @@ mod tests {
             OPS_SUP.init(ALL_SUPPORTED),
             McsStore {
                 media_player_name: NAME.init([0; 32]),
+                track_changed: CHANGED.init([0; 0]),
                 track_title: TITLE.init([0; 64]),
                 track_duration: DURATION.init([0; 4]),
                 track_position: POSITION.init([0; 4]),
@@ -1143,6 +1178,7 @@ mod tests {
         let server: AttributeServer<'_, NoopRawMutex, DefaultPacketPool, MAX_SERVICES, 1> = AttributeServer::new(table);
 
         assert_eq!(mcs.media_player_name().get(&server).unwrap(), HString::<32>::try_from("Trouble Player").unwrap());
+        assert_eq!(mcs.track_changed().get(&server).unwrap(), ());
         assert_eq!(mcs.track_duration().get(&server).unwrap(), 180_000);
         assert_eq!(mcs.media_state().get(&server).unwrap(), MediaState::Inactive);
         assert_eq!(mcs.content_control_id().get(&server).unwrap(), 1);
@@ -1150,5 +1186,33 @@ mod tests {
 
         mcs.media_state().set(&server, &MediaState::Playing).unwrap();
         assert_eq!(mcs.media_state().get(&server).unwrap(), MediaState::Playing);
+    }
+
+    #[test]
+    fn changes_track_only_on_successful_track_navigation() {
+        for opcode in [
+            MediaControlPointOpcode::PreviousTrack,
+            MediaControlPointOpcode::NextTrack,
+            MediaControlPointOpcode::FirstTrack,
+            MediaControlPointOpcode::LastTrack,
+            MediaControlPointOpcode::GotoTrack(2),
+        ] {
+            assert!(changes_track(opcode, RESULT_SUCCESS));
+            assert!(!changes_track(opcode, RESULT_MEDIA_PLAYER_INACTIVE));
+        }
+    }
+
+    #[test]
+    fn changes_track_is_false_for_non_navigation_opcodes() {
+        for opcode in [
+            MediaControlPointOpcode::Play,
+            MediaControlPointOpcode::Pause,
+            MediaControlPointOpcode::Stop,
+            MediaControlPointOpcode::MoveRelative(100),
+            MediaControlPointOpcode::NextSegment,
+            MediaControlPointOpcode::NextGroup,
+        ] {
+            assert!(!changes_track(opcode, RESULT_SUCCESS));
+        }
     }
 }

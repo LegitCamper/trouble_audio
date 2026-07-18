@@ -61,6 +61,7 @@ struct McsStorage {
     playing_orders_supported: PlayingOrdersSupported,
     opcodes_supported: MediaControlPointOpcodesSupported,
     media_player_name: [u8; 32],
+    track_changed: [u8; 0],
     track_title: [u8; 64],
     track_duration: [u8; 4],
     track_position: [u8; 4],
@@ -86,6 +87,7 @@ impl Default for McsStorage {
             opcodes_supported: MediaControlPointOpcodesSupported::Play
                 | MediaControlPointOpcodesSupported::Pause,
             media_player_name: [0; 32],
+            track_changed: [0; 0],
             track_title: [0; 64],
             track_duration: [0; 4],
             track_position: [0; 4],
@@ -130,6 +132,7 @@ fn build_server(storage: &mut McsStorage) -> Server<'_, MAX_ASES, CONNECTIONS_MA
         &storage.opcodes_supported,
         mcs::McsStore {
             media_player_name: &mut storage.media_player_name,
+            track_changed: &mut storage.track_changed,
             track_title: &mut storage.track_title,
             track_duration: &mut storage.track_duration,
             track_position: &mut storage.track_position,
