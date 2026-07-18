@@ -1,12 +1,13 @@
-//! A minimal BLE peripheral exposing the (Generic) Media Control Service (MCS): no PACS/ASCS/CIS,
-//! for hardware whose Bluetooth controller doesn't support LE Isochronous Channels (BIS/CIS) and
-//! so can't stream or receive real LE Audio - e.g. the rp-pico-w's cyw43439. A bonded central
-//! still controls this device's single (simulated) media player over the standard Media Control
-//! Point: [`PLAYING`] tracks the resulting Play/Pause state so the caller can react to it (e.g.
-//! actually start/stop a locally-generated tone - see the `rp-pico-w` example's `tone` module).
-//! [`BUTTON_PRESSED`] is the mirror image - signal it from a local input (e.g. a physical button)
-//! to drive the same Play/Pause toggle from this device's side, kept in sync with any connected
-//! central the same way a Media Control Point write would be.
+//! A minimal BLE peripheral exposing the (Generic) Media Control Service (MCS) - a pure remote
+//! control. This device neither sends nor receives any audio itself (no PACS/ASCS/CIS at all,
+//! deliberately - e.g. the rp-pico-w's cyw43439 Bluetooth controller doesn't support LE
+//! Isochronous Channels (BIS/CIS) and so couldn't stream real LE Audio even if it wanted to);
+//! whatever's actually playing audio lives entirely on some other device. A bonded central
+//! controls this device's single (simulated) media player over the standard Media Control Point;
+//! [`PLAYING`] mirrors the resulting Play/Pause state for whatever local UI the caller wants to
+//! drive with it (e.g. an LED). [`BUTTON_PRESSED`] is the mirror image - signal it from a local
+//! input (e.g. a physical button) to drive the same Play/Pause toggle from this device's side,
+//! kept in sync with any connected central the same way a Media Control Point write would be.
 //!
 //! Unlike [`crate::sink`], this owns its own advertise/accept/event loop rather than reusing
 //! `run_peripheral` - that helper's controller bounds and advertising data are both LE
@@ -41,9 +42,10 @@ pub const ADDRESS: [u8; 6] = [0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xfd];
 
 const DEVICE_NAME: &[u8] = b"Ble Media Control";
 
-/// Set (by [`run`]) whenever a connected central's Media Control Point write leaves the media
-/// player in [`MediaState::Playing`], cleared on [`MediaState::Paused`]/`Inactive`/disconnect -
-/// the caller's cue to actually start/stop producing audio.
+/// Set (by [`run`]) whenever the media player is left in [`MediaState::Playing`] - by a connected
+/// central's Media Control Point write, or by [`BUTTON_PRESSED`] - cleared on
+/// [`MediaState::Paused`]/`Inactive`/disconnect. This device has no audio of its own; the only
+/// thing actually playing is on whatever other device this remote is controlling.
 pub static PLAYING: AtomicBool = AtomicBool::new(false);
 
 /// Signal this (e.g. `.signal(())`) from a local input to toggle Play/Pause from this device's own
@@ -114,8 +116,10 @@ fn build_server(storage: &mut McsStorage) -> Server<'_, MAX_ASES, CONNECTIONS_MA
     .add_mcs(
         mcs::McsInit {
             media_player_name: HString::try_from("Trouble Media Control").unwrap(),
-            track_title: HString::try_from("Test Tone").unwrap(),
-            track_duration: -1, // Unknown/infinite - the tone just loops.
+            // Placeholder track info: this device has no real player behind it, and a real
+            // remote would learn these from whatever it's actually controlling.
+            track_title: HString::try_from("Unknown Track").unwrap(),
+            track_duration: -1, // Unknown.
             playback_speed: 0,
             playing_order: PlayingOrder::InOrderOnce,
             playing_orders_supported: storage.playing_orders_supported,
@@ -198,7 +202,7 @@ pub async fn run<C: Controller>(controller: C, bond_store: Option<&dyn BondStore
     let mut storage = McsStorage::default();
     let server = build_server(&mut storage);
     // A player with nothing loaded is `Inactive`, and Play/Pause are rejected while inactive -
-    // this device always has its tone "loaded", just not playing yet.
+    // this simulated remote always has a track "loaded", just not playing yet.
     let _ = server
         .mcs()
         .unwrap()

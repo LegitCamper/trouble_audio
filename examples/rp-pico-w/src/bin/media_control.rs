@@ -6,16 +6,15 @@ use cyw43::aligned_bytes;
 use cyw43::Cyw43439;
 use cyw43_pio::PioSpi;
 use embassy_executor::Spawner;
-use embassy_futures::select::select;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{BOOTSEL, DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1, USB};
+use embassy_rp::peripherals::{BOOTSEL, DMA_CH0, DMA_CH1, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::{bind_interrupts, dma, usb, Peri};
 use embedded_alloc::LlffHeap as Heap;
 use panic_probe as _;
 use static_cell::StaticCell;
 use trouble_audio_example_apps::media_control;
-use trouble_audio_examples::{button, pio_audio, tone, Audio};
+use trouble_audio_examples::button;
 use trouble_host::prelude::ExternalController;
 
 const CONTROLLER_SLOTS: usize = 10;
@@ -30,18 +29,13 @@ static HEAP: Heap = Heap::empty();
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
-    PIO1_IRQ_0 => InterruptHandler<PIO1>;
-    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>, dma::InterruptHandler<DMA_CH2>, dma::InterruptHandler<DMA_CH3>;
+    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>, dma::InterruptHandler<DMA_CH1>;
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 
 #[embassy_executor::task]
 async fn cyw43_task(
-    runner: cyw43::Runner<
-        'static,
-        cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>,
-        Cyw43439,
-    >,
+    runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>, Cyw43439>,
 ) -> ! {
     runner.run().await
 }
@@ -118,32 +112,16 @@ async fn main(spawner: Spawner) {
     control.init(clm).await;
 
     // The cyw43439's Bluetooth controller doesn't support LE Isochronous Channels (BIS/CIS), so
-    // it can't do LE Audio streaming - `ExternalController` still works fine as a plain GATT
-    // peripheral, which is all `media_control::run` needs.
+    // it can't send or receive real LE Audio at all - `ExternalController` still works fine as a
+    // plain GATT peripheral, which is all `media_control::run` needs. This device is purely a
+    // remote control: it plays no audio of its own, and controls the playback of whatever other
+    // device a central pairs it with.
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
-
-    // PIO1 (PIO0 is taken by the cyw43 Wi-Fi/Bluetooth SPI above) drives the stereo PWM aux
-    // output: SM0/GP12 for left, SM1/GP11 for right.
-    let pio1 = Pio::new(p.PIO1, Irqs);
-    let audio = Audio {
-        pio: pio1.common,
-        sm0: pio1.sm0,
-        sm1: pio1.sm1,
-        left: p.PIN_12,
-        right: p.PIN_11,
-        dma0: dma::Channel::new(p.DMA_CH2, Irqs),
-        dma1: dma::Channel::new(p.DMA_CH3, Irqs),
-    };
-    spawner.spawn(pio_audio::audio_handler(audio).unwrap());
 
     // Polls the BOOTSEL button and signals `media_control::BUTTON_PRESSED` on each press -
     // `media_control::run` reacts to that the same way it reacts to a central's Media Control
     // Point Play/Pause write.
     spawner.spawn(button_task(p.BOOTSEL).unwrap());
 
-    // Either a connected central's Media Control Point write or the BOOTSEL button toggles
-    // `media_control::PLAYING`, which `tone::play_tone` polls to start/stop a locally-generated
-    // test tone - there's no BLE audio stream involved at all.
-    select(media_control::run(controller, None), tone::play_tone()).await;
-    core::unreachable!("both branches above loop forever")
+    media_control::run(controller, None).await;
 }
