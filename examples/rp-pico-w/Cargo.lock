@@ -2975,6 +2975,7 @@ dependencies = [
  "embedded-alloc",
  "fixed",
  "futures",
+ "libm",
  "log",
  "panic-probe",
  "portable-atomic",

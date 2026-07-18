@@ -51,6 +51,7 @@ embassy-usb-logger = "0.6.0"
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 fixed = "1.28.0"
+libm = "0.2"
 # No print feature: printing a panic message would need defmt (`print-defmt`) or RTT
 # (`print-rtt`), both back on a probe/defmt - a panic still safely halts the MCU, it just won't
 # show up over the USB log.

@@ -714,6 +714,13 @@ where
         }
     }
 
+    /// This server's (Generic) Media Control service, if [`ServerBuilder::add_mcs`] was called -
+    /// e.g. so a caller can read [`McsServer::media_state`] after [`Self::handle`] processes a
+    /// Media Control Point write, to react to the resulting Play/Pause/... transition itself.
+    pub fn mcs(&self) -> Option<&McsServer> {
+        self.mcs.as_ref()
+    }
+
     fn handle_read(&self, event: &ReadEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
         if let Some(res) = self.pacs.handle_read_event(event) {
             return Some(res);

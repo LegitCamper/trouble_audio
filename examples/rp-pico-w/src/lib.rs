@@ -1,12 +1,11 @@
 #![no_std]
 
-pub mod ble_bridge;
-pub mod pio_audio;
+pub mod button;
 
+use embassy_rp::Peri;
 use embassy_rp::dma;
 use embassy_rp::peripherals::{PIN_11, PIN_12, PIO1};
 use embassy_rp::pio::{Common, StateMachine};
-use embassy_rp::Peri;
 
 /// Peripherals `pio_audio::audio_handler` needs: PIO1 (free for this - PIO0 drives the cyw43
 /// Wi-Fi/Bluetooth SPI), one state machine and one DMA channel per stereo PWM output pin.

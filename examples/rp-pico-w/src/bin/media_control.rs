@@ -8,23 +8,21 @@ use cyw43_pio::PioSpi;
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1, USB};
+use embassy_rp::peripherals::{BOOTSEL, DMA_CH0, DMA_CH1, DMA_CH2, DMA_CH3, PIO0, PIO1, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
-use embassy_rp::{bind_interrupts, dma, usb};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_rp::{bind_interrupts, dma, usb, Peri};
 use embedded_alloc::LlffHeap as Heap;
 use panic_probe as _;
 use static_cell::StaticCell;
-use trouble_audio::cis::CisManager;
-use trouble_audio_example_apps::basic_audio_sink::{run, MAX_ASES};
-use trouble_audio_examples::{ble_bridge, pio_audio, Audio};
+use trouble_audio_example_apps::media_control;
+use trouble_audio_examples::{button, pio_audio, tone, Audio};
 use trouble_host::prelude::ExternalController;
 
 const CONTROLLER_SLOTS: usize = 10;
 
 /// `trouble_audio` uses `alloc` for LE Audio's variable-length data (PAC records, codec
-/// configuration, metadata, ...), so a global allocator must be installed. 16 KiB is plenty for
-/// the small number of short-lived buffers this example builds.
+/// configuration, metadata, ...), so a global allocator must be installed even though this
+/// example's plain MCS peripheral never actually allocates anything itself.
 const HEAP_SIZE: usize = 16 * 1024;
 
 #[global_allocator]
@@ -39,7 +37,11 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::task]
 async fn cyw43_task(
-    runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>, Cyw43439>,
+    runner: cyw43::Runner<
+        'static,
+        cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>,
+        Cyw43439,
+    >,
 ) -> ! {
     runner.run().await
 }
@@ -50,6 +52,11 @@ async fn cyw43_task(
 #[embassy_executor::task]
 async fn logger_task(driver: usb::Driver<'static, USB>) {
     embassy_usb_logger::run!(1024, log::LevelFilter::Debug, driver);
+}
+
+#[embassy_executor::task]
+async fn button_task(bootsel: Peri<'static, BOOTSEL>) {
+    button::poll(bootsel).await
 }
 
 #[embassy_executor::main]
@@ -110,6 +117,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(cyw43_task(runner).unwrap());
     control.init(clm).await;
 
+    // The cyw43439's Bluetooth controller doesn't support LE Isochronous Channels (BIS/CIS), so
+    // it can't do LE Audio streaming - `ExternalController` still works fine as a plain GATT
+    // peripheral, which is all `media_control::run` needs.
     let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
 
     // PIO1 (PIO0 is taken by the cyw43 Wi-Fi/Bluetooth SPI above) drives the stereo PWM aux
@@ -126,7 +136,14 @@ async fn main(spawner: Spawner) {
     };
     spawner.spawn(pio_audio::audio_handler(audio).unwrap());
 
-    let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
-    select(run(controller, &cis_manager, None), ble_bridge::play_decoded_audio(&cis_manager)).await;
+    // Polls the BOOTSEL button and signals `media_control::BUTTON_PRESSED` on each press -
+    // `media_control::run` reacts to that the same way it reacts to a central's Media Control
+    // Point Play/Pause write.
+    spawner.spawn(button_task(p.BOOTSEL).unwrap());
+
+    // Either a connected central's Media Control Point write or the BOOTSEL button toggles
+    // `media_control::PLAYING`, which `tone::play_tone` polls to start/stop a locally-generated
+    // test tone - there's no BLE audio stream involved at all.
+    select(media_control::run(controller, None), tone::play_tone()).await;
     core::unreachable!("both branches above loop forever")
 }
