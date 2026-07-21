@@ -1,0 +1,41 @@
+[package]
+name = "linux-serial-examples"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+env_logger = "0.11"
+log = "0.4"
+embedded-io-adapters = { version = "0.7", features = ["tokio-1"] }
+embassy-sync = { version = "0.8", features = ["log"] }
+embassy-time = { version = "0.5.1", features = [
+  "log",
+  "std",
+  "generic-queue-8",
+] }
+critical-section = { version = "1.1", features = ["std"] }
+tokio = { version = "1", features = ["full"] }
+tokio-serial = "5.4"
+bt-hci = { version = "0.9", default-features = false, features = [
+  "log",
+  "uuid",
+] }
+
+linux-examples = { path = "../linux" }
+trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
+  "log",
+] }
+trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
+  "log",
+] }
+
+[patch.crates-io]
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
+
+# TEMPORARY: points at the local trouble-host checkout to pick up a `Central::connect`/
+# `connect_ext` fix (missing `_drop.defuse()` on the `Timeout` return path, which left
+# `connect_command_state` primed to spuriously cancel the *next* connect attempt almost
+# instantly - see central.rs) not yet in the pinned upstream rev. Remove this patch once that
+# fix lands upstream and the pinned `rev` is bumped past it.
+[patch."https://github.com/embassy-rs/trouble"]
+trouble-host = { path = "../../../trouble/host" }
