@@ -31,6 +31,8 @@ trouble_audio = { path = "../../trouble-audio", default-features = false, featur
 
 [patch.crates-io]
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
+# CIS/ISO HCI commands (LE Set CIG Parameters, LE Create CIS, ...) not in upstream bt-hci yet.
+bt-hci = { path = "../../../bt-hci" }
 
 # TEMPORARY: points at the local trouble-host checkout to pick up a `Central::connect`/
 # `connect_ext` fix (missing `_drop.defuse()` on the `Timeout` return path, which left

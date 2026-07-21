@@ -11,6 +11,10 @@
 
 use core::cell::RefCell;
 
+use bt_hci::cmd::le::{
+    data_path_direction, LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParameters, LeSetupIsoDataPath,
+    DATA_PATH_ID_HCI,
+};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::event::le::LeCisEstablished;
 use bt_hci::param::{ConnHandle, Status};
@@ -23,15 +27,11 @@ use defmt::{info, warn};
 
 use crate::{
     generic_audio::{FrameDuration, SamplingFrequency},
-    iso::{
-        data_path_direction, LeCreateCis, LeRemoveCig, LeSetCigParameters, LeSetupIsoDataPath, DATA_PATH_ID_HCI,
-        LeRemoveIsoDataPath,
-    },
     lc3::Lc3MonoEncoder,
     CodingFormat,
 };
 
-/// Number of CIS this crate's CIG creation supports - matches [`crate::iso::LeSetCigParameters`]
+/// Number of CIS this crate's CIG creation supports - matches [`bt_hci::cmd::le::LeSetCigParameters`]
 /// (itself hardcoded to 2, since `bt_hci::cmd!`'s params are a fixed struct) and this crate's
 /// stereo-only scope.
 const CIS_COUNT: usize = 2;

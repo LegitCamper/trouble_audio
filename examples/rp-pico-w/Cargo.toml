@@ -96,3 +96,7 @@ embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = 
 embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
+# CIS/ISO HCI commands (LE Set CIG Parameters, LE Create CIS, ...) not in upstream bt-hci yet -
+# trouble_audio depends on them unconditionally, so this is needed even though this example
+# doesn't use CIS/ISO itself.
+bt-hci = { path = "../../../bt-hci" }

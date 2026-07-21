@@ -1,0 +1,94 @@
+[package]
+name = "nRF54L15_Connect_Kit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-executor = { version = "0.10", default-features = false, features = [
+  "platform-cortex-m",
+  "executor-thread",
+  "defmt",
+  "executor-interrupt",
+] }
+embassy-time = { version = "0.5", default-features = false, features = [
+  "defmt",
+  "defmt-timestamp-uptime",
+] }
+embassy-nrf = { version = "0.11", default-features = false, features = [
+  "defmt",
+  "time-driver-grtc",
+  "gpiote",
+  "unstable-pac",
+  "rt",
+] }
+embassy-futures = "0.1.1"
+embassy-sync = { version = "0.8", features = ["defmt"] }
+
+futures = { version = "0.3", default-features = false, features = [
+  "async-await",
+] }
+nrf-sdc = { version = "0.4", default-features = false, features = [
+  "defmt",
+  "peripheral",
+  "central",
+] }
+nrf-mpsl = { version = "0.3", default-features = false, features = [
+  "defmt",
+  "critical-section-impl",
+] }
+bt-hci = { version = "0.9", default-features = false, features = ["defmt"] }
+trouble-host = { path = "../../../trouble/host", features = [
+  "derive",
+  "scan",
+  "gatt",
+  "central",
+  "security",
+  "iso",
+  "default-packet-pool",
+] }
+
+defmt = "1.0"
+defmt-rtt = "1.0"
+panic-probe = { version = "1.0", features = ["print-defmt"] }
+
+cortex-m = { version = "0.7.6" }
+cortex-m-rt = "0.7.0"
+static_cell = "2"
+embedded-alloc = "0.6.0"
+
+trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
+  "defmt",
+] }
+trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
+  "defmt",
+] }
+
+[profile.release]
+debug = 2
+
+[patch.crates-io]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
+#nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
+#nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
+nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
+nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
+# CIS/ISO HCI commands (LE Set CIG Parameters, LE Create CIS, ...) not in upstream bt-hci yet -
+# see ~/projects/nrf-sdc's sdc.rs `mod iso`, which relies on these existing.
+bt-hci = { path = "../../../bt-hci" }
+
+# trouble-audio-example-apps pulls trouble-host from git; point it at the same local checkout
+# used above so both resolve to one trouble-host instance (otherwise trouble_host types from the
+# two resolutions don't unify, e.g. Address/Controller/HostResources).
+[patch."https://github.com/embassy-rs/trouble"]
+trouble-host = { path = "../../../trouble/host" }
+
+[features]
+default = ["nrf54l15"]
+nrf54l15 = ["embassy-nrf/nrf54l15-app-s", "nrf-sdc/nrf54l15-app-s"]
+# nrf54lm20 = ["embassy-nrf/nrf54lm20-app-s", "nrf-sdc/nrf54lm20-app-s"]

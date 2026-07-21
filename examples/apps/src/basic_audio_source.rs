@@ -7,7 +7,10 @@
 
 use alloc::vec::Vec as AVec;
 
-use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
+use bt_hci::cmd::le::{
+    LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParameters,
+    LeSetHostFeature, LeSetupIsoDataPath,
+};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -17,7 +20,6 @@ use trouble_audio::cig::{self, AseQos, CigManager};
 use trouble_audio::generic_audio::{
     encode_list, AudioLocation, CodecSpecificConfiguration, ContextType, FrameDuration, Metadata, SamplingFrequency,
 };
-use trouble_audio::iso::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParameters, LeSetupIsoDataPath};
 use trouble_audio::{ase_client, cis, iso_tx, CodecId};
 use trouble_host::prelude::*;
 

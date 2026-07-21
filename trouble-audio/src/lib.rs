@@ -23,7 +23,6 @@ pub use client::*;
 pub mod generic_audio;
 pub mod gmas;
 pub mod has;
-pub mod iso;
 pub mod iso_tx;
 pub mod lc3;
 pub mod mcs;
@@ -40,6 +39,8 @@ pub mod vocs;
 /// Deliberately excludes optional-service types that collide by name across services (e.g.
 /// `mics::Mute` vs `vcs::Mute`) - import those from their own module.
 pub mod prelude {
+    pub use bt_hci::cmd::le::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath};
+
     pub use crate::{
         ascs::{Ase, AseType},
         cis::CisManager,
@@ -47,7 +48,6 @@ pub mod prelude {
             AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame,
             SamplingFrequency, SupportedFrameDurations, SupportedSamplingFrequencies,
         },
-        iso::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath},
         pacs::{AudioContexts, PACRecord, PAC},
         CodecId, Server, ServerBuilder,
     };
