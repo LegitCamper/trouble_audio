@@ -23,7 +23,7 @@ use embassy_sync::channel::Channel;
 use trouble_host::prelude::*;
 
 #[cfg(feature = "defmt")]
-use defmt::{info, warn};
+use defmt::{info, warn, Debug2Format};
 
 use crate::{
     generic_audio::{FrameDuration, SamplingFrequency},
@@ -336,17 +336,17 @@ where
                 Ok(ret) => manager.cig_parameters_set(ret.connection_handle_0, ret.connection_handle_1),
                 Err(_e) => {
                     #[cfg(feature = "log")]
-                    log::warn!("[cig] LE Set CIG Parameters failed");
+                    log::warn!("[cig] LE Set CIG Parameters failed: {_e:?}");
                     #[cfg(feature = "defmt")]
-                    warn!("[cig] LE Set CIG Parameters failed");
+                    warn!("[cig] LE Set CIG Parameters failed: {}", Debug2Format(&_e));
                 }
             },
             CigAction::CreateCis { cis_0, cis_1, acl } => {
                 if let Err(_e) = iso.command_async(LeCreateCis::new(CIS_COUNT as u8, cis_0, acl, cis_1, acl)).await {
                     #[cfg(feature = "log")]
-                    log::warn!("[cig] LE Create CIS failed");
+                    log::warn!("[cig] LE Create CIS failed: {_e:?}");
                     #[cfg(feature = "defmt")]
-                    warn!("[cig] LE Create CIS failed");
+                    warn!("[cig] LE Create CIS failed: {}", Debug2Format(&_e));
                 }
             }
             CigAction::SetupDataPath(handle, ase_id) => {
@@ -372,9 +372,9 @@ where
                     }
                     Err(_e) => {
                         #[cfg(feature = "log")]
-                        log::warn!("[cig] LE Setup ISO Data Path failed");
+                        log::warn!("[cig] LE Setup ISO Data Path failed: {_e:?}");
                         #[cfg(feature = "defmt")]
-                        warn!("[cig] LE Setup ISO Data Path failed");
+                        warn!("[cig] LE Setup ISO Data Path failed: {}", Debug2Format(&_e));
                     }
                 }
             }

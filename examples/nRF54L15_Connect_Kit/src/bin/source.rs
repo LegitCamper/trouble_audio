@@ -65,17 +65,22 @@ fn build_sdc<'d, const N: usize>(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    defmt::info!("start");
     {
         static HEAP_MEM: StaticCell<[MaybeUninit<u8>; HEAP_SIZE]> = StaticCell::new();
         let heap_mem = HEAP_MEM.init([const { MaybeUninit::uninit() }; HEAP_SIZE]);
         unsafe { HEAP.init(heap_mem.as_ptr() as usize, HEAP_SIZE) }
     }
 
+    // Internal/InternalRC (embassy-nrf's own default) rather than ExternalXtal: this board
+    // doesn't have both crystals wired the way the DK this was copied from does, and
+    // ExternalXtal spins forever in embassy-nrf's clock init (`while events_xostarted == 0 {}`)
+    // if the crystal never reports ready. Matches the nrf52 central example's approach, which
+    // also runs BLE off internal/RC clocks successfully.
     let mut config: config::Config = Default::default();
     config.clock_speed = config::ClockSpeed::CK128;
-    config.hfclk_source = config::HfclkSource::ExternalXtal;
-    config.lfclk_source = config::LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
+    defmt::info!("clocks initialized");
     let mpsl_p = mpsl::Peripherals::new(
         p.GRTC_CH7,
         p.GRTC_CH8,
@@ -91,11 +96,11 @@ async fn main(spawner: Spawner) {
         p.PPIB21_CH0,
     );
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
-        rc_ctiv: 0,
-        rc_temp_ctiv: 0,
-        accuracy_ppm: 50,
-        skip_wait_lfclk_started: false,
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
+        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
+        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
+        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+        skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
     let mpsl = MPSL.init(unwrap!(mpsl::MultiprotocolServiceLayer::new(
@@ -132,6 +137,8 @@ async fn main(spawner: Spawner) {
     // alone, so budget generously for the added CIS/ISO support. Bump this if `build_sdc` fails.
     let mut sdc_mem = sdc::Mem::<8192>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
+
+    defmt::info!("Running ble audio source example");
 
     basic_audio_source::run(sdc, OUR_ADDRESS, basic_audio_sink::ADDRESS, None).await
 }
