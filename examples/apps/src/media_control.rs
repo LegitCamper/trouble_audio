@@ -174,8 +174,7 @@ async fn toggle_play_pause(
 /// `bond_store`, if given, persists bonds across restarts of this process (see [`BondStore`]).
 pub async fn run<C: Controller>(controller: C, bond_store: Option<&dyn BondStore>) -> ! {
     let address: Address = Address::random(ADDRESS);
-    let mut resources: HostResources<C, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
-        HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
         // No display/keyboard on a typical remote: JustWorks pairing (encrypted, no MITM

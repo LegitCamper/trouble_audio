@@ -3,11 +3,13 @@
 
 use core::mem::MaybeUninit;
 
+use bt_hci::controller::ControllerCmdSync;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
+use nrf_sdc::vendor::NordicCigReservedTimeSet;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
@@ -72,13 +74,16 @@ async fn main(spawner: Spawner) {
         unsafe { HEAP.init(heap_mem.as_ptr() as usize, HEAP_SIZE) }
     }
 
-    // Internal/InternalRC (embassy-nrf's own default) rather than ExternalXtal: this board
-    // doesn't have both crystals wired the way the DK this was copied from does, and
-    // ExternalXtal spins forever in embassy-nrf's clock init (`while events_xostarted == 0 {}`)
-    // if the crystal never reports ready. Matches the nrf52 central example's approach, which
-    // also runs BLE off internal/RC clocks successfully.
+    // ExternalXtal, not Internal/InternalRC: the earlier hang in embassy-nrf's clock init looked
+    // like a missing crystal (`while events_xostarted == 0 {}` never completing) but was actually
+    // an unrelated `probe-rs run` flash/reset handoff bug on this board - the crystal was fine.
+    // CIS/ISO timing needs crystal-grade LFCLK accuracy; RC is good enough for connections/GATT
+    // but was the likely cause of `LE Set CIG Parameters` being rejected with "Unsupported
+    // Feature or Parameter Value".
     let mut config: config::Config = Default::default();
     config.clock_speed = config::ClockSpeed::CK128;
+    config.hfclk_source = config::HfclkSource::ExternalXtal;
+    config.lfclk_source = config::LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
     defmt::info!("clocks initialized");
     let mpsl_p = mpsl::Peripherals::new(
@@ -96,11 +101,11 @@ async fn main(spawner: Spawner) {
         p.PPIB21_CH0,
     );
     let lfclk_cfg = mpsl::raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
-        rc_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-        rc_temp_ctiv: mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-        accuracy_ppm: mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
-        skip_wait_lfclk_started: mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
+        source: mpsl::raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+        rc_ctiv: 0,
+        rc_temp_ctiv: 0,
+        accuracy_ppm: 50,
+        skip_wait_lfclk_started: false,
     };
     static MPSL: StaticCell<MultiprotocolServiceLayer> = StaticCell::new();
     let mpsl = MPSL.init(unwrap!(mpsl::MultiprotocolServiceLayer::new(
@@ -137,6 +142,13 @@ async fn main(spawner: Spawner) {
     // alone, so budget generously for the added CIS/ISO support. Bump this if `build_sdc` fails.
     let mut sdc_mem = sdc::Mem::<8192>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
+
+    // Default reserved time (1300us/ISO interval) is for concurrent ACL/other-role activity we
+    // don't have (this is a single-purpose central with one connection) - free that budget for
+    // the CIG itself. Without this, `LE Set CIG Parameters` for our 2-CIS/10ms-interval/RTN=2
+    // stereo stream was rejected with "Unsupported Feature or Parameter Value" (doesn't fit
+    // alongside the default reservation). See sdc_hci_vs.h's `sdc_hci_cmd_vs_cig_reserved_time_set`.
+    unwrap!(sdc.exec(&NordicCigReservedTimeSet::new(0)).await);
 
     defmt::info!("Running ble audio source example");
 

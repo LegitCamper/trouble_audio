@@ -188,6 +188,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.9.0"
+source = "git+https://github.com/LegitCamper/bt-hci?branch=cis-iso-commands#53622d7da1bb53c93c3a2fb2a26dd909098ba776"
 dependencies = [
  "btuuid",
  "embassy-sync",
@@ -1681,6 +1682,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
+source = "git+https://github.com/LegitCamper/trouble?branch=main#c21b1239fb86de712fc99da803def88378d81177"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1705,6 +1707,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
+source = "git+https://github.com/LegitCamper/trouble?branch=main#c21b1239fb86de712fc99da803def88378d81177"
 dependencies = [
  "convert_case",
  "darling",

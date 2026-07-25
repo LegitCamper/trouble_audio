@@ -12,16 +12,16 @@
 
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use embassy_futures::select::{select, select4, Either};
+use embassy_futures::select::{Either, select, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_audio::cis;
 use trouble_audio::prelude::*;
-use trouble_host::prelude::*;
 pub use trouble_host::prelude::BondInformation;
+use trouble_host::prelude::*;
 
 #[cfg(feature = "defmt")]
-use defmt::{info, warn, Debug2Format};
+use defmt::{Debug2Format, info, warn};
 
 /// Persists bond information across process restarts.
 ///
@@ -91,11 +91,15 @@ impl<'a> PeripheralConfig<'a> {
     ) -> Server<'s, MAX_ASES, CONNECTIONS_MAX, M> {
         ServerBuilder::<MAX_ASES, CONNECTIONS_MAX, M>::new(self.device_name, &self.appearance)
             .add_pacs(
-                self.sink_pac.as_ref().map(|pac| (pac, &mut storage.sink_pac[..])),
+                self.sink_pac
+                    .as_ref()
+                    .map(|pac| (pac, &mut storage.sink_pac[..])),
                 self.sink_audio_locations
                     .as_ref()
                     .map(|loc| (loc, &mut storage.sink_audio_locations[..])),
-                self.source_pac.as_ref().map(|pac| (pac, &mut storage.source_pac[..])),
+                self.source_pac
+                    .as_ref()
+                    .map(|pac| (pac, &mut storage.source_pac[..])),
                 self.source_audio_locations
                     .as_ref()
                     .map(|loc| (loc, &mut storage.source_audio_locations[..])),
@@ -143,7 +147,7 @@ pub async fn run_peripheral<
     cis_manager: &CisManager<M, MAX_ASES>,
     bond_store: Option<&dyn BondStore>,
 ) -> ! {
-    let mut resources: HostResources<C, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
         HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(address)
@@ -180,7 +184,8 @@ pub async fn run_peripheral<
     // the GATT table on every connection isn't necessary and doesn't lifetime-check cleanly
     // against a long-lived `Peripheral` anyway.
     let mut storage = PeripheralConfigStorage::default();
-    let server = config.build_server::<MAX_ASES, CONNECTIONS_MAX, M>(&mut storage, ases, cis_manager);
+    let server =
+        config.build_server::<MAX_ASES, CONNECTIONS_MAX, M>(&mut storage, ases, cis_manager);
 
     select4(
         async {
@@ -301,7 +306,10 @@ async fn advertise<
     let advertiser = peripheral
         .advertise(
             &Default::default(),
-            Advertisement::ConnectableScannableUndirected { adv_data, scan_data: &[] },
+            Advertisement::ConnectableScannableUndirected {
+                adv_data,
+                scan_data: &[],
+            },
         )
         .await?;
     #[cfg(feature = "log")]

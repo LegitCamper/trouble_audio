@@ -78,9 +78,7 @@ embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev 
 #nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
 nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
 nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-# CIS/ISO HCI commands (LE Set CIG Parameters, LE Create CIS, ...) not in upstream bt-hci yet -
-# see ~/projects/nrf-sdc's sdc.rs `mod iso`, which relies on these existing.
-bt-hci = { path = "../../../bt-hci" }
+bt-hci = { git = "https://github.com/embassy-rs/bt-hci", branch = "cis-iso-commands" }
 
 # trouble-audio-example-apps pulls trouble-host from git; point it at the same local checkout
 # used above so both resolve to one trouble-host instance (otherwise trouble_host types from the

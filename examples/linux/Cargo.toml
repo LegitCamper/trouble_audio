@@ -33,13 +33,7 @@ serde_json = "1.0"
 
 [patch.crates-io]
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-# CIS/ISO HCI commands (LE Set CIG Parameters, LE Create CIS, ...) not in upstream bt-hci yet.
-bt-hci = { path = "../../../bt-hci" }
+bt-hci = { git = "https://github.com/LegitCamper/bt-hci", branch = "cis-iso-commands" }
 
-# TEMPORARY: points at the local trouble-host checkout to pick up a `Central::connect`/
-# `connect_ext` fix (missing `_drop.defuse()` on the `Timeout` return path, which left
-# `connect_command_state` primed to spuriously cancel the *next* connect attempt almost
-# instantly - see central.rs) not yet in the pinned upstream rev. Remove this patch once that
-# fix lands upstream and the pinned `rev` is bumped past it.
 [patch."https://github.com/embassy-rs/trouble"]
-trouble-host = { path = "../../../trouble/host" }
+trouble-host = { git = "https://github.com/LegitCamper/trouble", branch = "main" }

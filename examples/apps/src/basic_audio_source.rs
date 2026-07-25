@@ -8,7 +8,7 @@
 use alloc::vec::Vec as AVec;
 
 use bt_hci::cmd::le::{
-    LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParameters,
+    LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParametersTest,
     LeSetHostFeature, LeSetupIsoDataPath,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
@@ -63,7 +63,7 @@ const RETRANSMISSION_NUMBER: u8 = 2;
 pub async fn run<C>(controller: C, our_address: [u8; 6], target: [u8; 6], bond_store: Option<&dyn BondStore>) -> !
 where
     C: Controller
-        + ControllerCmdSync<LeSetCigParameters>
+        + ControllerCmdSync<LeSetCigParametersTest>
         + ControllerCmdAsync<LeCreateCis>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
         + ControllerCmdSync<LeRemoveIsoDataPath>
@@ -72,7 +72,7 @@ where
         + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     let target = Address::random(target);
-    let mut resources: HostResources<C, DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(Address::random(our_address))
         // Match the sink's NoInputNoOutput → JustWorks pairing on both sides.
