@@ -984,7 +984,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1010,7 +1010,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "convert_case",
  "darling",

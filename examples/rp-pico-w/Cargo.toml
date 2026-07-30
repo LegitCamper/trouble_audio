@@ -31,7 +31,7 @@ bt-hci = { version = "0.9", default-features = false, features = [
   "log",
   "uuid",
 ] }
-trouble-host = { path = "../../../trouble/host" }
+trouble-host = { path = "https://github.com/embassy-rs/trouble", rev = "e1ea2e6661dc1e2e88d05acd08e455add6733425" }
 cyw43 = { version = "0.7.0", features = ["log", "firmware-logs", "bluetooth"] }
 # No "log" alternative for cyw43-pio (only an optional "defmt" feature it doesn't need for this
 # example to work) - leaving it disabled just means cyw43-pio's own handful of debug prints don't

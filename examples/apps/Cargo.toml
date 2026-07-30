@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-trouble-host = { git = "https://github.com/embassy-rs/trouble", rev = "0caf63a", features = [
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e", features = [
   "derive",
   "gatt",
   "peripheral",

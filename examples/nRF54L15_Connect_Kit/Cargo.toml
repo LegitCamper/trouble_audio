@@ -37,7 +37,7 @@ nrf-mpsl = { version = "0.3", default-features = false, features = [
   "critical-section-impl",
 ] }
 bt-hci = { version = "0.9", default-features = false, features = ["defmt"] }
-trouble-host = { path = "../../../trouble/host", features = [
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e", features = [
   "derive",
   "scan",
   "gatt",
@@ -74,17 +74,11 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "7a0b1cf453a496240d04545c19aa86009f0fe058" }
-#nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
-#nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc.git", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55" }
-nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci", branch = "cis-iso-commands" }
 
-# trouble-audio-example-apps pulls trouble-host from git; point it at the same local checkout
-# used above so both resolve to one trouble-host instance (otherwise trouble_host types from the
-# two resolutions don't unify, e.g. Address/Controller/HostResources).
-[patch."https://github.com/embassy-rs/trouble"]
-trouble-host = { path = "../../../trouble/host" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", branch = "iso-cis-cig-support" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", branch = "iso-cis-cig-support" }
+bt-hci = { git = "https://github.com/legitcamper/bt-hci", branch = "cis-iso-commands" }
+bt-hci-driver = { git = "https://github.com/legitcamper/bt-hci", branch = "cis-iso-commands" }
 
 [features]
 default = ["nrf54l15"]

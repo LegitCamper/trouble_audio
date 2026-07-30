@@ -11,13 +11,13 @@
 
 use core::cell::RefCell;
 
-use bt_hci::cmd::le::{
-    data_path_direction, LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParametersTest, LeSetupIsoDataPath,
-    DATA_PATH_ID_HCI,
-};
+use bt_hci::cmd::le::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParametersTest, LeSetupIsoDataPath};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::event::le::LeCisEstablished;
-use bt_hci::param::{ConnHandle, Status};
+use bt_hci::param::{ConnHandle, IsoDataPathDirection, Status};
+
+/// The standard HCI transport `Data_Path_ID`, as opposed to a vendor-specific one.
+const DATA_PATH_ID_HCI: u8 = 0x00;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use trouble_host::prelude::*;
@@ -385,7 +385,7 @@ where
                 let result = iso
                     .command(LeSetupIsoDataPath::new(
                         handle,
-                        data_path_direction::INPUT,
+                        IsoDataPathDirection::Input,
                         DATA_PATH_ID_HCI,
                         u8::from(CodingFormat::Transparent),
                         0,

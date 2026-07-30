@@ -126,7 +126,9 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.9.0"
+source = "git+https://github.com/legitcamper/bt-hci?branch=cis-iso-commands#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
 dependencies = [
+ "bt-hci-driver",
  "btuuid",
  "defmt 1.1.1",
  "embassy-sync",
@@ -135,6 +137,16 @@ dependencies = [
  "futures-intrusive",
  "heapless 0.9.3",
  "serde",
+]
+
+[[package]]
+name = "bt-hci-driver"
+version = "0.1.0"
+source = "git+https://github.com/legitcamper/bt-hci?branch=cis-iso-commands#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
+dependencies = [
+ "defmt 1.1.1",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
 ]
 
 [[package]]
@@ -1227,6 +1239,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1243,6 +1256,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1261,8 +1275,10 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
 dependencies = [
  "bt-hci",
+ "bt-hci-driver",
  "critical-section",
  "defmt 1.1.1",
  "embassy-nrf",
@@ -1277,6 +1293,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1859,6 +1876,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "aes",
  "bt-hci",
@@ -1883,6 +1901,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "convert_case",
  "darling",
