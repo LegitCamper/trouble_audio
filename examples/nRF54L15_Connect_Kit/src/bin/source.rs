@@ -18,7 +18,11 @@ use {defmt_rtt as _, panic_probe as _};
 
 /// `trouble_audio`/`basic_audio_source` use `alloc` for LE Audio's variable-length data (PAC
 /// records, codec configuration, metadata, ...), so a global allocator must be installed.
-const HEAP_SIZE: usize = 16 * 1024;
+///
+/// Also has to cover `Lc3MonoEncoder`'s working buffers (`Box::leak`'d, never freed): one
+/// encoder needs 15904 bytes at 48kHz/10ms (3800 integer + 4424 scaler + 7680 complex), and this
+/// source runs two encoders (stereo) concurrently - budget generously (256KB total RAM).
+const HEAP_SIZE: usize = 64 * 1024;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -62,6 +66,13 @@ fn build_sdc<'d, const N: usize>(
             L2CAP_TXQ,
             L2CAP_RXQ,
         )?
+        // `support_cis_central()` only enables the capability - CIG/CIS/ISO buffer counts all
+        // default to 0, so `LE Create CIS` fails with `MEMORY_CAPACITY_EXCEEDED` no matter what.
+        // One CIG/two CIS to match the stereo stream this source creates; TX-heavy since this
+        // role plays audio out rather than receiving it.
+        .cig_count(1)?
+        .cis_count(2)?
+        .iso_buffer_cfg(4, 128, 2, 1, 2, 128)?
         .build(p, rng, mpsl, mem)
 }
 
@@ -139,8 +150,10 @@ async fn main(spawner: Spawner) {
 
     // Central + security + CIS needs more SDC memory than the plain peripheral role this was
     // copied from (4720B); nrf52's central+security example needs 7056B for central+security
-    // alone, so budget generously for the added CIS/ISO support. Bump this if `build_sdc` fails.
-    let mut sdc_mem = sdc::Mem::<8192>::new();
+    // alone. Reserving real CIG/CIS/ISO buffers (see `build_sdc`) adds more on top of that -
+    // budget generously. Bump this if `build_sdc` fails - it logs the exact number of bytes
+    // needed.
+    let mut sdc_mem = sdc::Mem::<12288>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     // Default reserved time (1300us/ISO interval) is for concurrent ACL/other-role activity we

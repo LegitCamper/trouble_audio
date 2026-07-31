@@ -652,6 +652,8 @@ where
                     Err(_) => return true,
                 }
                 if let Ok(operation) = operation {
+                    #[cfg(feature = "defmt")]
+                    debug!("[le audio] ASE Control Point write: {}", operation);
                     if let Some(cis) = self.cis {
                         cis.observe_operation(&self.server, ascs, &operation);
                     }

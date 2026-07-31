@@ -33,7 +33,7 @@ use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
 #[cfg(feature = "defmt")]
-use defmt::{info, warn};
+use defmt::{debug, info, warn};
 
 use crate::{
     ascs::{AscsServer, AseControlPointOperation, AseDirection},
@@ -306,30 +306,72 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
 
     fn on_iso_data(&self, packet: &IsoPacket<'_>) {
         let handle = packet.handle().raw();
+        #[cfg(feature = "log")]
+        log::debug!(
+            "[cis] on_iso_data: handle={} data_len={} boundary={:?} header={:?}",
+            handle, packet.data().len(), packet.boundary_flag(), packet.data_load_header()
+        );
+        #[cfg(feature = "defmt")]
+        debug!(
+            "[cis] on_iso_data: handle={} data_len={} boundary={} header={}",
+            handle, packet.data().len(), packet.boundary_flag(), packet.data_load_header()
+        );
         let (idx, ase_id, channel_allocation) = {
             let slots = self.slots.borrow();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
+                #[cfg(feature = "log")]
+                log::warn!("[cis] on_iso_data: no slot for handle={}", handle);
+                #[cfg(feature = "defmt")]
+                warn!("[cis] on_iso_data: no slot for handle={}", handle);
                 return;
             };
-            let Some(ase_id) = slots[idx].ase_id else { return };
+            let Some(ase_id) = slots[idx].ase_id else {
+                #[cfg(feature = "log")]
+                log::warn!("[cis] on_iso_data: slot {} has no ase_id", idx);
+                #[cfg(feature = "defmt")]
+                warn!("[cis] on_iso_data: slot {} has no ase_id", idx);
+                return;
+            };
             (idx, ase_id, slots[idx].audio.and_then(|a| a.channel_allocation))
         };
         let mut codecs = self.codecs.borrow_mut();
         let Some(Codec::Decoder(decoder)) = &mut codecs[idx] else {
+            #[cfg(feature = "log")]
+            log::warn!("[cis] on_iso_data: slot {} has no decoder", idx);
+            #[cfg(feature = "defmt")]
+            warn!("[cis] on_iso_data: slot {} has no decoder", idx);
             return;
         };
 
         let mut samples = PcmFrame::new();
         if samples.resize_default(decoder.samples_per_frame).is_err() {
+            #[cfg(feature = "log")]
+            log::warn!("[cis] on_iso_data: resize_default failed");
+            #[cfg(feature = "defmt")]
+            warn!("[cis] on_iso_data: resize_default failed");
             return;
         }
         match decoder.decode(packet.data(), &mut samples) {
             Ok(()) => {
-                let _ = self.pcm_out.try_send(DecodedPcm {
-                    ase_id,
-                    channel_allocation,
-                    samples,
-                });
+                let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+                #[cfg(feature = "log")]
+                log::debug!("[cis] on_iso_data: decoded ase_id={} peak={}", ase_id, peak);
+                #[cfg(feature = "defmt")]
+                debug!("[cis] on_iso_data: decoded ase_id={} peak={}", ase_id, peak);
+                if self
+                    .pcm_out
+                    .try_send(DecodedPcm {
+                        ase_id,
+                        channel_allocation,
+                        samples,
+                    })
+                    .is_err()
+                {
+                    #[cfg(feature = "log")]
+                    log::warn!("[cis] on_iso_data: pcm_out channel full, dropping frame");
+                    #[cfg(feature = "defmt")]
+                    warn!("[cis] on_iso_data: pcm_out channel full, dropping frame");
+                }
             }
             Err(_e) => {
                 #[cfg(feature = "log")]

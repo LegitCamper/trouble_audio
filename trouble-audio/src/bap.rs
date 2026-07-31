@@ -68,17 +68,21 @@ pub async fn drive_ase_control_point<
                     let response = (|current_state: Result<AseState, _>| -> Result<AseState, u8> { $body(current_state) })(current_state);
                     match response {
                         Ok(new_state) => {
+                            #[cfg(feature = "log")]
+                            log::info!("[bap] ase {} -> {:?}", ase_id, new_state);
+                            #[cfg(feature = "defmt")]
+                            defmt::info!("[bap] ase {} -> {}", ase_id, new_state);
                             let new_ase = Ase::with_state(ase_id, new_state);
                             let subscribed = characteristic.should_notify(conn);
                             let notify_result = characteristic.notify(conn, &new_ase, true).await;
                             #[cfg(feature = "log")]
                             log::info!(
-                                "[bap] ase {} -> new state, central subscribed={}, notify result={:?}",
+                                "[bap] ase {} notified, central subscribed={}, notify result={:?}",
                                 ase_id, subscribed, notify_result.is_ok()
                             );
                             #[cfg(feature = "defmt")]
                             defmt::info!(
-                                "[bap] ase {} -> new state, central subscribed={}, notify result={}",
+                                "[bap] ase {} notified, central subscribed={}, notify result={}",
                                 ase_id, subscribed, notify_result.is_ok()
                             );
                             results.push((ase_id, RESPONSE_SUCCESS, 0));
@@ -111,8 +115,15 @@ pub async fn drive_ase_control_point<
                     max_transport_latency: 100,
                     presentation_delay_min: [0, 0, 0],
                     presentation_delay_max: [0x40, 0x9C, 0],
+                    // A degenerate preferred range of exactly 0 (this crate's old default) tells
+                    // the central our real preference is zero presentation delay - Android's
+                    // audio pipeline can't actually schedule that (LC3 encode/decode and BLE
+                    // scheduling both need real headroom), so it silently releases the ASEs and
+                    // disconnects right after Enable, never attempting CIS creation. Span the same
+                    // [0, 40ms] range as the allowed presentation_delay_* fields instead, so the
+                    // central picks something workable rather than the floor of the range.
                     preferred_presentation_delay_min: [0, 0, 0],
-                    preferred_presentation_delay_max: [0, 0, 0],
+                    preferred_presentation_delay_max: [0x40, 0x9C, 0],
                     codec_id,
                     codec_specific_configuration: config.clone(),
                 }));

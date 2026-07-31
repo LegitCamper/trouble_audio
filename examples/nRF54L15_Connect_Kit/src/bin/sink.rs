@@ -20,7 +20,11 @@ use {defmt_rtt as _, panic_probe as _};
 
 /// `trouble_audio`/`basic_audio_sink` use `alloc` for LE Audio's variable-length data (PAC
 /// records, codec configuration, metadata, ...), so a global allocator must be installed.
-const HEAP_SIZE: usize = 16 * 1024;
+///
+/// Also has to cover `Lc3MonoDecoder`'s working buffers (`Box::leak`'d, never freed): one
+/// decoder needs 27564 bytes at 48kHz/10ms (19884 scaler + 7680 complex), and this sink runs
+/// two decoders (stereo) concurrently - budget generously (256KB total RAM, plenty of headroom).
+const HEAP_SIZE: usize = 128 * 1024;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -61,6 +65,18 @@ fn build_sdc<'d, const N: usize>(
             L2CAP_TXQ,
             L2CAP_RXQ,
         )?
+        // `support_cis_peripheral()` only enables the capability - CIG/CIS/ISO buffer counts
+        // all default to 0, so without these `LE Create CIS` fails with
+        // `MEMORY_CAPACITY_EXCEEDED` no matter what. One CIG/two CIS to match this sink's two
+        // Sink ASEs (stereo); ISO buffers sized for the negotiated max_sdu (120 bytes/channel).
+        //
+        // rx_pdu_buffer_per_stream_count/rx_sdu_buffer_count started at 2/4 and every SDU came
+        // back marked Lost (packet_status_flag=2, see on_iso_data's debug log) despite the CIS
+        // being established - looks like reassembly buffer starvation rather than real RF loss,
+        // so bumped generously here.
+        .cig_count(1)?
+        .cis_count(2)?
+        .iso_buffer_cfg(4, 128, 4, 6, 8, 128)?
         .build(p, rng, mpsl, mem)
 }
 
@@ -81,6 +97,7 @@ async fn drive_led(
     loop {
         let pcm = cis_manager.receive_pcm().await;
         let peak = pcm.samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0).min(i16::MAX as u16);
+        defmt::debug!("[sink] drive_led: ase_id={} peak={}", pcm.ase_id, peak);
         pwm.set_duty(0, DutyCycle::normal(peak));
     }
 }
@@ -154,10 +171,11 @@ async fn main(spawner: Spawner) {
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
 
-    // Peripheral+security+CIS needs less SDC memory than `source.rs`'s central+security+CIS
-    // (no scanning/initiating buffers), but reusing that budget as a safe starting point. Bump
-    // this if `build_sdc` fails.
-    let mut sdc_mem = sdc::Mem::<8192>::new();
+    // Reserving real CIG/CIS/ISO buffers (see `build_sdc`) pushed the requirement to 9248 bytes,
+    // then to 13600 once the ISO PDU/SDU buffer counts were bumped to chase the "every SDU
+    // marked Lost" issue (see build_sdc's comment). Bump this if `build_sdc` fails - it logs the
+    // exact number of bytes needed.
+    let mut sdc_mem = sdc::Mem::<16384>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let mut pwm = SimplePwm::new_1ch(p.PWM20, p.P0_02, &Default::default());

@@ -8,4 +8,4 @@ runner = "probe-rs run --probe 2fe3:0204 --chip nRF54l15 --speed 4000"
 target = "thumbv8m.main-none-eabihf"
 
 [env]
-DEFMT_LOG = "trouble_host=trace,info"
+DEFMT_LOG = "trouble_host=info,trouble_audio=debug,info"

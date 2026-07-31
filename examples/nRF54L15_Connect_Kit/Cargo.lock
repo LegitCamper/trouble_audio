@@ -73,7 +73,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1063,15 +1063,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1098,7 +1089,7 @@ dependencies = [
  "byteorder",
  "fast-math",
  "heapless 0.7.17",
- "itertools 0.10.5",
+ "itertools",
  "log",
  "num-traits",
 ]
@@ -1239,7 +1230,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1256,7 +1247,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1275,7 +1266,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "bt-hci",
  "bt-hci-driver",
@@ -1293,7 +1284,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#9f006b131ef67e9ef7aba66060e6d6e7867679af"
+source = "git+https://github.com/LegitCamper/nrf-sdc?branch=iso-cis-cig-support#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "bindgen",
  "doxygen-rs",

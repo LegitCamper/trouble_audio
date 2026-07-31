@@ -37,4 +37,4 @@ bitflags = "2.8.0"
 
 [patch.crates-io]
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-bt-hci = { git = "https://github.com/embassy-rs/bt-hci", branch = "cis-iso-commands" }
+bt-hci = { git = "https://github.com/legitcamper/bt-hci", branch = "cis-iso-commands" }

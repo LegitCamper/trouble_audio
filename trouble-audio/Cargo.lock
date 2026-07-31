@@ -70,15 +70,27 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.9.0"
+source = "git+https://github.com/legitcamper/bt-hci?branch=cis-iso-commands#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
 dependencies = [
+ "bt-hci-driver",
  "btuuid",
  "defmt 1.1.1",
  "embassy-sync",
  "embedded-io",
  "embedded-io-async",
  "futures-intrusive",
- "heapless 0.8.0",
+ "heapless 0.9.3",
  "serde",
+]
+
+[[package]]
+name = "bt-hci-driver"
+version = "0.1.0"
+source = "git+https://github.com/legitcamper/bt-hci?branch=cis-iso-commands#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
+dependencies = [
+ "defmt 1.1.1",
+ "embedded-io",
+ "embedded-io-async",
 ]
 
 [[package]]
@@ -563,16 +575,6 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
-dependencies = [
- "hash32 0.3.1",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
@@ -939,7 +941,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "aes",
  "bt-hci",
@@ -965,7 +967,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=0caf63a#0caf63a2c80fa9cc3b1cab9b72c9f89fd3cc9fb8"
+source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "convert_case",
  "darling",
