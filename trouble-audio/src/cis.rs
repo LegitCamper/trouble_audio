@@ -64,7 +64,7 @@ pub struct DecodedPcm {
     pub samples: PcmFrame,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct AudioParams {
     sampling_frequency: SamplingFrequency,
     frame_duration: FrameDuration,
@@ -101,9 +101,13 @@ struct AseSlot {
     cis_handle: Option<u16>,
 }
 
+/// Each variant is tagged with the [`AudioParams`] it was built for, so a reconnect that
+/// renegotiates the exact same Sampling_Frequency/Frame_Duration can reuse the existing,
+/// already-`Box::leak`'d codec instead of allocating (and leaking) a brand new one - see
+/// [`CisManager::on_cis_established`].
 enum Codec {
-    Encoder(Lc3MonoEncoder),
-    Decoder(Lc3MonoDecoder),
+    Encoder(AudioParams, Lc3MonoEncoder),
+    Decoder(AudioParams, Lc3MonoDecoder),
 }
 
 /// A pending action decided synchronously in an `EventHandler` callback, to be carried out by
@@ -122,7 +126,11 @@ pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
     slots: RefCell<[AseSlot; MAX_ASES]>,
     codecs: RefCell<[Option<Codec>; MAX_ASES]>,
     actions: Channel<M, CisAction, 4>,
-    pcm_out: Channel<M, DecodedPcm, 4>,
+    // A stereo stream decodes at up to 200 frames/sec combined (two ASEs @ 10ms each); 4 slots
+    // left almost no slack for the consumer (e.g. `drive_led`) to fall even slightly behind a
+    // burst - observed as near-constant "pcm_out channel full, dropping frame" warnings on
+    // hardware. 16 gives ~80ms of burst headroom at that rate.
+    pcm_out: Channel<M, DecodedPcm, 16>,
     streaming: Channel<M, u8, 4>,
 }
 
@@ -269,22 +277,43 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             return;
         };
 
-        let codec = match direction {
-            AseDirection::Sink => Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
-                .ok()
-                .map(Codec::Decoder),
-            AseDirection::Source => Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
-                .ok()
-                .map(Codec::Encoder),
-        };
-        match codec {
-            Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
-            None => {
-                #[cfg(feature = "log")]
-                log::warn!("[cis] unsupported LC3 sampling frequency for established CIS");
-                #[cfg(feature = "defmt")]
-                warn!("[cis] unsupported LC3 sampling frequency for established CIS");
-                return;
+        // A reconnect (e.g. after the peer disconnects/reconnects mid-session, such as on a
+        // track skip) re-runs the whole ASE Control Point state machine and lands back here even
+        // though the negotiated audio params are typically unchanged. `Lc3MonoDecoder`/
+        // `Lc3MonoEncoder` permanently `Box::leak` their working buffers (see `lc3.rs`), so
+        // allocating a fresh one on every such reconnect leaks ~27-55KB per channel each time and
+        // eventually exhausts the heap (`handle_alloc_error` panic). Reuse the existing codec
+        // already sitting in this slot when it matches, rather than always allocating anew.
+        let already_matches = matches!(
+            (&self.codecs.borrow()[idx], direction),
+            (Some(Codec::Decoder(params, _)), AseDirection::Sink) if *params == audio
+        ) || matches!(
+            (&self.codecs.borrow()[idx], direction),
+            (Some(Codec::Encoder(params, _)), AseDirection::Source) if *params == audio
+        );
+        if already_matches {
+            #[cfg(feature = "log")]
+            log::info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
+            #[cfg(feature = "defmt")]
+            info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
+        } else {
+            let codec = match direction {
+                AseDirection::Sink => Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
+                    .ok()
+                    .map(|d| Codec::Decoder(audio, d)),
+                AseDirection::Source => Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
+                    .ok()
+                    .map(|e| Codec::Encoder(audio, e)),
+            };
+            match codec {
+                Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
+                None => {
+                    #[cfg(feature = "log")]
+                    log::warn!("[cis] unsupported LC3 sampling frequency for established CIS");
+                    #[cfg(feature = "defmt")]
+                    warn!("[cis] unsupported LC3 sampling frequency for established CIS");
+                    return;
+                }
             }
         }
 
@@ -335,7 +364,7 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             (idx, ase_id, slots[idx].audio.and_then(|a| a.channel_allocation))
         };
         let mut codecs = self.codecs.borrow_mut();
-        let Some(Codec::Decoder(decoder)) = &mut codecs[idx] else {
+        let Some(Codec::Decoder(_, decoder)) = &mut codecs[idx] else {
             #[cfg(feature = "log")]
             log::warn!("[cis] on_iso_data: slot {} has no decoder", idx);
             #[cfg(feature = "defmt")]
@@ -650,6 +679,90 @@ mod tests {
 
         let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame");
         assert_eq!(pcm_out.ase_id, 0);
+        assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
+    }
+
+    /// Counts bytes passed to the system allocator, to prove [`CisManager::on_cis_established`]
+    /// stops allocating (and `Box::leak`ing) a brand new [`Lc3MonoDecoder`] on every reconnect -
+    /// see the fix's comment in `on_cis_established`. Regression test for the OOM
+    /// (`handle_alloc_error`) crash a repeated disconnect/reconnect (e.g. skipping tracks) used to
+    /// cause after enough reconnects burned through the heap.
+    struct CountingAllocator;
+    static ALLOCATED_BYTES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+    unsafe impl core::alloc::GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+            ALLOCATED_BYTES.fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
+            unsafe { std::alloc::System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+            unsafe { std::alloc::System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+    #[test]
+    fn reconnecting_with_the_same_audio_params_reuses_the_existing_decoder() {
+        let (ascs, server) = build_ascs_and_server();
+        let manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
+
+        let sampling_frequency = SamplingFrequency::Hz48000;
+        let frame_duration = FrameDuration::Duration10MS;
+        manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x05),
+            cis_handle: ConnHandle::new(0x11),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive(); // Accept
+
+        let before_first = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed);
+        manager.on_cis_established(&established_event(0x11));
+        let _ = manager.actions.try_receive(); // SetupDataPath
+        let allocated_first = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed) - before_first;
+        assert!(
+            allocated_first > 20_000,
+            "expected the first establishment to really allocate a decoder (~27564 bytes at 48kHz/10ms), got {allocated_first}"
+        );
+
+        // Simulate a reconnect: the peer re-runs Config Codec/Config QoS with the exact same
+        // params, and the controller hands out a fresh CIS handle for the new CIS instance -
+        // `on_cis_established` must recognize the existing decoder in this ASE's slot still
+        // matches and reuse it rather than allocating (and leaking) another one.
+        manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x06),
+            cis_handle: ConnHandle::new(0x12),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive(); // Accept
+
+        let before_reconnect = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed);
+        manager.on_cis_established(&established_event(0x12));
+        let _ = manager.actions.try_receive(); // SetupDataPath
+        let allocated_on_reconnect = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed) - before_reconnect;
+        assert_eq!(
+            allocated_on_reconnect, 0,
+            "reconnecting with unchanged audio params must not allocate a new decoder (leaks ~27564 bytes/reconnect otherwise)"
+        );
+
+        // The reused decoder must still actually work.
+        let mut encoder = Lc3MonoEncoder::new(sampling_frequency, frame_duration).unwrap();
+        let pcm_in: AVec<i16> = (0..encoder.samples_per_frame).map(|i| (i as i16).wrapping_mul(37)).collect();
+        let mut frame = [0u8; 100];
+        encoder.encode(&pcm_in, &mut frame).unwrap();
+        let raw = iso_data_packet(0x12, &frame);
+        let (packet, rest) = IsoPacket::from_hci_bytes(&raw).unwrap();
+        assert!(rest.is_empty());
+        manager.on_iso_data(&packet);
+        let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame from the reused decoder");
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
 }

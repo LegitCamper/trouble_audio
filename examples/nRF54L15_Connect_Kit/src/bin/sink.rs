@@ -6,7 +6,7 @@ use core::mem::MaybeUninit;
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
-use embassy_nrf::pwm::{DutyCycle, Prescaler, SimplePwm};
+use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_alloc::LlffHeap as Heap;
@@ -80,25 +80,33 @@ fn build_sdc<'d, const N: usize>(
         .build(p, rng, mpsl, mem)
 }
 
-/// Drains decoded LC3 frames and turns them into visible brightness on the board's single
+/// Silence/near-silence threshold below which `drive_led` treats a frame as "no audio", out of
+/// the full [0, 32767] `i16` peak-magnitude range - picked to ignore LC3 dither/quantization
+/// noise on true digital silence without needing a real loudness measurement.
+const LED_ON_THRESHOLD: u16 = 512;
+
+/// Drains decoded LC3 frames and turns them into a visible on/off signal on the board's single
 /// user-programmable LED (Green LED, P0.2 on the nRF54L15 Connect Kit - the RGB LED next to it is
 /// wired to the separate nRF52820 interface MCU and isn't controllable from here). This board has
 /// no speaker/mic, so this is only meant as a proof that audio is actually arriving and decoding
 /// correctly, before wiring this sink into a real playback path.
 ///
-/// P0.2 turns the LED on when driven high, so duty cycle maps directly (not inverted) to
-/// brightness - and since both PCM samples and the PWM's 15-bit duty range happen to share the
-/// same [0, 32767] scale, a frame's peak sample magnitude can be used as the duty value with no
-/// rescaling.
-async fn drive_led(
-    pwm: &mut SimplePwm<'_>,
-    cis_manager: &CisManager<NoopRawMutex, { basic_audio_sink::MAX_ASES }>,
-) -> ! {
+/// This drives the LED as a plain thresholded on/off GPIO rather than PWM brightness: on real
+/// hardware, `SimplePwm` on `PWM20`/P0.2 never lit the LED at all (tried both `DutyCycle::normal`
+/// and `::inverted`, confirmed with a dedicated boot-time self-test), while a plain
+/// `embassy_nrf::gpio::Output` on the same pin worked immediately - so this sidesteps whatever's
+/// wrong with the PWM peripheral/driver for this chip/pin/embassy-nrf revision rather than
+/// chasing it further.
+async fn drive_led(led: &mut Output<'_>, cis_manager: &CisManager<NoopRawMutex, { basic_audio_sink::MAX_ASES }>) -> ! {
     loop {
         let pcm = cis_manager.receive_pcm().await;
         let peak = pcm.samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0).min(i16::MAX as u16);
         defmt::debug!("[sink] drive_led: ase_id={} peak={}", pcm.ase_id, peak);
-        pwm.set_duty(0, DutyCycle::normal(peak));
+        if peak >= LED_ON_THRESHOLD {
+            led.set_high();
+        } else {
+            led.set_low();
+        }
     }
 }
 
@@ -120,6 +128,23 @@ async fn main(spawner: Spawner) {
     config.lfclk_source = config::LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(config);
     defmt::info!("clocks initialized");
+
+    // Plain GPIO, not PWM - see `drive_led`'s doc comment for why. Self-test: 3 unmistakable
+    // blinks before BLE/audio ever touches this pin, the same way makerdiary's own `blinky`
+    // sample proves out `led0` (P0.2, active-high - see nrf54l15-connectkit's board devicetree).
+    // If this doesn't blink, the problem is P0.2/the LED/the board itself, not anything
+    // audio-related further down.
+    let mut led = Output::new(p.P0_02, Level::Low, OutputDrive::Standard);
+    defmt::info!("LED self-test: 3 blinks via plain GPIO on P0.2");
+    for i in 0..3 {
+        defmt::info!("LED self-test: blink {}", i + 1);
+        led.set_high();
+        embassy_time::Timer::after_millis(200).await;
+        led.set_low();
+        embassy_time::Timer::after_millis(200).await;
+    }
+    defmt::info!("LED self-test: done");
+
     let mpsl_p = mpsl::Peripherals::new(
         p.GRTC_CH7,
         p.GRTC_CH8,
@@ -178,14 +203,10 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<16384>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    let mut pwm = SimplePwm::new_1ch(p.PWM20, p.P0_02, &Default::default());
-    pwm.set_prescaler(Prescaler::Div1);
-    pwm.set_max_duty(i16::MAX as u16);
-
     let cis_manager = CisManager::<NoopRawMutex, { basic_audio_sink::MAX_ASES }>::new();
 
     defmt::info!("Running ble audio sink example");
 
-    select(basic_audio_sink::run(sdc, &cis_manager, None), drive_led(&mut pwm, &cis_manager)).await;
+    select(basic_audio_sink::run(sdc, &cis_manager, None), drive_led(&mut led, &cis_manager)).await;
     unreachable!("both branches above loop forever")
 }

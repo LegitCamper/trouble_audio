@@ -80,16 +80,96 @@ similarly) to test the buffer-starvation theory, and bumped `sdc_mem` from 10240
 16384 bytes (SDC reported 13600 needed for the new counts; last build compiles clean but
 has not been run on hardware yet).
 
-## Known secondary issue, not yet fixed
+## Fixed: decoder/encoder leak on reconnect (was OOM-crashing on track skip)
 
 `Lc3MonoDecoder`/`Lc3MonoEncoder`'s working buffers are `Box::leak`'d (need `'static`
 lifetime, `lc3.rs`'s module doc explains why) - fine for one long-lived session, but
-`on_cis_established` allocates fresh ones on every reconnect rather than reusing old
-ones, so each reconnect permanently burns another ~55KB (sink) / ~32KB (source) of heap.
-Already observed this OOM the heap after 3 reconnects with the old 128KB budget. Bumping
-`HEAP_SIZE` further buys more reconnects but doesn't fix the leak - worth revisiting once
-the Lost-SDU issue is sorted, probably by having `CisManager` reuse a decoder/encoder
-already allocated for a given `ase_id`/channel instead of allocating fresh each time.
+`on_cis_established` used to allocate fresh ones on *every* reconnect rather than reusing
+old ones, so each reconnect permanently burned another ~55KB (sink, stereo) / ~32KB
+(source) of heap. This is exactly what was hitting the `handle_alloc_error` panic (`memory
+allocation of 19884 bytes failed`, in `Lc3MonoDecoder::new`, backtrace through
+`on_cis_established`) seen after skipping a track a few times: skip -> Android tears down
+and re-establishes the CIS -> another ~27564 bytes leaked per channel -> heap exhausted
+within a handful of reconnects even at the 128KB budget.
+
+Fixed in `cis.rs`: `Codec` now tags each variant with the `AudioParams` it was built for,
+and `on_cis_established` reuses the existing codec already sitting in that ASE's slot when
+a reconnect renegotiates the exact same Sampling_Frequency/Frame_Duration (the
+overwhelmingly common case - the params only actually change if the phone renegotiates a
+different codec config). Covered by a regression test
+(`cis::tests::reconnecting_with_the_same_audio_params_reuses_the_existing_decoder`) that
+installs a byte-counting global allocator and asserts zero bytes are allocated on the
+second `on_cis_established` call. Reconnecting with genuinely different audio params still
+allocates a new codec (and leaks the old one) - fine for now since that's rare, revisit
+only if it turns out to matter in practice.
+
+## Investigated: LED never blinks / decoding looks "stuck on" for ~10s after pause
+
+A capture from a later session (still on the buffer-starvation workaround from the section
+above) showed `on_iso_data`'s debug log outputting `data_len=0` on essentially *every* ISO
+event for the sampled window, each one still fed straight into `decoder.decode()` and
+enqueued onto `pcm_out` - `lc3-codec`'s `decode_frame` never actually errors out on a
+short/empty `buf_in`, it silently falls back to packet-loss-concealment (near-silent
+output) and returns `Ok(())`, so these show up in the log as ordinary `decoded ase_id=...
+peak=0` frames rather than anything visibly wrong. Two observable symptoms trace back to
+this:
+
+- **No LED blink**: a `pcm_out` capacity of 4 left almost no headroom - concealment frames
+  from every empty/lost event filled the queue as fast as `drive_led` could drain it, so
+  real (non-silent) frames were getting dropped by `[cis] on_iso_data: pcm_out channel
+  full, dropping frame` about as often as they arrived. Bumped `pcm_out` to 16 slots (~80ms
+  of headroom at stereo/10ms rates) as a mitigation - this reduces the drop rate but
+  doesn't address why so many events are empty in the first place (see below).
+- **~10s "still decoding" after pause**: consistent with the CIS staying established and
+  the controller continuing to deliver periodic (empty) ISO events for a while after the
+  peer actually stops sending real audio, each of which we still decode-and-enqueue as if
+  it were valid.
+
+## Fixed: LED never lit - gave up on `SimplePwm`, drive the LED as plain GPIO instead
+
+Diagnosed with a boot-time self-test added to `sink.rs`: 3 blinks via a plain
+`embassy_nrf::gpio::Output` on P0.2 (immediately after `embassy_nrf::init`, before BLE/PWM
+touch anything), followed by 3 more blinks through the real `SimplePwm` path. The plain-GPIO
+stage always blinked fine (confirmed twice) - P0.2/the LED/the wiring are all good. The PWM
+stage never lit the LED, with *either* polarity:
+
+1. First suspected `DutyCycle::normal` specifically: its documented polarity is "output high
+   while the counter is at or above the duty value", which maps `peak=0` (silence) to
+   *permanently on* and full-scale audio to *permanently off* - backwards from the intended
+   "louder = brighter", and `embassy-nrf`'s own first-party `nrf54l15-app` PWM example
+   (`examples/nrf54l15-app/src/bin/pwm.rs`) uses `DutyCycle::inverted` for this exact chip/PWM
+   instance instead. Switched both the self-test and `drive_led` to `::inverted`.
+2. Re-tested: still nothing, not even the boot-time PWM self-test blinks. So it isn't a
+   polarity nuance - `SimplePwm` on `PWM20`/P0.2 doesn't drive the pin at all on this
+   hardware/embassy-nrf revision, for reasons not yet root-caused (chip is very recently
+   supported in embassy-nrf; could be a driver bug specific to this PWM instance/pin
+   combination, a missing clock/domain prerequisite PWM needs that GPIO doesn't, or something
+   else - didn't dig further once the workaround below proved reliable).
+
+Given a plain `Output` on the identical pin reliably works, gave up on `SimplePwm` for this
+proof-of-life LED rather than continuing to chase an unexplained hardware/driver issue.
+`drive_led` now drives P0.2 directly as a thresholded on/off GPIO (on above
+`LED_ON_THRESHOLD = 512` peak out of 32767, off below) instead of PWM brightness - loses smooth
+dimming, but that was never the point; the point is proving decoded audio is flowing, and a
+binary on/off signal does that fine. `PWM20`/`SimplePwm` are no longer used anywhere in this
+example. Revisit only if brightness-proportional feedback actually becomes worth the yak-shave.
+
+The underlying "why is `data_len` 0 on nearly every packet" question is still open and
+looks like the same root cause as the "Current blocker" section above - the
+`iso_buffer_cfg` bump documented there evidently did **not** resolve it on real hardware
+(this capture is from *after* that change shipped). Two concrete next steps, both outside
+this repo (they live in the `nrf-sdc`/`bt-hci` forks under `[patch.crates-io]`):
+
+1. Fix `IsoDataLoadHeader`'s `iso_sdu_len` masking (`bt-hci` fork, flagged below) so
+   `on_iso_data` can actually tell "genuinely lost" apart from "valid but short/empty" -
+   right now there's no way to distinguish them from this crate's side, which blocks
+   diagnosing this further.
+2. Once that's in, check whether the still-empty events are marked Lost (points back at
+   SDC ISO buffer/timing config) or arriving with a "valid" status despite 0 bytes (points
+   at a parsing bug in `IsoPacket`/`IsoDataLoadHeader` itself, or at NSE/BN-driven
+   duplicate delivery - the ~3.4ms spacing observed between consecutive `on_iso_data` calls
+   in the capture is faster than the negotiated 10ms SDU interval, which is itself worth
+   explaining).
 
 ## Next steps
 
