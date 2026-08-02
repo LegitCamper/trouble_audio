@@ -667,27 +667,10 @@ mod tests {
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
 
-    /// Counts bytes passed to the system allocator, to prove [`CisManager::on_cis_established`]
-    /// stops allocating (and `Box::leak`ing) a brand new [`Lc3MonoDecoder`] on every reconnect -
-    /// see the fix's comment in `on_cis_established`. Regression test for the OOM
-    /// (`handle_alloc_error`) crash a repeated disconnect/reconnect (e.g. skipping tracks) used to
-    /// cause after enough reconnects burned through the heap.
-    struct CountingAllocator;
-    static ALLOCATED_BYTES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-    unsafe impl core::alloc::GlobalAlloc for CountingAllocator {
-        unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-            ALLOCATED_BYTES.fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
-            unsafe { std::alloc::System.alloc(layout) }
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-            unsafe { std::alloc::System.dealloc(ptr, layout) }
-        }
-    }
-
-    #[global_allocator]
-    static ALLOCATOR: CountingAllocator = CountingAllocator;
-
+    /// Regression test for the OOM (`handle_alloc_error`) crash a repeated disconnect/reconnect
+    /// (e.g. skipping tracks) used to cause after enough reconnects burned through the heap - see
+    /// the fix's comment in `on_cis_established`: it must stop allocating (and `Box::leak`ing) a
+    /// brand new [`Lc3MonoDecoder`] on every reconnect.
     #[test]
     fn reconnecting_with_the_same_audio_params_reuses_the_existing_decoder() {
         let (ascs, server) = build_ascs_and_server();
@@ -706,10 +689,10 @@ mod tests {
         });
         let _ = manager.actions.try_receive(); // Accept
 
-        let before_first = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed);
+        let before_first = crate::test_alloc::allocated();
         manager.on_cis_established(&established_event(0x11));
         let _ = manager.actions.try_receive(); // SetupDataPath
-        let allocated_first = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed) - before_first;
+        let allocated_first = crate::test_alloc::allocated() - before_first;
         assert!(
             allocated_first > 20_000,
             "expected the first establishment to really allocate a decoder (~27564 bytes at 48kHz/10ms), got {allocated_first}"
@@ -729,10 +712,10 @@ mod tests {
         });
         let _ = manager.actions.try_receive(); // Accept
 
-        let before_reconnect = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed);
+        let before_reconnect = crate::test_alloc::allocated();
         manager.on_cis_established(&established_event(0x12));
         let _ = manager.actions.try_receive(); // SetupDataPath
-        let allocated_on_reconnect = ALLOCATED_BYTES.load(core::sync::atomic::Ordering::Relaxed) - before_reconnect;
+        let allocated_on_reconnect = crate::test_alloc::allocated() - before_reconnect;
         assert_eq!(
             allocated_on_reconnect, 0,
             "reconnecting with unchanged audio params must not allocate a new decoder (leaks ~27564 bytes/reconnect otherwise)"

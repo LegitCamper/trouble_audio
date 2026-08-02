@@ -17,17 +17,40 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
 use trouble_audio::cis::CisManager;
+use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
+use trouble_audio::lc3::Lc3MonoDecoder;
 use trouble_audio_example_apps::basic_audio_sink;
 use trouble_host::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
 /// `trouble_audio`/`basic_audio_sink` use `alloc` for LE Audio's variable-length data (PAC
-/// records, codec configuration, metadata, ...), so a global allocator must be installed.
-///
-/// Also has to cover `Lc3MonoDecoder`'s working buffers (`Box::leak`'d, never freed): one
-/// decoder needs 27564 bytes at 48kHz/10ms (19884 scaler + 7680 complex), and this sink runs
-/// two decoders (stereo) concurrently - budget generously (256KB total RAM, plenty of headroom).
+/// records, codec configuration, metadata, ...) - small, and not worth computing exactly, covered
+/// by `MISC_ALLOC_BUDGET_BYTES` below. The overwhelming majority of this heap is
+/// `Lc3MonoDecoder`'s working buffers (`Box::leak`'d, never freed, one per ASE - `MAX_ASES` = 2,
+/// stereo) - see `trouble_audio::lc3`'s module docs for the `heap_bytes`/`const`-assertion story
+/// this crate uses below, so an undersized heap is a build-time error instead of a
+/// `handle_alloc_error` panic found on real hardware (as happened once, before this assertion
+/// existed - see git history).
 const HEAP_SIZE: usize = 128 * 1024;
+
+/// This sink's PAC only ever advertises 48kHz, and BAP mandates 10ms frame support - the central
+/// has nothing else to negotiate (see `basic_audio_sink::run`'s `sink_pac`).
+const NEGOTIATED_SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
+const NEGOTIATED_FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
+
+/// Generous ceiling on everything else `alloc`-backed this binary does (PAC records, ASE Control
+/// Point operation buffers, GATT server construction, ...) - unlike the LC3 buffers below, not
+/// computed exactly, just budgeted with headroom.
+const MISC_ALLOC_BUDGET_BYTES: usize = 16 * 1024;
+
+const DECODER_HEAP_BYTES: usize = match Lc3MonoDecoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
+    Ok(n) => n,
+    Err(_) => panic!("unsupported sampling frequency"),
+};
+const _: () = assert!(
+    HEAP_SIZE >= basic_audio_sink::MAX_ASES * DECODER_HEAP_BYTES + MISC_ALLOC_BUDGET_BYTES,
+    "HEAP_SIZE too small to fit one Lc3MonoDecoder per ASE plus misc allocation headroom"
+);
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();

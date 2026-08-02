@@ -116,12 +116,22 @@ enum CigAction {
     SetupDataPath(ConnHandle, u8),
 }
 
+/// An [`Lc3MonoEncoder`] tagged with the Sampling_Frequency/Frame_Duration it was built for, so a
+/// reconnect that renegotiates the exact same params can reuse it instead of allocating (and
+/// leaking, since `Lc3MonoEncoder::new` permanently `Box::leak`s its working buffers - see
+/// `lc3.rs`) another one - see [`CigManager::on_cis_established`].
+struct CachedEncoder {
+    sampling_frequency: SamplingFrequency,
+    frame_duration: FrameDuration,
+    encoder: Lc3MonoEncoder,
+}
+
 /// Central-side counterpart to [`crate::cis::CisManager`]: creates the CIG/CIS for this crate's
 /// stereo scope (exactly [`CIS_COUNT`] ASEs, always Sink ASEs on the peer) and encodes outgoing
 /// audio. See the module docs for how to wire this up.
 pub struct CigManager<M: RawMutex> {
     slots: RefCell<[CigAseSlot; CIS_COUNT]>,
-    encoders: RefCell<[Option<Lc3MonoEncoder>; CIS_COUNT]>,
+    encoders: RefCell<[Option<CachedEncoder>; CIS_COUNT]>,
     acl_handle: RefCell<Option<ConnHandle>>,
     /// The CIG_ID most recently passed to [`Self::configure`]; needed by [`Self::reset`] so it
     /// can queue a `RemoveCig` action without the caller having to pass the ID in again.
@@ -152,13 +162,19 @@ impl<M: RawMutex> CigManager<M> {
     /// Resets the manager to its initial empty state, ready to service a new connection.
     ///
     /// Call this at the start of each new connection attempt (before [`Self::set_acl_handle`] and
-    /// [`Self::configure`]) to clear stale slots/encoders/handles from the previous connection.
-    /// If a CIG was created during the previous connection, this queues a `LE Remove CIG` action
-    /// for [`drive_cig`] to execute before the next `LE Set CIG Parameters` — without it the
+    /// [`Self::configure`]) to clear stale slots/handles from the previous connection. If a CIG
+    /// was created during the previous connection, this queues a `LE Remove CIG` action for
+    /// [`drive_cig`] to execute before the next `LE Set CIG Parameters` — without it the
     /// controller rejects the re-create with `Command Disallowed (0x0C)`.
+    ///
+    /// Deliberately does *not* clear `encoders`: [`Self::on_cis_established`] reuses a cached one
+    /// when the reconnect renegotiates the same Sampling_Frequency/Frame_Duration (the usual
+    /// case), which only works if reset doesn't throw it away first. This relies on the caller
+    /// always calling [`Self::configure`] for the same ASEs in the same order after every
+    /// `reset()`, so slot indices - and thus which cached encoder belongs to which ASE - stay
+    /// consistent across reconnects.
     pub fn reset(&self) {
         *self.slots.borrow_mut() = [CigAseSlot::default(); CIS_COUNT];
-        *self.encoders.borrow_mut() = core::array::from_fn(|_| None);
         *self.acl_handle.borrow_mut() = None;
         // Drain any stale queued actions/readiness signals from the previous connection so
         // they don't fire for the new one.
@@ -289,8 +305,8 @@ impl<M: RawMutex> CigManager<M> {
     pub fn encode(&self, ase_id: u8, pcm: &[i16], out: &mut [u8]) -> Option<Result<(), crate::lc3::Lc3EncoderError>> {
         let idx = self.slots.borrow().iter().position(|s| s.ase_id == Some(ase_id))?;
         let mut encoders = self.encoders.borrow_mut();
-        let encoder = encoders[idx].as_mut()?;
-        Some(encoder.encode(pcm, out))
+        let cached = encoders[idx].as_mut()?;
+        Some(cached.encoder.encode(pcm, out))
     }
 }
 
@@ -320,14 +336,36 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
         let (Some(sampling_frequency), Some(frame_duration)) = (slot.sampling_frequency, slot.frame_duration) else {
             return;
         };
-        match Lc3MonoEncoder::new(sampling_frequency, frame_duration) {
-            Ok(encoder) => self.encoders.borrow_mut()[idx] = Some(encoder),
-            Err(_) => {
-                #[cfg(feature = "log")]
-                log::warn!("[cig] unsupported LC3 sampling frequency for established CIS");
-                #[cfg(feature = "defmt")]
-                warn!("[cig] unsupported LC3 sampling frequency for established CIS");
-                return;
+
+        // A reconnect re-runs the whole CIG/CIS setup and lands back here even though the
+        // negotiated audio params are typically unchanged - reuse the existing encoder already
+        // sitting in this slot when it matches, rather than always allocating anew (see
+        // `CachedEncoder`'s doc and `reset()`'s doc for why this is safe).
+        let already_matches = matches!(
+            &self.encoders.borrow()[idx],
+            Some(cached) if cached.sampling_frequency == sampling_frequency && cached.frame_duration == frame_duration
+        );
+        if already_matches {
+            #[cfg(feature = "log")]
+            log::info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
+            #[cfg(feature = "defmt")]
+            info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
+        } else {
+            match Lc3MonoEncoder::new(sampling_frequency, frame_duration) {
+                Ok(encoder) => {
+                    self.encoders.borrow_mut()[idx] = Some(CachedEncoder {
+                        sampling_frequency,
+                        frame_duration,
+                        encoder,
+                    });
+                }
+                Err(_) => {
+                    #[cfg(feature = "log")]
+                    log::warn!("[cig] unsupported LC3 sampling frequency for established CIS");
+                    #[cfg(feature = "defmt")]
+                    warn!("[cig] unsupported LC3 sampling frequency for established CIS");
+                    return;
+                }
             }
         }
 
@@ -505,5 +543,66 @@ mod tests {
             }
             other => panic!("expected SetupDataPath, got {:?}", other.is_ok()),
         }
+    }
+
+    /// Regression test for a leak that mirrors the one fixed in `cis::CisManager`, but was worse
+    /// here: `reset()` used to unconditionally clear `encoders` on *every* reconnect attempt (not
+    /// just ones that actually renegotiate), so it leaked an `Lc3MonoEncoder` (~15.9KB at
+    /// 48kHz/10ms) per ASE on every single reconnect - `on_cis_established` must reuse the
+    /// existing encoder when the reconnect renegotiates the same audio params.
+    #[test]
+    fn reconnecting_with_the_same_audio_params_reuses_the_existing_encoders() {
+        let manager = CigManager::<NoopRawMutex>::new();
+        manager.set_acl_handle(ConnHandle::new(0x05));
+
+        let sampling_frequency = SamplingFrequency::Hz48000;
+        let frame_duration = FrameDuration::Duration10MS;
+
+        manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
+        manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
+        let _ = manager.actions.try_receive(); // SetCigParameters
+        manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
+        let _ = manager.actions.try_receive(); // CreateCis
+
+        let before_first = crate::test_alloc::allocated();
+        manager.on_cis_established(&established_event(0x10));
+        manager.on_cis_established(&established_event(0x11));
+        let _ = manager.actions.try_receive(); // SetupDataPath (ase 0)
+        let _ = manager.actions.try_receive(); // SetupDataPath (ase 1)
+        let allocated_first = crate::test_alloc::allocated() - before_first;
+        assert!(
+            allocated_first > 20_000,
+            "expected the first establishment to really allocate two encoders (~15904 bytes each at 48kHz/10ms), got {allocated_first}"
+        );
+
+        // Simulate a reconnect: `reset()` (which must NOT drop the cached encoders - see its own
+        // doc), then the caller re-configures the same two ASEs in the same order with the same
+        // audio params (matching what `basic_audio_source::run` always does), and the controller
+        // hands out fresh CIS handles.
+        manager.reset();
+        let _ = manager.actions.try_receive(); // RemoveCig (no CIG existed yet on the very first connection, but does now)
+        manager.set_acl_handle(ConnHandle::new(0x06));
+        manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
+        manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
+        let _ = manager.actions.try_receive(); // SetCigParameters
+        manager.cig_parameters_set(ConnHandle::new(0x20), ConnHandle::new(0x21));
+        let _ = manager.actions.try_receive(); // CreateCis
+
+        let before_reconnect = crate::test_alloc::allocated();
+        manager.on_cis_established(&established_event(0x20));
+        manager.on_cis_established(&established_event(0x21));
+        let _ = manager.actions.try_receive(); // SetupDataPath (ase 0)
+        let _ = manager.actions.try_receive(); // SetupDataPath (ase 1)
+        let allocated_on_reconnect = crate::test_alloc::allocated() - before_reconnect;
+        assert_eq!(
+            allocated_on_reconnect, 0,
+            "reconnecting with unchanged audio params must not allocate new encoders (leaks ~15904 bytes/ASE/reconnect otherwise)"
+        );
+
+        // The reused encoders must still actually work.
+        let pcm = [0i16; 480];
+        let mut out = [0u8; 100];
+        assert!(manager.encode(0, &pcm, &mut out).unwrap().is_ok());
+        assert!(manager.encode(1, &pcm, &mut out).unwrap().is_ok());
     }
 }

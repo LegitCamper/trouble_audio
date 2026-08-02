@@ -7,6 +7,9 @@
 //! consuming binary must install a global allocator.
 extern crate alloc;
 
+#[cfg(test)]
+mod test_alloc;
+
 pub mod aics;
 #[allow(dead_code)]
 pub mod ascs;

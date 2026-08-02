@@ -15,17 +15,43 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::vendor::NordicCigReservedTimeSet;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
+use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
+use trouble_audio::lc3::Lc3MonoEncoder;
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
 use trouble_host::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
 /// `trouble_audio`/`basic_audio_source` use `alloc` for LE Audio's variable-length data (PAC
-/// records, codec configuration, metadata, ...), so a global allocator must be installed.
-///
-/// Also has to cover `Lc3MonoEncoder`'s working buffers (`Box::leak`'d, never freed): one
-/// encoder needs 15904 bytes at 48kHz/10ms (3800 integer + 4424 scaler + 7680 complex), and this
-/// source runs two encoders (stereo) concurrently - budget generously (256KB total RAM).
+/// records, codec configuration, metadata, ...) - small, and not worth computing exactly, covered
+/// by `MISC_ALLOC_BUDGET_BYTES` below. The overwhelming majority of this heap is
+/// `Lc3MonoEncoder`'s working buffers (`Box::leak`'d, never freed, one per channel -
+/// `CHANNEL_COUNT` = 2, stereo) - see `trouble_audio::lc3`'s module docs for the
+/// `heap_bytes`/`const`-assertion story this crate uses below, so an undersized heap is a
+/// build-time error instead of a `handle_alloc_error` panic found on real hardware.
 const HEAP_SIZE: usize = 64 * 1024;
+
+/// Matches `basic_audio_source::run`'s hardcoded negotiation (`SAMPLING_FREQUENCY`/
+/// `FRAME_DURATION` there) - not `pub`, so re-declared here rather than reused.
+const NEGOTIATED_SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
+const NEGOTIATED_FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
+
+/// `basic_audio_source::run` always streams a fixed stereo (front left + front right) pair - see
+/// its `ase_ids: [u8; 2]`.
+const CHANNEL_COUNT: usize = 2;
+
+/// Generous ceiling on everything else `alloc`-backed this binary does (PAC records, ASE Control
+/// Point operation buffers, GATT client discovery, ...) - unlike the LC3 buffers below, not
+/// computed exactly, just budgeted with headroom.
+const MISC_ALLOC_BUDGET_BYTES: usize = 16 * 1024;
+
+const ENCODER_HEAP_BYTES: usize = match Lc3MonoEncoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
+    Ok(n) => n,
+    Err(_) => panic!("unsupported sampling frequency"),
+};
+const _: () = assert!(
+    HEAP_SIZE >= CHANNEL_COUNT * ENCODER_HEAP_BYTES + MISC_ALLOC_BUDGET_BYTES,
+    "HEAP_SIZE too small to fit one Lc3MonoEncoder per channel plus misc allocation headroom"
+);
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();

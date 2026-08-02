@@ -1,0 +1,7 @@
+[env]
+# `lc3::tests`/`cis::tests` measure exact byte counts allocated via a shared `#[global_allocator]`
+# counter (see `src/test_alloc.rs`) - that only gives a meaningful before/after delta if no other
+# test's allocations interleave with the one being measured on the same process-wide counter, so
+# this crate's test binary needs to run its tests serially rather than on Rust's default
+# multi-threaded test harness.
+RUST_TEST_THREADS = "1"
