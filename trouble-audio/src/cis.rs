@@ -33,7 +33,7 @@ use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
 #[cfg(feature = "defmt")]
-use defmt::{debug, info, warn};
+use defmt::{info, warn};
 
 use crate::{
     ascs::{AscsServer, AseControlPointOperation, AseDirection},
@@ -335,16 +335,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
 
     fn on_iso_data(&self, packet: &IsoPacket<'_>) {
         let handle = packet.handle().raw();
-        #[cfg(feature = "log")]
-        log::debug!(
-            "[cis] on_iso_data: handle={} data_len={} boundary={:?} header={:?}",
-            handle, packet.data().len(), packet.boundary_flag(), packet.data_load_header()
-        );
-        #[cfg(feature = "defmt")]
-        debug!(
-            "[cis] on_iso_data: handle={} data_len={} boundary={} header={}",
-            handle, packet.data().len(), packet.boundary_flag(), packet.data_load_header()
-        );
         let (idx, ase_id, channel_allocation) = {
             let slots = self.slots.borrow();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
@@ -382,11 +372,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         }
         match decoder.decode(packet.data(), &mut samples) {
             Ok(()) => {
-                let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
-                #[cfg(feature = "log")]
-                log::debug!("[cis] on_iso_data: decoded ase_id={} peak={}", ase_id, peak);
-                #[cfg(feature = "defmt")]
-                debug!("[cis] on_iso_data: decoded ase_id={} peak={}", ase_id, peak);
                 if self
                     .pcm_out
                     .try_send(DecodedPcm {
