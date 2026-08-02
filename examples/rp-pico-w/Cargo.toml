@@ -31,7 +31,6 @@ bt-hci = { version = "0.9", default-features = false, features = [
   "log",
   "uuid",
 ] }
-trouble-host = { path = "https://github.com/embassy-rs/trouble", rev = "e1ea2e6661dc1e2e88d05acd08e455add6733425" }
 cyw43 = { version = "0.7.0", features = ["log", "firmware-logs", "bluetooth"] }
 # No "log" alternative for cyw43-pio (only an optional "defmt" feature it doesn't need for this
 # example to work) - leaving it disabled just means cyw43-pio's own handful of debug prints don't
@@ -66,30 +65,3 @@ reqwest = { version = "0.12.9", features = ["blocking"] }
 
 [features]
 skip-cyw43-firmware = []
-
-[profile.release]
-debug = 2
-
-# cyw43 only picked up bt-hci 0.9 support on the embassy monorepo's main branch (not yet in a
-# published crates.io release as of this writing), and embassy crates need to come from a single
-# consistent build (embassy-time in particular is a `links` crate - Cargo errors if two different
-# sources of it end up in the same dependency graph, which happens as soon as anything else in the
-# graph, like trouble-host, pulls in the crates.io release). So every embassy-family crate anyone
-# in this graph might reference is patched to the same commit.
-[patch.crates-io]
-embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-bt-hci = { git = "https://github.com/LegitCamper/bt-hci", branch = "cis-iso-commands" }

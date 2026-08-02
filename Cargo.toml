@@ -1,0 +1,80 @@
+[workspace]
+resolver = "2"
+members = [
+  "trouble-audio",
+  "examples/apps",
+  "examples/linux",
+  "examples/linux-serial",
+  "examples/rp-pico-w",
+  "examples/nRF54L15_Connect_Kit",
+]
+
+# `trouble-host` isn't published to crates.io, so it can't go through `[patch.crates-io]` below -
+# this is the equivalent for a plain git dependency: one source of truth for every member that
+# depends on it directly (trouble-audio, examples/apps, examples/nRF54L15_Connect_Kit), each still
+# free to request its own feature set via `trouble-host = { workspace = true, features = [...] }`.
+[workspace.dependencies]
+# NOT LegitCamper/trouble's `main` branch (currently c21b1239): it doesn't include the
+# `alloc_buf()`/`Controller::Buffer<'_>` fix cherry-picked from upstream PR #634 that this whole
+# fork exists for (see the nRF54L15 testing history) - only `main`'s `nrf54-bt-hci-alloc` sibling
+# branch does, and that branch's tip hasn't moved past this commit.
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e" }
+
+# Both `rp-pico-w` and `nRF54L15_Connect_Kit` wanted `debug = 2` in their own now-removed
+# per-member `[profile.release]` - member profiles are ignored once part of a workspace, so it
+# lives here instead.
+[profile.release]
+debug = 2
+
+# One patch set for every member, instead of each duplicating (and risking drifting from) its own
+# copy - this is what broke before: three different places pinned `trouble-host` to two different
+# revs, and `nRF54L15_Connect_Kit` alone pinned embassy to a different rev than everything else.
+#
+# embassy revs are 03c826f2, not the true HEAD of `main` (6826068f as of this update): HEAD's
+# `embassy-net`/`embassy-stm32-wpan` Cargo.toml use a multi-line inline table for their `xarxa`
+# dependency, which Cargo's manifest parser rejects outright ("newlines are unsupported in inline
+# tables") - a real upstream manifest bug (commit `680b19296`, "net: migrate smoltcp -> xarxa"),
+# not a version mismatch on our end. `03c826f2` is that commit's parent, the newest commit that
+# still parses. Only bites `rp-pico-w` (via `cyw43`, which pulls in `embassy-net`) - `nRF54L15_
+# Connect_Kit` never touches those two crates, so it built fine even against the true HEAD.
+[patch.crates-io]
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+
+# KNOWN BROKEN: `rp-pico-w` doesn't currently build - `cyw43`'s `bluetooth.rs` (in embassy itself,
+# any recent revision, confirmed against both this rev and the previous 03c826f2/b87c67b pins)
+# calls `bt_hci::Controller::read` with the old non-generic signature and imports a
+# `HostToControllerPacket` type that no longer exists - `LegitCamper/bt-hci`'s `cis-iso-commands`
+# branch moved `read` to `read<P: PacketToHost<'a>>` and cyw43 hasn't caught up. Not caused by
+# picking a particular embassy/bt-hci rev - every combination tried hits the same error, so this
+# needs either a `cyw43` patch (out of scope here) or an older, cyw43-compatible `bt-hci` commit
+# (which would mean `rp-pico-w` can't share this workspace's single override after all).
+bt-hci = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
+bt-hci-driver = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }
+
+# `examples/linux`/`examples/linux-serial` depend on a sibling `bt-hci-linux` checkout of the
+# *upstream* `embassy-rs/trouble` repo - redirect its own internal `trouble-host` to the same
+# LegitCamper fork/rev everything else uses, so the graph doesn't end up with two different
+# `trouble-host` crates.
+[patch."https://github.com/embassy-rs/trouble"]
+# NOT LegitCamper/trouble's `main` branch (currently c21b1239): it doesn't include the
+# `alloc_buf()`/`Controller::Buffer<'_>` fix cherry-picked from upstream PR #634 that this whole
+# fork exists for (see the nRF54L15 testing history) - only `main`'s `nrf54-bt-hci-alloc` sibling
+# branch does, and that branch's tip hasn't moved past this commit.
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e" }

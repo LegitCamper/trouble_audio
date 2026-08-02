@@ -28,10 +28,3 @@ trouble_audio = { path = "../../trouble-audio", default-features = false, featur
   "log",
 ] }
 pipewire = "0.10.0"
-
-[patch.crates-io]
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-bt-hci = { git = "https://github.com/LegitCamper/bt-hci", branch = "cis-iso-commands" }
-
-[patch."https://github.com/embassy-rs/trouble"]
-trouble-host = { git = "https://github.com/LegitCamper/trouble", branch = "main" }

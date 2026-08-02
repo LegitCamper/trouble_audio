@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e", features = [
+trouble-host = { workspace = true, features = [
   "derive",
   "gatt",
   "peripheral",
@@ -16,7 +16,6 @@ trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false }
 bt-hci = { version = "0.9", features = ["uuid"] }
-embassy-executor = { version = "0.9.1" }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.8" }
 embassy-time = "0.5.1"
@@ -40,7 +39,3 @@ defmt = [
   "embedded-hal/defmt-03",
 ]
 log = ["dep:log", "trouble-host/log", "trouble_audio/log", "bt-hci/log"]
-
-[patch.crates-io]
-embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }
-bt-hci = { git = "https://github.com/LegitCamper/bt-hci", branch = "cis-iso-commands" }
