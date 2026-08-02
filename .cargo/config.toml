@@ -1,0 +1,8 @@
+[env]
+# `trouble_audio`'s `lc3::tests`/`cis::tests`/`cig::tests` measure exact byte counts allocated via
+# a shared `#[global_allocator]` counter (see `trouble-audio/src/test_alloc.rs`) - that only gives
+# a meaningful before/after delta if no other test's allocations interleave with the one being
+# measured on the same process-wide counter, so the workspace's tests need to run serially rather
+# than on Rust's default multi-threaded test harness. Lives at the workspace root (not just
+# `trouble-audio/.cargo/config.toml`) so it still applies when running `cargo test` from here.
+RUST_TEST_THREADS = "1"

@@ -5,49 +5,59 @@ edition = "2024"
 resolver = "2"
 
 [dependencies]
-embassy-executor = { version = "0.7", default-features = false, features = [
-  "task-arena-size-98304",
-  "arch-cortex-m",
+embassy-executor = { version = "0.10.0", default-features = false, features = [
+  "platform-cortex-m",
   "executor-thread",
-  "defmt",
   "executor-interrupt",
+  "log",
 ] }
-embassy-time = { version = "0.4.0", default-features = false, features = [
-  "defmt",
-  "defmt-timestamp-uptime",
+embassy-time = { version = "0.5.1", default-features = false, features = [
+  "log",
 ] }
-embassy-rp = { version = "0.3.0", features = [
-  "defmt",
+embassy-rp = { version = "0.10.0", features = [
+  "log",
   "unstable-pac",
   "time-driver",
   "critical-section-impl",
   "rp2040",
 ] }
-embassy-futures = "0.1.1"
-embassy-sync = { version = "0.6", features = ["defmt"] }
+embassy-futures = "0.1.2"
+embassy-sync = { version = "0.8", features = ["log"] }
 
 futures = { version = "0.3", default-features = false, features = [
   "async-await",
 ] }
-bt-hci = { version = "0.2", default-features = false, features = ["defmt"] }
-cyw43 = { version = "0.3.0", features = [
-  "defmt",
-  "firmware-logs",
-  "bluetooth",
+bt-hci = { version = "0.9", default-features = false, features = [
+  "log",
+  "uuid",
 ] }
-cyw43-pio = { version = "0.3.0", features = ["defmt"] }
+cyw43 = { version = "0.7.0", features = ["log", "firmware-logs", "bluetooth"] }
+# No "log" alternative for cyw43-pio (only an optional "defmt" feature it doesn't need for this
+# example to work) - leaving it disabled just means cyw43-pio's own handful of debug prints don't
+# show up; unrelated to this crate's own logging.
+cyw43-pio = { version = "0.10.0" }
 
-defmt = "0.3"
-defmt-rtt = "0.4.0"
+# USB-serial logging via `embassy-usb-logger` (implements `log::Log`) instead of defmt/RTT, so
+# nothing here needs a debug probe - connect with any serial terminal (e.g.
+# `screen /dev/ttyACM0 115200`).
+log = "0.4"
+embassy-usb-logger = "0.6.0"
 
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
+# No print feature: printing a panic message would need defmt (`print-defmt`) or RTT
+# (`print-rtt`), both back on a probe/defmt - a panic still safely halts the MCU, it just won't
+# show up over the USB log.
+panic-probe = { version = "1.0.0" }
 static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
+embedded-alloc = "0.6.0"
 
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
-  "defmt",
+  "log",
+] }
+trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
+  "log",
 ] }
 
 [build-dependencies]
@@ -55,19 +65,3 @@ reqwest = { version = "0.12.9", features = ["blocking"] }
 
 [features]
 skip-cyw43-firmware = []
-
-[profile.release]
-debug = 2
-
-[patch.crates-io]
-#embassy-executor = {path = "../../../embassy/embassy-executor"}
-#embassy-nrf = {path = "../../../embassy/embassy-nrf"}
-#embassy-sync = {path = "../../../embassy/embassy-sync"}
-#embassy-futures = {path = "../../../embassy/embassy-futures"}
-#embassy-time = {path = "../../../embassy/embassy-time"}
-#embassy-time-driver = {path = "../../../embassy/embassy-time-driver"}
-#embassy-embedded-hal = {path = "../../../embassy/embassy-embedded-hal"}
-#embassy-hal-internal = {path = "../../../embassy/embassy-hal-internal"}
-#nrf-sdc = { path = "../../../nrf-sdc/nrf-sdc" }
-#nrf-mpsl = { path = "../../../nrf-sdc/nrf-mpsl" }
-#bt-hci = { path = "../../../bt-hci" }

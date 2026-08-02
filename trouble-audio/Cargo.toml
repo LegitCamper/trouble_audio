@@ -4,25 +4,33 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["defmt"]
-defmt = ["dep:defmt", "trouble-host/defmt", "heapless/defmt-03"]
+default = []
+defmt = ["dep:defmt", "defmt/alloc", "trouble-host/defmt", "heapless/defmt"]
+log = ["dep:log", "embassy-time/log", "trouble-host/log"]
 
 [dependencies]
-embassy-sync = "0.6.1"
+embassy-sync = "0.8"
 embassy-futures = "0.1.1"
-embassy-time = "0.4.0"
-bt-hci = "0.2.0"
-trouble-host = { git = "https://github.com/embassy-rs/trouble.git", rev = "06dc8f13b8f564075f53f4e017cffedfc36dbec6", features = [
+embassy-time = "0.5.1"
+bt-hci = { version = "0.9", features = ["uuid"] }
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
+trouble-host = { workspace = true, features = [
   "derive",
   "gatt",
   "peripheral",
   "central",
   "scan",
+  "security",
+  "iso",
+  "serde",
+  "default-packet-pool",
 ] }
 
 lc3-codec = "0.2.0"
 
-defmt = { version = "0.3.10", optional = true }
+defmt = { version = "1.0.1", optional = true }
+log = { version = "0.4", optional = true }
 static_cell = "2.1.0"
-heapless = "0.8.0"
+heapless = "0.9"
 bitflags = "2.8.0"

@@ -35,7 +35,6 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
-    println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 }
 
 #[cfg(not(feature = "skip-cyw43-firmware"))]
@@ -46,6 +45,7 @@ fn download_cyw43_firmware() {
         "43439A0.bin",
         "43439A0_btfw.bin",
         "43439A0_clm.bin",
+        "nvram_rp2040.bin",
         "LICENSE-permissive-binary-license-1.0.txt",
         "README.md",
         ];

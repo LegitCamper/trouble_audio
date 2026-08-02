@@ -1,147 +1,133 @@
-use bt_hci::AsHciBytes;
-#[cfg(feature = "defmt")]
-use defmt::{Debug2Format, error, info};
+//! A minimal LE Audio unicast sink peripheral. All the construction (HostResources, GATT server,
+//! advertising) and the event loop (ASE Control Point state machine included) live in
+//! [`crate::sink::run_peripheral`] - this just describes what a stereo sink with two Sink ASEs
+//! (front left/right) looks like and hands it off.
 
-use embassy_futures::{join::join, select::select};
+use alloc::vec;
+
+use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
+use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Timer};
-use heapless::Vec;
-use static_cell::StaticCell;
-use trouble_audio::{
-    MAX_SERVICES,
-    ascs::{Ase, AseType},
-    generic_audio::AudioLocation,
-    pacs::{AudioContexts, PAC, PACRecord},
-};
+use heapless::Vec as HVec;
+use trouble_audio::prelude::*;
 use trouble_host::prelude::*;
 
-/// Max number of connections
+use crate::sink::{BondStore, PeripheralConfig, run_peripheral};
+
+#[cfg(feature = "defmt")]
+use defmt::info;
+
+/// Max number of connections. This crate's `AscsServer` models a single active connection.
 const CONNECTIONS_MAX: usize = 1;
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
 
-pub async fn run<C, const L2CAP_MTU: usize>(mut controller: C) -> !
+/// Max number of Sink/Source ASEs this device exposes: one per stereo channel. Public so callers
+/// can size their own `CisManager<M, MAX_ASES>` to match (see [`run`]).
+pub const MAX_ASES: usize = 2;
+
+/// This device's fixed "random" address - public so `basic_audio_source` (or any other central)
+/// knows what to connect to.
+pub const ADDRESS: [u8; 6] = [0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff];
+
+/// Runs the audio sink peripheral forever on the given controller.
+///
+/// `cis_manager` is caller-owned so the caller can concurrently drain
+/// [`CisManager::receive_pcm`] for decoded audio - e.g. to actually play it. This function never
+/// returns; run it alongside whatever drains `cis_manager` (see [`count_decoded_frames`] for a
+/// minimal example, or wire it to real audio output like the `linux` example's PipeWire sink).
+pub async fn run<C>(
+    controller: C,
+    cis_manager: &CisManager<NoopRawMutex, 2>,
+    bond_store: Option<&dyn BondStore>,
+) -> !
 where
-    C: Controller,
+    C: Controller
+        + ControllerCmdAsync<LeAcceptCisRequest>
+        + ControllerCmdSync<LeRejectCisRequest>
+        + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
+        + ControllerCmdSync<LeRemoveIsoDataPath>
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     // Using a fixed "random" address can be useful for testing. In real scenarios, one would
     // use e.g. the MAC 6 byte array as the address (how to get that varies by the platform).
-    let address: Address = Address::random([0xff, 0x8f, 0x1b, 0x05, 0xe4, 0xff]);
-    #[cfg(feature = "defmt")]
-    info!("Our address = {:?}", address);
+    let address: Address = Address::random(ADDRESS);
 
-    let mut resources: HostResources<CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, L2CAP_MTU> =
-        HostResources::new();
-    let stack = trouble_host::new(controller, &mut resources).set_random_address(address);
-    let Host {
-        mut peripheral,
-        mut runner,
-        ..
-    } = stack.build();
-
-    // NOTE: Modify this to match the address of the peripheral you want to connect to.
-    // Currently, it matches the address used by the peripheral examples
-    let target: Address = Address::random([0xff, 0x8f, 0x1a, 0x05, 0xe4, 0xff]);
-
-    let config = ConnectConfig {
-        connect_params: Default::default(),
-        scan_config: ScanConfig {
-            filter_accept_list: &[(target.kind, &target.addr)],
-            ..Default::default()
+    let config = PeripheralConfig {
+        device_name: b"Ble Audio Sink",
+        appearance: appearance::audio_sink::GENERIC_AUDIO_SINK,
+        sink_pac: Some(PAC::new(&[PACRecord {
+            codec_id: CodecId::default(), // LC3
+            codec_specific_capabilities: vec![
+                CodecSpecificCapabilities::SupportedSamplingFrequencies(
+                    SupportedSamplingFrequencies::new(&[SamplingFrequency::Hz48000]),
+                ),
+                // Both of these are mandatory per the PACS spec - without them a central can't
+                // derive any valid stream configuration from this PAC record at all (Android's LE
+                // Audio client silently falls back to the phone speaker in exactly this case,
+                // logging "Stream configuration is not valid").
+                CodecSpecificCapabilities::SupportedFrameDurations(
+                    SupportedFrameDurations::default(),
+                ), // 10ms only
+                CodecSpecificCapabilities::SupportedOctetsPerCodecFrame(OctetsPerCodecFrame::new(
+                    26, 155,
+                )),
+            ],
+            metadata: vec![],
+        }])),
+        // Both locations, matching the two Sink ASEs this example exposes (`MAX_ASES = 2`
+        // above) - one per channel. A central negotiates a 2-CIS stereo group
+        // (`STEREO_TWO_CISES_PER_DEVICE`) by Config Codec'ing each ASE with one of these
+        // locations. Declaring both locations with only one ASE previously made Android's LE
+        // Audio client (correctly) pick that same group type, but since only one ASE ever
+        // showed up the group never reached "all ASEs configured" and CIG creation never
+        // fired, silently stalling until Android's own state-machine timeout disconnected the
+        // link - so the ASE count and the declared locations must match.
+        sink_audio_locations: Some(AudioLocation::FrontLeft | AudioLocation::FrontRight),
+        source_pac: None,
+        source_audio_locations: None,
+        supported_audio_contexts: AudioContexts {
+            sink_contexts: ContextType::Media | ContextType::Conversational,
+            source_contexts: ContextType::empty(),
+        },
+        available_audio_contexts: AudioContexts {
+            sink_contexts: ContextType::Media | ContextType::Conversational,
+            source_contexts: ContextType::empty(),
         },
     };
 
-    let sink_pac = PAC::default();
-    let sink_audio_locations = AudioLocation::all();
-    static sink_audio_locations_store: StaticCell<[u8; 90]> = StaticCell::new();
-    let supported_audio_contexts = AudioContexts::default();
-    let available_audio_contexts = AudioContexts::default();
+    let mut ases = HVec::new();
+    let _ = ases.push(AseType::Sink(Ase::new(0)));
+    let _ = ases.push(AseType::Sink(Ase::new(1)));
 
-    loop {
-        select(runner.run(), async {
-            loop {
-                let mut ases = Vec::new();
-                ases.push(AseType::Sink(Ase::new(0)));
-
-                match advertise::<C>("Ble Audio Sink", &mut peripheral).await {
-                    Ok(conn) => {
-                        #[cfg(feature = "defmt")]
-                        info!("[adv] connection established");
-                        let server =
-                            trouble_audio::ServerBuilder::<L2CAP_MTU, 1, 1, NoopRawMutex>::new(
-                                b"Ble Audio Sink Example",
-                                &appearance::audio_sink::GENERIC_AUDIO_SINK,
-                            )
-                            .add_pacs(
-                                Some(&sink_pac),
-                                Some((
-                                    &sink_audio_locations,
-                                    sink_audio_locations_store.init([0; 90]),
-                                )),
-                                None,
-                                None,
-                                &supported_audio_contexts,
-                                &available_audio_contexts,
-                            )
-                            .add_ascs(ases)
-                            .build();
-                        loop {
-                            match conn.next().await {
-                                ConnectionEvent::Disconnected { reason: _reason } => {
-                                    #[cfg(feature = "defmt")]
-                                    info!("[gatt] disconnected: {:?}", _reason);
-                                    break;
-                                }
-                                ConnectionEvent::Gatt { data } => server.process(data).await,
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        #[cfg(feature = "defmt")]
-                        let e = Debug2Format(&e);
-                        #[cfg(feature = "defmt")]
-                        error!("[adv] error: {:?}", e);
-                    }
-                }
-            }
-        })
-        .await;
-        #[cfg(feature = "defmt")]
-        info!("Exiting Bluetooth");
-    }
+    run_peripheral::<C, NoopRawMutex, MAX_ASES, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX>(
+        controller,
+        address,
+        // No display/keyboard on a typical audio sink: JustWorks pairing (encrypted, no MITM
+        // protection). Swap for `DisplayYesNo`/`KeyboardOnly`/etc. if the device has real IO.
+        IoCapabilities::NoInputNoOutput,
+        config,
+        ases,
+        cis_manager,
+        bond_store,
+    )
+    .await
 }
 
-/// Create an advertiser
-async fn advertise<'a, C: Controller>(
-    name: &'a str,
-    peripheral: &mut Peripheral<'a, C>,
-) -> Result<Connection<'a>, BleHostError<C::Error>> {
-    let mut advertiser_data = [0; 31];
-    AdStructure::encode_slice(
-        &[
-            AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::ServiceUuids16(&[
-                service::PUBLISHED_AUDIO_CAPABILITIES.into(),
-                service::AUDIO_STREAM_CONTROL.into(),
-            ]),
-            AdStructure::CompleteLocalName(name.as_bytes()),
-        ],
-        &mut advertiser_data[..],
-    )?;
-    let advertiser = peripheral
-        .advertise(
-            &Default::default(),
-            Advertisement::ConnectableScannableUndirected {
-                adv_data: &advertiser_data[..],
-                scan_data: &[],
-            },
-        )
-        .await?;
-    #[cfg(feature = "defmt")]
-    info!("[adv] advertising");
-    let conn = advertiser.accept().await?;
-    #[cfg(feature = "defmt")]
-    info!("[adv] connection established");
-    Ok(conn)
+/// A minimal way to drain [`CisManager::receive_pcm`]: just counts and periodically logs decoded
+/// frames, for platforms/examples with no real audio output wired up.
+pub async fn count_decoded_frames(cis_manager: &CisManager<NoopRawMutex, 2>) -> ! {
+    let mut frames: u32 = 0;
+    loop {
+        let _pcm = cis_manager.receive_pcm().await;
+        frames += 1;
+        if frames % 100 == 0 {
+            #[cfg(feature = "defmt")]
+            info!("[audio_sink] decoded {} LC3 frames", frames);
+            #[cfg(feature = "log")]
+            log::info!("[audio_sink] decoded {} LC3 frames", frames);
+        }
+    }
 }

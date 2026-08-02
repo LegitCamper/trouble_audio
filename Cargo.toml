@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+  "trouble-audio",
+  "examples/apps",
+  "examples/linux",
+  "examples/linux-serial",
+  "examples/rp-pico-w",
+  "examples/nRF54L15_Connect_Kit",
+]
+
+# Not crates.io, so it can't go through [patch.crates-io] - members opt in via
+# `trouble-host = { workspace = true, features = [...] }`.
+[workspace.dependencies]
+# Not `main` (c21b1239) - that branch is missing the alloc_buf()/Controller::Buffer fix from
+# `nrf54-bt-hci-alloc`, which is still at this commit.
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e" }
+
+[profile.release]
+debug = 2
+
+[patch.crates-io]
+# Not embassy's true HEAD (6826068f) - its embassy-net/embassy-stm32-wpan manifests don't parse
+# (upstream bug, commit 680b19296). This is HEAD's parent.
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-hal-internal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-net-driver-channel = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-nrf = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb-driver = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
+
+bt-hci = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
+bt-hci-driver = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }

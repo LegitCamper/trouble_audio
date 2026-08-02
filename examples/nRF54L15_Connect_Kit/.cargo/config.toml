@@ -1,0 +1,11 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+#runner = "probe-rs run --chip nRF52832_xxAA"
+#runner = "probe-rs run --chip nRF52833_xxAA"
+runner = "probe-rs run --probe 2fe3:0204 --chip nRF54l15 --speed 4000"
+# runner = "probe-rs run --chip nRF54lm20a"
+
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[env]
+DEFMT_LOG = "trouble_host=info,trouble_audio=debug,info"
