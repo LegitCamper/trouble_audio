@@ -28,8 +28,6 @@ trouble_audio = { path = "../../trouble-audio", default-features = false, featur
   "log",
 ] }
 pipewire = "0.10.0"
-serde = "1.0"
-serde_json = "1.0"
 
 [patch.crates-io]
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", rev = "b87c67be691bcb9aa0e1f3813d90d9eb04dd1751" }

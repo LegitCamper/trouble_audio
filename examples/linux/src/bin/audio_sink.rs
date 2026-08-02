@@ -1,7 +1,7 @@
 use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use linux_examples::{bond_store::FileBondStore, pipewire_sink};
+use linux_examples::{bond_store::sink_bond_store, pipewire_sink};
 use trouble_audio::cis::CisManager;
 use trouble_audio_example_apps::basic_audio_sink::{self, MAX_ASES};
 
@@ -25,7 +25,7 @@ async fn main() -> Result<(), std::io::Error> {
 
     let playback = pipewire_sink::spawn_playback(SAMPLE_RATE_HZ);
     let cis_manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
-    let bond_store = FileBondStore::default();
+    let bond_store = sink_bond_store();
 
     let play_decoded_audio = async {
         loop {

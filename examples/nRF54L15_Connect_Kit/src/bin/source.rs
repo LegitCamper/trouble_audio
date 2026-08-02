@@ -1,13 +1,16 @@
 #![no_std]
 #![no_main]
 
+use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use bt_hci::controller::ControllerCmdSync;
 use defmt::unwrap;
 use embassy_executor::Spawner;
+use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embedded_alloc::LlffHeap as Heap;
+use nrf54l15_connect_kit::bond_store::rram_bond_store;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::vendor::NordicCigReservedTimeSet;
 use nrf_sdc::{self as sdc, mpsl};
@@ -163,7 +166,13 @@ async fn main(spawner: Spawner) {
     // alongside the default reservation). See sdc_hci_vs.h's `sdc_hci_cmd_vs_cig_reserved_time_set`.
     unwrap!(sdc.exec(&NordicCigReservedTimeSet::new(0)).await);
 
+    // Persists the bond to on-chip RRAM (see `bond_store.rs`) so re-pairing isn't needed after
+    // every reflash/restart - `flash` just needs to outlive `bond_store`, both live for the rest
+    // of `main` (never returns).
+    let flash = RefCell::new(Nvmc::new(p.RRAMC));
+    let bond_store = rram_bond_store(&flash);
+
     defmt::info!("Running ble audio source example");
 
-    basic_audio_source::run(sdc, OUR_ADDRESS, basic_audio_sink::ADDRESS, None).await
+    basic_audio_source::run(sdc, OUR_ADDRESS, basic_audio_sink::ADDRESS, Some(&bond_store)).await
 }

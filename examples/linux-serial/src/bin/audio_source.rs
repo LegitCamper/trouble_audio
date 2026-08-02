@@ -4,7 +4,7 @@
 use bt_hci::controller::ExternalController;
 use bt_hci::transport::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use linux_examples::bond_store::FileBondStore;
+use linux_examples::bond_store::source_bond_store;
 use tokio::time::Duration;
 use tokio_serial::{DataBits, Parity, SerialStream, StopBits};
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
@@ -46,7 +46,7 @@ async fn main() -> Result<(), std::io::Error> {
     let writer = embedded_io_adapters::tokio_1::FromTokio::new(writer);
     let transport: SerialTransport<NoopRawMutex, _, _> = SerialTransport::new(reader, writer);
     let controller = ExternalController::<_, 8>::new(transport);
-    let bond_store = FileBondStore::for_source();
+    let bond_store = source_bond_store();
 
     basic_audio_source::run(controller, OUR_ADDRESS, basic_audio_sink::ADDRESS, Some(&bond_store)).await
 }

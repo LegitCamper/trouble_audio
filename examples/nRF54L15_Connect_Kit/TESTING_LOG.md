@@ -2,9 +2,10 @@
 
 Goal: nRF54L15 Connect Kit as an LE Audio unicast sink (peripheral), receiving real
 stereo audio from a Samsung Galaxy S23+ over CIS/ISO, with no speaker on the board -
-proof of life is `sink.rs`'s `drive_led` task turning decoded PCM peak amplitude into
-PWM brightness on the Green LED (P0.2 - the only LED the nRF54L15 itself can drive; the
-RGB LED next to it belongs to the separate nRF52820 interface MCU).
+proof of life is `sink.rs`'s `drive_led` task turning decoded PCM peak amplitude into an
+on/off signal on the Green LED (P0.2 - the only LED the nRF54L15 itself can drive; the
+RGB LED next to it belongs to the separate nRF52820 interface MCU; see "gave up on
+`SimplePwm`" below for why this is on/off rather than PWM brightness).
 
 Binary under test: `cargo run --release --bin sink` (must be `--release` - debug builds
 overflow the stack in GATT server construction and corrupt the heap, see below).
@@ -153,6 +154,32 @@ proof-of-life LED rather than continuing to chase an unexplained hardware/driver
 dimming, but that was never the point; the point is proving decoded audio is flowing, and a
 binary on/off signal does that fine. `PWM20`/`SimplePwm` are no longer used anywhere in this
 example. Revisit only if brightness-proportional feedback actually becomes worth the yak-shave.
+
+## Added: persist the BLE bond across reflashes/restarts
+
+Previously both `sink.rs` and `source.rs` passed `None` for `bond_store`, so every reflash or
+power cycle meant re-pairing from the phone (the security manager starts empty each boot, but
+the phone still remembers the old LTK and won't offer to pair again on its own).
+
+Added `bond_store::rram_bond_store`, backed by a page of on-chip RRAM (`memory.x` now reserves
+the last 4KB of flash as `BOND_STORAGE`, `0x0017C000`-`0x0017CFFF` - shrunk `FLASH` from 1524K to
+1520K to make room, no change in total usable memory, just a repartition). Wired into both
+`sink.rs` and `source.rs`'s `main`.
+
+Only one bond is ever kept (matches this crate's single-active-connection model already
+documented on `BondStore`) - a new phone pairing just overwrites the slot, no separate "forget"
+step needed for the "someone else's phone tries to pair" case.
+
+The actual encode/decode/error-handling logic (`postcard`-encode a `BondInformation`, tolerate
+missing/corrupt data without crashing) now lives once in
+`trouble_audio_example_apps::bond_store::EncodedBondStore`, shared across every platform example
+rather than duplicated per platform - each platform only supplies a pair of raw-bytes-in/
+raw-bytes-out closures (`examples/linux/src/bond_store.rs` for a file, this crate's
+`bond_store.rs` for RRAM). This replaced the Linux example's previous JSON-via-`serde_json`
+`FileBondStore` (now `sink_bond_store()`/`source_bond_store()` functions) - the on-disk format
+changed (postcard binary, not pretty JSON) and the default filename dropped its `.json`
+extension, so an existing bond file from before this change won't be found; one-time re-pair
+needed there too, same as everywhere else after this lands.
 
 The underlying "why is `data_len` 0 on nearly every packet" question is still open and
 looks like the same root cause as the "Current blocker" section above - the

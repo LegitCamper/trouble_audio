@@ -1,55 +1,36 @@
-//! Persists a single bond to a JSON file, so reconnecting after restarting this process doesn't
-//! fail authentication (see `trouble_audio_example_apps::sink::BondStore`).
+//! Persists a single bond to a file, so reconnecting after restarting this process doesn't fail
+//! authentication (see `trouble_audio_example_apps::sink::BondStore`). Actual encode/decode is
+//! shared with every other platform example via
+//! `trouble_audio_example_apps::bond_store::EncodedBondStore` - this only supplies how to read
+//! and write raw bytes on a real filesystem.
 
 use std::path::{Path, PathBuf};
 
-use trouble_audio_example_apps::sink::{BondInformation, BondStore};
+use trouble_audio_example_apps::bond_store::EncodedBondStore;
+pub use trouble_audio_example_apps::sink::{BondInformation, BondStore};
 
-pub struct FileBondStore {
-    path: PathBuf,
+/// A [`BondStore`] backed by a file at `path`.
+pub fn file_bond_store(path: impl Into<PathBuf>) -> EncodedBondStore<impl Fn() -> Option<Vec<u8>>, impl Fn(&[u8])> {
+    let path = path.into();
+    let load_path = path.clone();
+    EncodedBondStore::new(
+        move || std::fs::read(&load_path).ok(),
+        move |bytes: &[u8]| match std::fs::write(&path, bytes) {
+            Ok(()) => log::info!("[bond_store] saved bond to {}", path.display()),
+            Err(e) => log::warn!("[bond_store] failed to write {}: {e}", path.display()),
+        },
+    )
 }
 
-impl FileBondStore {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
-    }
+/// The default sink-role bond store: one file under this platform's state directory.
+pub fn sink_bond_store() -> EncodedBondStore<impl Fn() -> Option<Vec<u8>>, impl Fn(&[u8])> {
+    file_bond_store(state_dir().join("trouble_audio_bond"))
 }
 
-impl BondStore for FileBondStore {
-    fn load(&self) -> Option<BondInformation> {
-        let data = std::fs::read(&self.path).ok()?;
-        match serde_json::from_slice(&data) {
-            Ok(bond) => Some(bond),
-            Err(e) => {
-                log::warn!("[bond_store] ignoring unreadable bond file {}: {e}", self.path.display());
-                None
-            }
-        }
-    }
-
-    fn save(&self, bond: &BondInformation) {
-        match serde_json::to_vec_pretty(bond) {
-            Ok(data) => match std::fs::write(&self.path, data) {
-                Ok(()) => log::info!("[bond_store] saved bond to {}", self.path.display()),
-                Err(e) => log::warn!("[bond_store] failed to write {}: {e}", self.path.display()),
-            },
-            Err(e) => log::warn!("[bond_store] failed to serialize bond: {e}"),
-        }
-    }
-}
-
-impl Default for FileBondStore {
-    fn default() -> Self {
-        Self::new(state_dir().join("trouble_audio_bond.json"))
-    }
-}
-
-impl FileBondStore {
-    /// Returns a `FileBondStore` for the source role, using a separate file from the sink's
-    /// default so both can coexist on the same machine without clobbering each other's bonds.
-    pub fn for_source() -> Self {
-        Self::new(state_dir().join("trouble_audio_source_bond.json"))
-    }
+/// The default source-role bond store - a separate file from the sink's, so both can coexist on
+/// the same machine without clobbering each other's bonds.
+pub fn source_bond_store() -> EncodedBondStore<impl Fn() -> Option<Vec<u8>>, impl Fn(&[u8])> {
+    file_bond_store(state_dir().join("trouble_audio_source_bond"))
 }
 
 fn state_dir() -> PathBuf {

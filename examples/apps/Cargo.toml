@@ -12,6 +12,7 @@ trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7
   "security",
   "iso",
   "default-packet-pool",
+  "serde",
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false }
 bt-hci = { version = "0.9", features = ["uuid"] }
@@ -24,6 +25,7 @@ static_cell = "2"
 embedded-io = "0.7"
 heapless = "0.9"
 libm = "0.2"
+postcard = "1"
 
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4", optional = true }

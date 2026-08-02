@@ -5,7 +5,7 @@
 
 use bt_hci::controller::ExternalController;
 use bt_hci_linux::Transport;
-use linux_examples::bond_store::FileBondStore;
+use linux_examples::bond_store::source_bond_store;
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
 
 /// This example's own address - distinct from the sink's fixed address so the two don't collide.
@@ -23,7 +23,7 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let transport = Transport::new(dev)?;
     let controller = ExternalController::<_, 8>::new(transport);
-    let bond_store = FileBondStore::for_source();
+    let bond_store = source_bond_store();
 
     basic_audio_source::run(controller, OUR_ADDRESS, basic_audio_sink::ADDRESS, Some(&bond_store)).await
 }

@@ -1,15 +1,18 @@
 #![no_std]
 #![no_main]
 
+use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use defmt::unwrap;
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
+use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_alloc::LlffHeap as Heap;
+use nrf54l15_connect_kit::bond_store::rram_bond_store;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use static_cell::StaticCell;
@@ -205,8 +208,18 @@ async fn main(spawner: Spawner) {
 
     let cis_manager = CisManager::<NoopRawMutex, { basic_audio_sink::MAX_ASES }>::new();
 
+    // Persists the bond to on-chip RRAM (see `bond_store.rs`) so re-pairing isn't needed after
+    // every reflash/restart - `flash` just needs to outlive `bond_store`, both live for the rest
+    // of `main` (never returns).
+    let flash = RefCell::new(Nvmc::new(p.RRAMC));
+    let bond_store = rram_bond_store(&flash);
+
     defmt::info!("Running ble audio sink example");
 
-    select(basic_audio_sink::run(sdc, &cis_manager, None), drive_led(&mut led, &cis_manager)).await;
+    select(
+        basic_audio_sink::run(sdc, &cis_manager, Some(&bond_store)),
+        drive_led(&mut led, &cis_manager),
+    )
+    .await;
     unreachable!("both branches above loop forever")
 }
