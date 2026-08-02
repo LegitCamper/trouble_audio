@@ -23,7 +23,7 @@ every platform example below.
 ## Testing
 
 ```sh
-cd trouble-audio && cargo test --lib --no-default-features --features log
+cd trouble-audio && cargo test --lib --features log
 ```
 
 Also passes under Miri:

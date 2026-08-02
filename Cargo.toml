@@ -39,15 +39,7 @@ embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = 
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 
-# KNOWN BROKEN: rp-pico-w doesn't build against this bt-hci rev - cyw43's bluetooth.rs still
-# expects Controller::read's old non-generic signature. Not fixable by picking a different
-# embassy/bt-hci rev (tried); needs a cyw43 patch or its own older bt-hci pin.
 bt-hci = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
 bt-hci-driver = { git = "https://github.com/LegitCamper/bt-hci", rev = "0d459b2d4d0c59ad1f9f3ceb94578a8815953d18" }
 nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }
 nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "ff1b3fce5bb57fc6cc1b42604949214d3e27fdec" }
-
-# Redirects bt-hci-linux's (examples/linux, examples/linux-serial) own trouble-host to the same
-# fork/rev as everything else.
-[patch."https://github.com/embassy-rs/trouble"]
-trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e" }
