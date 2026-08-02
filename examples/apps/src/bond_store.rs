@@ -1,12 +1,8 @@
-//! A [`BondStore`] that persists via arbitrary byte-level storage, so every platform example
-//! (Linux: a file; embedded: on-chip flash/RRAM) only needs to plug in *how* to read/write raw
-//! bytes - not reimplement bond encode/decode or the "ignore missing/corrupt data, don't crash"
-//! handling around it. See `examples/linux/src/bond_store.rs` and
-//! `examples/nRF54L15_Connect_Kit/src/bond_store.rs` for the two current backends.
+//! A [`BondStore`] that persists via arbitrary byte-level storage, so each platform example only
+//! plugs in *how* to read/write raw bytes, not encode/decode - see `examples/linux/src/bond_store.rs`
+//! and `examples/nRF54L15_Connect_Kit/src/bond_store.rs` for the two current backends.
 //!
-//! Encodes with `postcard` rather than something human-readable like JSON, so the same code
-//! compiles for `no_std`/no-alloc-friendly embedded targets too, not just platforms with a real
-//! filesystem.
+//! Encodes with `postcard`, not JSON, so it also compiles for `no_std` embedded targets.
 
 use alloc::vec::Vec;
 
@@ -15,10 +11,9 @@ use crate::sink::{BondInformation, BondStore};
 #[cfg(feature = "defmt")]
 use defmt::{warn, Debug2Format};
 
-/// Comfortable headroom over a postcard-encoded [`BondInformation`] (a `u128` LTK, an `Address`,
-/// an `Option<IdentityResolvingKey>`, a bool, and a 1-byte enum - well under half this even with
-/// postcard's varint overhead). Backends are free to reserve more storage than this for their own
-/// framing (e.g. a length prefix) - this only bounds the encoded payload itself.
+/// Comfortable headroom over a postcard-encoded [`BondInformation`] (well under half this even
+/// with postcard's varint overhead). Bounds only the encoded payload - backends may reserve more
+/// for their own framing (e.g. a length prefix).
 const ENCODE_BUF_SIZE: usize = 96;
 
 /// A [`BondStore`] that encodes/decodes with `postcard` and defers actual persistence to two

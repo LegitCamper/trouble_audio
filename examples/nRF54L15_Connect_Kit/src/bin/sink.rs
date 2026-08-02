@@ -23,14 +23,9 @@ use trouble_audio_example_apps::basic_audio_sink;
 use trouble_host::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
-/// `trouble_audio`/`basic_audio_sink` use `alloc` for LE Audio's variable-length data (PAC
-/// records, codec configuration, metadata, ...) - small, and not worth computing exactly, covered
-/// by `MISC_ALLOC_BUDGET_BYTES` below. The overwhelming majority of this heap is
-/// `Lc3MonoDecoder`'s working buffers (`Box::leak`'d, never freed, one per ASE - `MAX_ASES` = 2,
-/// stereo) - see `trouble_audio::lc3`'s module docs for the `heap_bytes`/`const`-assertion story
-/// this crate uses below, so an undersized heap is a build-time error instead of a
-/// `handle_alloc_error` panic found on real hardware (as happened once, before this assertion
-/// existed - see git history).
+/// Dominated by `Lc3MonoDecoder`'s working buffers, one per ASE (`MAX_ASES` = 2) - see
+/// `trouble_audio::lc3` for the `heap_bytes`/`const`-assertion below that keeps this sized
+/// correctly at build time.
 const HEAP_SIZE: usize = 128 * 1024;
 
 /// This sink's PAC only ever advertises 48kHz, and BAP mandates 10ms frame support - the central
@@ -38,9 +33,8 @@ const HEAP_SIZE: usize = 128 * 1024;
 const NEGOTIATED_SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
 const NEGOTIATED_FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
 
-/// Generous ceiling on everything else `alloc`-backed this binary does (PAC records, ASE Control
-/// Point operation buffers, GATT server construction, ...) - unlike the LC3 buffers below, not
-/// computed exactly, just budgeted with headroom.
+/// Headroom for everything else `alloc`-backed (PAC records, GATT server construction, ...) -
+/// not computed exactly like the LC3 buffers below, just budgeted.
 const MISC_ALLOC_BUDGET_BYTES: usize = 16 * 1024;
 
 const DECODER_HEAP_BYTES: usize = match Lc3MonoDecoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
@@ -92,14 +86,7 @@ fn build_sdc<'d, const N: usize>(
             L2CAP_RXQ,
         )?
         // `support_cis_peripheral()` only enables the capability - CIG/CIS/ISO buffer counts
-        // all default to 0, so without these `LE Create CIS` fails with
-        // `MEMORY_CAPACITY_EXCEEDED` no matter what. One CIG/two CIS to match this sink's two
-        // Sink ASEs (stereo); ISO buffers sized for the negotiated max_sdu (120 bytes/channel).
-        //
-        // rx_pdu_buffer_per_stream_count/rx_sdu_buffer_count started at 2/4 and every SDU came
-        // back marked Lost (packet_status_flag=2, see on_iso_data's debug log) despite the CIS
-        // being established - looks like reassembly buffer starvation rather than real RF loss,
-        // so bumped generously here.
+        // default to 0, so without these `LE Create CIS` fails with `MEMORY_CAPACITY_EXCEEDED`.
         .cig_count(1)?
         .cis_count(2)?
         .iso_buffer_cfg(4, 128, 4, 6, 8, 128)?
@@ -111,18 +98,12 @@ fn build_sdc<'d, const N: usize>(
 /// noise on true digital silence without needing a real loudness measurement.
 const LED_ON_THRESHOLD: u16 = 512;
 
-/// Drains decoded LC3 frames and turns them into a visible on/off signal on the board's single
-/// user-programmable LED (Green LED, P0.2 on the nRF54L15 Connect Kit - the RGB LED next to it is
-/// wired to the separate nRF52820 interface MCU and isn't controllable from here). This board has
-/// no speaker/mic, so this is only meant as a proof that audio is actually arriving and decoding
-/// correctly, before wiring this sink into a real playback path.
+/// Drains decoded LC3 frames and turns them into a visible on/off signal on the Green LED (P0.2 -
+/// the only LED this chip can drive; the RGB LED next to it belongs to a separate nRF52820 MCU).
+/// This board has no speaker, so this is proof audio is actually arriving and decoding.
 ///
-/// This drives the LED as a plain thresholded on/off GPIO rather than PWM brightness: on real
-/// hardware, `SimplePwm` on `PWM20`/P0.2 never lit the LED at all (tried both `DutyCycle::normal`
-/// and `::inverted`, confirmed with a dedicated boot-time self-test), while a plain
-/// `embassy_nrf::gpio::Output` on the same pin worked immediately - so this sidesteps whatever's
-/// wrong with the PWM peripheral/driver for this chip/pin/embassy-nrf revision rather than
-/// chasing it further.
+/// Plain on/off GPIO, not PWM brightness: `SimplePwm` on this chip/pin never lit the LED in
+/// testing (tried both `DutyCycle::normal` and `::inverted`), while plain `Output` worked.
 async fn drive_led(led: &mut Output<'_>, cis_manager: &CisManager<NoopRawMutex, { basic_audio_sink::MAX_ASES }>) -> ! {
     loop {
         let pcm = cis_manager.receive_pcm().await;
@@ -155,11 +136,8 @@ async fn main(spawner: Spawner) {
     let p = embassy_nrf::init(config);
     defmt::info!("clocks initialized");
 
-    // Plain GPIO, not PWM - see `drive_led`'s doc comment for why. Self-test: 3 unmistakable
-    // blinks before BLE/audio ever touches this pin, the same way makerdiary's own `blinky`
-    // sample proves out `led0` (P0.2, active-high - see nrf54l15-connectkit's board devicetree).
-    // If this doesn't blink, the problem is P0.2/the LED/the board itself, not anything
-    // audio-related further down.
+    // Self-test: 3 blinks before BLE/audio touches this pin - if this doesn't blink, the problem
+    // is P0.2/the LED/the board, not anything audio-related further down.
     let mut led = Output::new(p.P0_02, Level::Low, OutputDrive::Standard);
     defmt::info!("LED self-test: 3 blinks via plain GPIO on P0.2");
     for i in 0..3 {
@@ -222,18 +200,13 @@ async fn main(spawner: Spawner) {
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
 
-    // Reserving real CIG/CIS/ISO buffers (see `build_sdc`) pushed the requirement to 9248 bytes,
-    // then to 13600 once the ISO PDU/SDU buffer counts were bumped to chase the "every SDU
-    // marked Lost" issue (see build_sdc's comment). Bump this if `build_sdc` fails - it logs the
-    // exact number of bytes needed.
+    // Bump if `build_sdc` fails - it logs the exact number of bytes needed.
     let mut sdc_mem = sdc::Mem::<16384>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
     let cis_manager = CisManager::<NoopRawMutex, { basic_audio_sink::MAX_ASES }>::new();
 
-    // Persists the bond to on-chip RRAM (see `bond_store.rs`) so re-pairing isn't needed after
-    // every reflash/restart - `flash` just needs to outlive `bond_store`, both live for the rest
-    // of `main` (never returns).
+    // Persists the bond to on-chip RRAM so re-pairing isn't needed after every reflash.
     let flash = RefCell::new(Nvmc::new(p.RRAMC));
     let bond_store = rram_bond_store(&flash);
 

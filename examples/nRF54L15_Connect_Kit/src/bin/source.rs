@@ -21,27 +21,19 @@ use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
 use trouble_host::prelude::*;
 use {defmt_rtt as _, panic_probe as _};
 
-/// `trouble_audio`/`basic_audio_source` use `alloc` for LE Audio's variable-length data (PAC
-/// records, codec configuration, metadata, ...) - small, and not worth computing exactly, covered
-/// by `MISC_ALLOC_BUDGET_BYTES` below. The overwhelming majority of this heap is
-/// `Lc3MonoEncoder`'s working buffers (`Box::leak`'d, never freed, one per channel -
-/// `CHANNEL_COUNT` = 2, stereo) - see `trouble_audio::lc3`'s module docs for the
-/// `heap_bytes`/`const`-assertion story this crate uses below, so an undersized heap is a
-/// build-time error instead of a `handle_alloc_error` panic found on real hardware.
+/// Dominated by `Lc3MonoEncoder`'s working buffers, one per channel (`CHANNEL_COUNT` = 2) - see
+/// `trouble_audio::lc3` for the `heap_bytes`/`const`-assertion below that keeps this sized
+/// correctly at build time.
 const HEAP_SIZE: usize = 64 * 1024;
 
-/// Matches `basic_audio_source::run`'s hardcoded negotiation (`SAMPLING_FREQUENCY`/
-/// `FRAME_DURATION` there) - not `pub`, so re-declared here rather than reused.
+/// Matches `basic_audio_source::run`'s hardcoded (not `pub`) negotiation.
 const NEGOTIATED_SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
 const NEGOTIATED_FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
 
-/// `basic_audio_source::run` always streams a fixed stereo (front left + front right) pair - see
-/// its `ase_ids: [u8; 2]`.
+/// `basic_audio_source::run` always streams a fixed stereo pair - see its `ase_ids: [u8; 2]`.
 const CHANNEL_COUNT: usize = 2;
 
-/// Generous ceiling on everything else `alloc`-backed this binary does (PAC records, ASE Control
-/// Point operation buffers, GATT client discovery, ...) - unlike the LC3 buffers below, not
-/// computed exactly, just budgeted with headroom.
+/// Headroom for everything else `alloc`-backed - not computed exactly like the LC3 buffers below.
 const MISC_ALLOC_BUDGET_BYTES: usize = 16 * 1024;
 
 const ENCODER_HEAP_BYTES: usize = match Lc3MonoEncoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
@@ -95,10 +87,8 @@ fn build_sdc<'d, const N: usize>(
             L2CAP_TXQ,
             L2CAP_RXQ,
         )?
-        // `support_cis_central()` only enables the capability - CIG/CIS/ISO buffer counts all
-        // default to 0, so `LE Create CIS` fails with `MEMORY_CAPACITY_EXCEEDED` no matter what.
-        // One CIG/two CIS to match the stereo stream this source creates; TX-heavy since this
-        // role plays audio out rather than receiving it.
+        // `support_cis_central()` only enables the capability - CIG/CIS/ISO buffer counts
+        // default to 0, so `LE Create CIS` fails with `MEMORY_CAPACITY_EXCEEDED`.
         .cig_count(1)?
         .cis_count(2)?
         .iso_buffer_cfg(4, 128, 2, 1, 2, 128)?
@@ -114,12 +104,8 @@ async fn main(spawner: Spawner) {
         unsafe { HEAP.init(heap_mem.as_ptr() as usize, HEAP_SIZE) }
     }
 
-    // ExternalXtal, not Internal/InternalRC: the earlier hang in embassy-nrf's clock init looked
-    // like a missing crystal (`while events_xostarted == 0 {}` never completing) but was actually
-    // an unrelated `probe-rs run` flash/reset handoff bug on this board - the crystal was fine.
-    // CIS/ISO timing needs crystal-grade LFCLK accuracy; RC is good enough for connections/GATT
-    // but was the likely cause of `LE Set CIG Parameters` being rejected with "Unsupported
-    // Feature or Parameter Value".
+    // ExternalXtal, not RC: CIS/ISO timing needs crystal-grade LFCLK accuracy - RC caused
+    // `LE Set CIG Parameters` to be rejected with "Unsupported Feature or Parameter Value".
     let mut config: config::Config = Default::default();
     config.clock_speed = config::ClockSpeed::CK128;
     config.hfclk_source = config::HfclkSource::ExternalXtal;
@@ -177,24 +163,15 @@ async fn main(spawner: Spawner) {
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
 
-    // Central + security + CIS needs more SDC memory than the plain peripheral role this was
-    // copied from (4720B); nrf52's central+security example needs 7056B for central+security
-    // alone. Reserving real CIG/CIS/ISO buffers (see `build_sdc`) adds more on top of that -
-    // budget generously. Bump this if `build_sdc` fails - it logs the exact number of bytes
-    // needed.
+    // Bump if `build_sdc` fails - it logs the exact number of bytes needed.
     let mut sdc_mem = sdc::Mem::<12288>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
 
-    // Default reserved time (1300us/ISO interval) is for concurrent ACL/other-role activity we
-    // don't have (this is a single-purpose central with one connection) - free that budget for
-    // the CIG itself. Without this, `LE Set CIG Parameters` for our 2-CIS/10ms-interval/RTN=2
-    // stereo stream was rejected with "Unsupported Feature or Parameter Value" (doesn't fit
-    // alongside the default reservation). See sdc_hci_vs.h's `sdc_hci_cmd_vs_cig_reserved_time_set`.
+    // Frees the default ACL/other-role time reservation for the CIG itself - without this,
+    // `LE Set CIG Parameters` was rejected with "Unsupported Feature or Parameter Value".
     unwrap!(sdc.exec(&NordicCigReservedTimeSet::new(0)).await);
 
-    // Persists the bond to on-chip RRAM (see `bond_store.rs`) so re-pairing isn't needed after
-    // every reflash/restart - `flash` just needs to outlive `bond_store`, both live for the rest
-    // of `main` (never returns).
+    // Persists the bond to on-chip RRAM so re-pairing isn't needed after every reflash.
     let flash = RefCell::new(Nvmc::new(p.RRAMC));
     let bond_store = rram_bond_store(&flash);
 

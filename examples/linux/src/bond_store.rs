@@ -1,8 +1,6 @@
 //! Persists a single bond to a file, so reconnecting after restarting this process doesn't fail
-//! authentication (see `trouble_audio_example_apps::sink::BondStore`). Actual encode/decode is
-//! shared with every other platform example via
-//! `trouble_audio_example_apps::bond_store::EncodedBondStore` - this only supplies how to read
-//! and write raw bytes on a real filesystem.
+//! authentication. Encode/decode is shared via
+//! `trouble_audio_example_apps::bond_store::EncodedBondStore` - this just supplies file I/O.
 
 use std::path::{Path, PathBuf};
 

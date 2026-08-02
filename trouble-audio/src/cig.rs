@@ -117,9 +117,8 @@ enum CigAction {
 }
 
 /// An [`Lc3MonoEncoder`] tagged with the Sampling_Frequency/Frame_Duration it was built for, so a
-/// reconnect that renegotiates the exact same params can reuse it instead of allocating (and
-/// leaking, since `Lc3MonoEncoder::new` permanently `Box::leak`s its working buffers - see
-/// `lc3.rs`) another one - see [`CigManager::on_cis_established`].
+/// reconnect with the same params can reuse it instead of leaking a new one (see `lc3.rs`) - see
+/// [`CigManager::on_cis_established`].
 struct CachedEncoder {
     sampling_frequency: SamplingFrequency,
     frame_duration: FrameDuration,
@@ -162,26 +161,18 @@ impl<M: RawMutex> CigManager<M> {
     /// Resets the manager to its initial empty state, ready to service a new connection.
     ///
     /// Call this at the start of each new connection attempt (before [`Self::set_acl_handle`] and
-    /// [`Self::configure`]) to clear stale slots/handles from the previous connection. If a CIG
-    /// was created during the previous connection, this queues a `LE Remove CIG` action for
-    /// [`drive_cig`] to execute before the next `LE Set CIG Parameters` — without it the
-    /// controller rejects the re-create with `Command Disallowed (0x0C)`.
+    /// [`Self::configure`]) to clear stale slots/handles. If a CIG was created previously, this
+    /// queues a `LE Remove CIG` for [`drive_cig`] - without it, the controller rejects a re-create
+    /// with `Command Disallowed (0x0C)`.
     ///
-    /// Deliberately does *not* clear `encoders`: [`Self::on_cis_established`] reuses a cached one
-    /// when the reconnect renegotiates the same Sampling_Frequency/Frame_Duration (the usual
-    /// case), which only works if reset doesn't throw it away first. This relies on the caller
-    /// always calling [`Self::configure`] for the same ASEs in the same order after every
-    /// `reset()`, so slot indices - and thus which cached encoder belongs to which ASE - stay
-    /// consistent across reconnects.
+    /// Deliberately does *not* clear `encoders`, so [`Self::on_cis_established`] can reuse one
+    /// across a reconnect - relies on the caller always calling [`Self::configure`] for the same
+    /// ASEs in the same order, so slot indices stay consistent.
     pub fn reset(&self) {
         *self.slots.borrow_mut() = [CigAseSlot::default(); CIS_COUNT];
         *self.acl_handle.borrow_mut() = None;
-        // Drain any stale queued actions/readiness signals from the previous connection so
-        // they don't fire for the new one.
         while self.actions.try_receive().is_ok() {}
         while self.ready.try_receive().is_ok() {}
-        // Queue CIG removal if we ever created one: the controller won't accept a new
-        // LE Set CIG Parameters for the same CIG_ID until the old one is removed.
         if let Some(cig_id) = *self.cig_id.borrow() {
             let _ = self.actions.try_send(CigAction::RemoveCig(cig_id));
         }
@@ -337,10 +328,7 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
             return;
         };
 
-        // A reconnect re-runs the whole CIG/CIS setup and lands back here even though the
-        // negotiated audio params are typically unchanged - reuse the existing encoder already
-        // sitting in this slot when it matches, rather than always allocating anew (see
-        // `CachedEncoder`'s doc and `reset()`'s doc for why this is safe).
+        // Reuse the existing encoder when it matches (see `CachedEncoder`/`reset()` docs).
         let already_matches = matches!(
             &self.encoders.borrow()[idx],
             Some(cached) if cached.sampling_frequency == sampling_frequency && cached.frame_duration == frame_duration
@@ -545,11 +533,8 @@ mod tests {
         }
     }
 
-    /// Regression test for a leak that mirrors the one fixed in `cis::CisManager`, but was worse
-    /// here: `reset()` used to unconditionally clear `encoders` on *every* reconnect attempt (not
-    /// just ones that actually renegotiate), so it leaked an `Lc3MonoEncoder` (~15.9KB at
-    /// 48kHz/10ms) per ASE on every single reconnect - `on_cis_established` must reuse the
-    /// existing encoder when the reconnect renegotiates the same audio params.
+    /// Regression test mirroring `cis::CisManager`'s leak fix: `reset()` used to unconditionally
+    /// clear `encoders` on every reconnect, leaking an `Lc3MonoEncoder` per ASE each time.
     #[test]
     fn reconnecting_with_the_same_audio_params_reuses_the_existing_encoders() {
         let manager = CigManager::<NoopRawMutex>::new();
@@ -575,12 +560,9 @@ mod tests {
             "expected the first establishment to really allocate two encoders (~15904 bytes each at 48kHz/10ms), got {allocated_first}"
         );
 
-        // Simulate a reconnect: `reset()` (which must NOT drop the cached encoders - see its own
-        // doc), then the caller re-configures the same two ASEs in the same order with the same
-        // audio params (matching what `basic_audio_source::run` always does), and the controller
-        // hands out fresh CIS handles.
+        // Simulate a reconnect: reset, re-configure the same ASEs, fresh CIS handles.
         manager.reset();
-        let _ = manager.actions.try_receive(); // RemoveCig (no CIG existed yet on the very first connection, but does now)
+        let _ = manager.actions.try_receive(); // RemoveCig
         manager.set_acl_handle(ConnHandle::new(0x06));
         manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
         manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);

@@ -1,37 +1,20 @@
 //! Thin, stateful wrapper around the `lc3-codec` crate's `Lc3Encoder`/`Lc3Decoder`, parameterized
 //! from a negotiated Codec_Specific_Configuration (Sampling_Frequency, Frame_Duration).
 //!
-//! `lc3-codec`'s encoder/decoder hold state across frames (long-term post filter memory, attack
-//! detection, packet loss concealment, ...) and borrow their scratch buffers rather than owning
-//! them, so this wrapper leaks its buffers (`Box::leak`) to give them `'static` lifetime and owns
-//! the encoder/decoder for as long as the audio session lasts - reasonable since that memory is
-//! meant to live for the session's duration anyway, same as it would for a stack-allocated
-//! embedded buffer.
+//! `lc3-codec`'s encoder/decoder hold state across frames and borrow their scratch buffers rather
+//! than owning them, so this wrapper leaks its buffers (`Box::leak`) to give them `'static`
+//! lifetime for the session's duration.
 //!
 //! # Sizing a `#[global_allocator]` heap
 //!
-//! On a `no_std` target, [`Lc3MonoEncoder::new`]/[`Lc3MonoDecoder::new`]'s leaked buffers are by
-//! far the largest and most predictable consumer of heap: tens of KB each, fixed for the life of
-//! the session, entirely determined by the negotiated Sampling_Frequency/Frame_Duration. Every
-//! other allocation this crate makes (PAC records, ASE/codec configuration blobs, GATT server
-//! construction, ...) is comparatively tiny (low hundreds of bytes) and shaped by *your*
-//! `PeripheralConfig`/ASE count rather than anything computable here - budget headroom for those
-//! by hand, same as you always would.
-//!
 //! [`Lc3MonoEncoder::heap_bytes`]/[`Lc3MonoDecoder::heap_bytes`] are `const fn`, so a binary that
-//! knows its own topology at compile time (which sampling frequency/frame duration it'll
-//! negotiate, how many concurrent mono encoders/decoders it builds - one per ASE, e.g. two for
-//! stereo) can turn the "did I size `HEAP_SIZE` correctly" question into a build-time
-//! `const`-assertion instead of a runtime `handle_alloc_error` panic days into testing. Both are a
-//! safe upper bound rather than byte-exact (see their doc comments for why) - fine for this use,
-//! since over-provisioning a `const HEAP_SIZE` costs nothing but unused RAM, while
-//! under-provisioning is the `handle_alloc_error` panic this exists to avoid:
+//! knows its topology at compile time (sampling frequency/frame duration, how many concurrent
+//! encoders/decoders it builds) can turn "is `HEAP_SIZE` big enough" into a build-time assertion
+//! instead of a runtime `handle_alloc_error` panic:
 //!
 //! ```ignore
-//! const SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
-//! const FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
 //! const STEREO_DECODER_BYTES: usize =
-//!     2 * match Lc3MonoDecoder::heap_bytes(SAMPLING_FREQUENCY, FRAME_DURATION) {
+//!     2 * match Lc3MonoDecoder::heap_bytes(SamplingFrequency::Hz48000, FrameDuration::Duration10MS) {
 //!         Ok(n) => n,
 //!         Err(_) => panic!("unsupported sampling frequency"),
 //!     };
@@ -56,20 +39,12 @@ use crate::generic_audio::{FrameDuration, SamplingFrequency};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedSamplingFrequency(pub SamplingFrequency);
 
-/// On top of the scratch buffers `Lc3MonoDecoder`/`Lc3MonoEncoder` explicitly leak, `lc3-codec`'s
-/// `Lc3Decoder`/`Lc3Encoder` (with its default `alloc` feature, which this crate uses) also
-/// allocate a small `Vec<Channel>` internally to hold their own per-channel filter-state structs -
-/// one element for us, since we always ask for `num_channels = 1` (mono). Those `Channel` types
-/// are private to `lc3-codec`, so `size_of::<T>()` isn't reachable from here; these margins are a
-/// generous, empirically-measured upper bound instead (real cost measured on a 64-bit host: ~1056
-/// bytes decoder / ~5320 bytes encoder, both well under these values - see `lc3::tests`). Safe as
-/// an upper bound on the 32-bit embedded targets this feature actually exists for: those structs
-/// hold slices/pointers, which are narrower there, so the real allocation there is smaller still,
-/// never bigger. Re-measure (see `lc3::tests::decoder_heap_bytes_matches_what_new_actually_allocates`)
-/// if a `lc3-codec` upgrade ever changes these structs enough to blow through the margin.
+/// `lc3-codec`'s `Lc3Decoder`/`Lc3Encoder` also allocate a small internal `Vec<Channel>` that
+/// can't be sized exactly (the `Channel` type is private), on top of the scratch buffers below -
+/// a generous upper bound instead (measured ~1056 bytes decoder / ~5320 bytes encoder on a
+/// 64-bit host; safe on 32-bit embedded targets, where narrower pointers only shrink it further).
 const DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES: usize = 2048;
-/// See [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`] - same reasoning, `Lc3Encoder`'s internal
-/// per-channel struct just happens to be larger.
+/// See [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`].
 const ENCODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES: usize = 8192;
 
 const fn to_lc3_sampling_frequency(value: SamplingFrequency) -> Result<Lc3SamplingFrequency, UnsupportedSamplingFrequency> {
@@ -100,14 +75,9 @@ pub struct Lc3MonoEncoder {
 }
 
 impl Lc3MonoEncoder {
-    /// Bytes [`Self::new`] will [`Box::leak`]/otherwise allocate for the given negotiated
-    /// Sampling_Frequency/Frame_Duration - see the module docs for how to use this to
-    /// compile-time-assert a `#[global_allocator]` heap is big enough. A safe upper bound, not
-    /// necessarily byte-exact: covers the three big scratch buffers `new` leaks exactly (same
-    /// `calc_working_buffer_lengths` call, same element types, tens of KB - the overwhelming
-    /// majority of this number) plus [`INTERNAL_BOOKKEEPING_MARGIN_BYTES`] for `lc3-codec`'s own
-    /// small internal per-channel state, which its public API doesn't expose enough to size
-    /// exactly from here (see that constant's doc for why).
+    /// Bytes [`Self::new`] will allocate for the given negotiated Sampling_Frequency/Frame_Duration
+    /// - see the module docs for using this to compile-time-assert a heap is big enough. A safe
+    /// upper bound, not byte-exact (see [`ENCODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
     pub const fn heap_bytes(sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Result<usize, UnsupportedSamplingFrequency> {
         let fs = match to_lc3_sampling_frequency(sampling_frequency) {
             Ok(fs) => fs,
@@ -154,14 +124,9 @@ pub struct Lc3MonoDecoder {
 }
 
 impl Lc3MonoDecoder {
-    /// Bytes [`Self::new`] will [`Box::leak`]/otherwise allocate for the given negotiated
-    /// Sampling_Frequency/Frame_Duration - see the module docs for how to use this to
-    /// compile-time-assert a `#[global_allocator]` heap is big enough. A safe upper bound, not
-    /// necessarily byte-exact: covers the two big scratch buffers `new` leaks exactly (same
-    /// `calc_working_buffer_lengths` call, same element types, tens of KB - the overwhelming
-    /// majority of this number) plus [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`] for
-    /// `lc3-codec`'s own small internal per-channel state, which its public API doesn't expose
-    /// enough to size exactly from here (see that constant's doc for why).
+    /// Bytes [`Self::new`] will allocate for the given negotiated Sampling_Frequency/Frame_Duration
+    /// - see the module docs for using this to compile-time-assert a heap is big enough. A safe
+    /// upper bound, not byte-exact (see [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
     pub const fn heap_bytes(sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Result<usize, UnsupportedSamplingFrequency> {
         let fs = match to_lc3_sampling_frequency(sampling_frequency) {
             Ok(fs) => fs,
@@ -231,13 +196,8 @@ mod tests {
         assert!(energy_out > energy_in / 2, "decoded energy {energy_out} too low vs input {energy_in}");
     }
 
-    /// `heap_bytes` must actually be usable in a `const` context - that's the entire point
-    /// (compile-time `HEAP_SIZE` assertions in downstream binaries) - and must be a safe *upper
-    /// bound* on what `new` really allocates (it deliberately never estimates low, so it never
-    /// silently sets a caller up for the `handle_alloc_error` panic it exists to avoid - see
-    /// `DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`'s doc for why it isn't byte-exact). The two big
-    /// scratch buffers it accounts for exactly (19884 + 7680 bytes for this config) come from a
-    /// real `handle_alloc_error` panic backtrace hit on nRF54L15 hardware, not a hand guess.
+    /// 19884 + 7680 bytes come from a real `handle_alloc_error` panic backtrace on nRF54L15
+    /// hardware, not a guess.
     const DECODER_HEAP_BYTES_48K_10MS: usize = match Lc3MonoDecoder::heap_bytes(SamplingFrequency::Hz48000, FrameDuration::Duration10MS) {
         Ok(n) => n,
         Err(_) => panic!("Hz48000 must be supported"),

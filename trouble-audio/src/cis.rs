@@ -101,10 +101,8 @@ struct AseSlot {
     cis_handle: Option<u16>,
 }
 
-/// Each variant is tagged with the [`AudioParams`] it was built for, so a reconnect that
-/// renegotiates the exact same Sampling_Frequency/Frame_Duration can reuse the existing,
-/// already-`Box::leak`'d codec instead of allocating (and leaking) a brand new one - see
-/// [`CisManager::on_cis_established`].
+/// Each variant is tagged with the [`AudioParams`] it was built for, so a reconnect with the same
+/// params can reuse it instead of leaking a new one - see [`CisManager::on_cis_established`].
 enum Codec {
     Encoder(AudioParams, Lc3MonoEncoder),
     Decoder(AudioParams, Lc3MonoDecoder),
@@ -126,10 +124,8 @@ pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
     slots: RefCell<[AseSlot; MAX_ASES]>,
     codecs: RefCell<[Option<Codec>; MAX_ASES]>,
     actions: Channel<M, CisAction, 4>,
-    // A stereo stream decodes at up to 200 frames/sec combined (two ASEs @ 10ms each); 4 slots
-    // left almost no slack for the consumer (e.g. `drive_led`) to fall even slightly behind a
-    // burst - observed as near-constant "pcm_out channel full, dropping frame" warnings on
-    // hardware. 16 gives ~80ms of burst headroom at that rate.
+    // 16, not 4: gives the consumer (e.g. `drive_led`) headroom against bursts at up to 200
+    // frames/sec combined (stereo, 10ms each) - 4 caused near-constant drops on hardware.
     pcm_out: Channel<M, DecodedPcm, 16>,
     streaming: Channel<M, u8, 4>,
 }
@@ -277,13 +273,8 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             return;
         };
 
-        // A reconnect (e.g. after the peer disconnects/reconnects mid-session, such as on a
-        // track skip) re-runs the whole ASE Control Point state machine and lands back here even
-        // though the negotiated audio params are typically unchanged. `Lc3MonoDecoder`/
-        // `Lc3MonoEncoder` permanently `Box::leak` their working buffers (see `lc3.rs`), so
-        // allocating a fresh one on every such reconnect leaks ~27-55KB per channel each time and
-        // eventually exhausts the heap (`handle_alloc_error` panic). Reuse the existing codec
-        // already sitting in this slot when it matches, rather than always allocating anew.
+        // A reconnect lands back here with typically-unchanged audio params - reuse the existing
+        // codec when it matches, rather than leaking (see `lc3.rs`) a fresh one every time.
         let already_matches = matches!(
             (&self.codecs.borrow()[idx], direction),
             (Some(Codec::Decoder(params, _)), AseDirection::Sink) if *params == audio
@@ -667,10 +658,8 @@ mod tests {
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
 
-    /// Regression test for the OOM (`handle_alloc_error`) crash a repeated disconnect/reconnect
-    /// (e.g. skipping tracks) used to cause after enough reconnects burned through the heap - see
-    /// the fix's comment in `on_cis_established`: it must stop allocating (and `Box::leak`ing) a
-    /// brand new [`Lc3MonoDecoder`] on every reconnect.
+    /// Regression test for the OOM (`handle_alloc_error`) crash repeated reconnects used to cause
+    /// by leaking a new [`Lc3MonoDecoder`] every time.
     #[test]
     fn reconnecting_with_the_same_audio_params_reuses_the_existing_decoder() {
         let (ascs, server) = build_ascs_and_server();
@@ -698,10 +687,7 @@ mod tests {
             "expected the first establishment to really allocate a decoder (~27564 bytes at 48kHz/10ms), got {allocated_first}"
         );
 
-        // Simulate a reconnect: the peer re-runs Config Codec/Config QoS with the exact same
-        // params, and the controller hands out a fresh CIS handle for the new CIS instance -
-        // `on_cis_established` must recognize the existing decoder in this ASE's slot still
-        // matches and reuse it rather than allocating (and leaking) another one.
+        // Simulate a reconnect: same Config Codec/QoS params, fresh CIS handle.
         manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
         manager.on_cis_request(&LeCisRequest {

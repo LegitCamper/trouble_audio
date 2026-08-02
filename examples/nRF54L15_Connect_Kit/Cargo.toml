@@ -59,8 +59,7 @@ cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 static_cell = "2"
 embedded-alloc = "0.6.0"
-# Backs `bond_store::rram_bond_store` - actual encode/decode lives in
-# `trouble_audio_example_apps::bond_store` (needs trouble-host's "serde" feature, enabled there).
+# Backs `bond_store::rram_bond_store`.
 embedded-storage = "0.3.1"
 
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [

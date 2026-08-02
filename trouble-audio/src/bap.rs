@@ -115,13 +115,8 @@ pub async fn drive_ase_control_point<
                     max_transport_latency: 100,
                     presentation_delay_min: [0, 0, 0],
                     presentation_delay_max: [0x40, 0x9C, 0],
-                    // A degenerate preferred range of exactly 0 (this crate's old default) tells
-                    // the central our real preference is zero presentation delay - Android's
-                    // audio pipeline can't actually schedule that (LC3 encode/decode and BLE
-                    // scheduling both need real headroom), so it silently releases the ASEs and
-                    // disconnects right after Enable, never attempting CIS creation. Span the same
-                    // [0, 40ms] range as the allowed presentation_delay_* fields instead, so the
-                    // central picks something workable rather than the floor of the range.
+                    // A degenerate [0, 0] range (old default) makes Android silently release the
+                    // ASEs after Enable instead of creating a CIS - span the allowed range instead.
                     preferred_presentation_delay_min: [0, 0, 0],
                     preferred_presentation_delay_max: [0x40, 0x9C, 0],
                     codec_id,
