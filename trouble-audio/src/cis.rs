@@ -23,10 +23,7 @@ use bt_hci::cmd::le::{
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::IsoPacket;
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
-use bt_hci::param::{ConnHandle, IsoDataPathDirection, Status};
-
-/// The standard HCI transport `Data_Path_ID`, as opposed to a vendor-specific one.
-const DATA_PATH_ID_HCI: u8 = 0x00;
+use bt_hci::param::{CodecId, ConnHandle, DataPathDirection, DataPathId, ExtDuration, Status};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use heapless::Vec as HVec;
@@ -115,7 +112,7 @@ enum CisAction {
     Reject(ConnHandle, u8),
     /// `Some(ase_id)` if this is a Sink ASE, whose autonomous Enabling->Streaming transition
     /// should be queued onto `CisManager::streaming` once the data path is confirmed up.
-    SetupDataPath(ConnHandle, IsoDataPathDirection, Option<u8>),
+    SetupDataPath(ConnHandle, DataPathDirection, Option<u8>),
 }
 
 /// Bridges the ASE Control Point state machine to real CIS/ISO setup for up to `MAX_ASES`
@@ -309,8 +306,8 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         }
 
         let data_path_direction = match direction {
-            AseDirection::Sink => IsoDataPathDirection::Output,
-            AseDirection::Source => IsoDataPathDirection::Input,
+            AseDirection::Sink => DataPathDirection::Output,
+            AseDirection::Source => DataPathDirection::Input,
         };
         // Only a Sink ASE's Enabling->Streaming transition is autonomous; a Source ASE instead
         // waits for the client's Receiver Start Ready operation.
@@ -435,11 +432,13 @@ where
                     .command(LeSetupIsoDataPath::new(
                         handle,
                         direction,
-                        DATA_PATH_ID_HCI,
-                        u8::from(CodingFormat::Transparent),
-                        0,
-                        0,
-                        [0, 0, 0],
+                        DataPathId::HCI,
+                        CodecId {
+                            coding_format: u8::from(CodingFormat::Transparent),
+                            company_id: 0,
+                            vendor_specific_codec_id: 0,
+                        },
+                        ExtDuration::from_u32(0),
                         &[],
                     ))
                     .await;
@@ -635,7 +634,7 @@ mod tests {
         match manager.actions.try_receive() {
             Ok(CisAction::SetupDataPath(handle, direction, streaming_ase_id)) => {
                 assert_eq!(handle.raw(), 0x11);
-                assert_eq!(direction, IsoDataPathDirection::Output); // Sink ASE
+                assert_eq!(direction, DataPathDirection::Output); // Sink ASE
                 assert_eq!(streaming_ase_id, Some(0)); // Sink ASE: autonomous transition
             }
             other => panic!("expected SetupDataPath, got {:?}", other.is_ok()),

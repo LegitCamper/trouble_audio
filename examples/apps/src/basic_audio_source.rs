@@ -7,16 +7,13 @@
 
 use alloc::vec::Vec as AVec;
 
-use bt_hci::cmd::le::{
-    LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParametersTest,
-    LeSetHostFeature, LeSetupIsoDataPath,
-};
+use bt_hci::cmd::le::{LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetHostFeature, LeSetupIsoDataPath};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::Vec as HVec;
 use trouble_audio::ascs::{Ase, AscsClient, ConfigQosEntry, TargetLatency};
-use trouble_audio::cig::{self, AseQos, CigManager};
+use trouble_audio::cig::{self, AseQos, CigManager, SetCigParametersCmd};
 use trouble_audio::generic_audio::{
     encode_list, AudioLocation, CodecSpecificConfiguration, ContextType, FrameDuration, Metadata, SamplingFrequency,
 };
@@ -63,8 +60,8 @@ const RETRANSMISSION_NUMBER: u8 = 2;
 pub async fn run<C>(controller: C, our_address: [u8; 6], target: [u8; 6], bond_store: Option<&dyn BondStore>) -> !
 where
     C: Controller
-        + ControllerCmdSync<LeSetCigParametersTest>
-        + ControllerCmdAsync<LeCreateCis>
+        + for<'a> ControllerCmdSync<SetCigParametersCmd<'a>>
+        + for<'a> ControllerCmdAsync<LeCreateCis<'a>>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
         + ControllerCmdSync<LeRemoveIsoDataPath>
         + ControllerCmdSync<LeRemoveCig>

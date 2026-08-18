@@ -27,7 +27,7 @@ embassy-sync = { version = "0.8", features = ["log"] }
 futures = { version = "0.3", default-features = false, features = [
   "async-await",
 ] }
-bt-hci = { version = "0.9", default-features = false, features = [
+bt-hci = { version = "0.10", default-features = false, features = [
   "log",
   "uuid",
 ] }

@@ -15,7 +15,7 @@ trouble-host = { workspace = true, features = [
   "serde",
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false }
-bt-hci = { version = "0.9", features = ["uuid"] }
+bt-hci = { version = "0.10", features = ["uuid"] }
 embassy-futures = "0.1.1"
 embassy-sync = { version = "0.8" }
 embassy-time = "0.5.1"

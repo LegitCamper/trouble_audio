@@ -16,10 +16,11 @@ embassy-time = { version = "0.5.1", features = [
 critical-section = { version = "1.1", features = ["std"] }
 tokio = { version = "1", features = ["full"] }
 tokio-serial = "5.4"
-bt-hci = { version = "0.9", default-features = false, features = [
+bt-hci = { version = "0.10", default-features = false, features = [
   "log",
   "uuid",
 ] }
+bt-hci-serial = "0.1"
 
 linux-examples = { path = "../linux" }
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [

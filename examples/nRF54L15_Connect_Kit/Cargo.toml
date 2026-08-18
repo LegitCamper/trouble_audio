@@ -40,7 +40,7 @@ nrf-mpsl = { version = "0.3", default-features = false, features = [
   "defmt",
   "critical-section-impl",
 ] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
 trouble-host = { workspace = true, features = [
   "derive",
   "scan",
@@ -67,6 +67,7 @@ trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
   "defmt",
+  "nrf-sdc",
 ] }
 
 [features]

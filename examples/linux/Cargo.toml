@@ -15,11 +15,11 @@ embassy-time = { version = "0.5.1", features = [
 ] }
 critical-section = { version = "1.1", features = ["std"] }
 tokio = { version = "1", features = ["full"] }
-bt-hci = { version = "0.9", default-features = false, features = [
+bt-hci = { version = "0.10", default-features = false, features = [
   "log",
   "uuid",
 ] }
-bt-hci-linux = { git = "https://github.com/embassy-rs/trouble", rev = "088e09c451177d5db50cf3e58c68d05512265ba0" }
+bt-hci-linux = { path = "../../../trouble/bt-hci-linux" }
 
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
   "log",

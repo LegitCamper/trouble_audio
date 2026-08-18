@@ -3,7 +3,7 @@
 //! see `linux-serial`'s README. Bond storage and PipeWire playback are reused from `linux-examples`.
 
 use bt_hci::controller::ExternalController;
-use bt_hci::transport::SerialTransport;
+use bt_hci_serial::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use linux_examples::{bond_store::sink_bond_store, pipewire_sink};
 use tokio::time::Duration;

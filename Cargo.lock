@@ -268,9 +268,24 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.9.0"
-source = "git+https://github.com/LegitCamper/bt-hci?rev=0d459b2d4d0c59ad1f9f3ceb94578a8815953d18#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f3c66fd0a41a3b3a5906847b1bf5516048ce083e24fa9341a0fa31d3b4cd73d"
 dependencies = [
- "bt-hci-driver",
+ "btuuid",
+ "embassy-sync",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
+ "futures-intrusive",
+ "heapless 0.9.3",
+]
+
+[[package]]
+name = "bt-hci"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9670c1c3285fdaa99ade6edf5a3ed47bc14227f49b5e48cc587ef190485eaeb"
+dependencies = [
+ "bt-hci-transport",
  "btuuid",
  "defmt 1.1.1",
  "embassy-sync",
@@ -283,28 +298,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "bt-hci-driver"
+name = "bt-hci-linux"
 version = "0.1.0"
-source = "git+https://github.com/LegitCamper/bt-hci?rev=0d459b2d4d0c59ad1f9f3ceb94578a8815953d18#0d459b2d4d0c59ad1f9f3ceb94578a8815953d18"
 dependencies = [
- "defmt 1.1.1",
+ "bt-hci 0.10.0",
+ "bt-hci-transport",
+ "critical-section",
+ "embassy-time",
+ "embedded-io 0.7.1",
+ "embedded-io-adapters",
+ "embedded-io-async 0.7.0",
+ "env_logger",
+ "libc",
+ "log",
+ "tokio",
+]
+
+[[package]]
+name = "bt-hci-serial"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6264f33e15ae182a945deee7c5e9043ef633e92d05003ba3ae012dd2513d9187"
+dependencies = [
+ "bt-hci-transport",
+ "embassy-sync",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
 ]
 
 [[package]]
-name = "bt-hci-linux"
+name = "bt-hci-transport"
 version = "0.1.0"
-source = "git+https://github.com/embassy-rs/trouble?rev=088e09c451177d5db50cf3e58c68d05512265ba0#088e09c451177d5db50cf3e58c68d05512265ba0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ffb9819c69cf88877f5eebc8c5ade0ab50f2bf9475bbb3eb714d66c55b0cb64"
 dependencies = [
- "bt-hci",
- "critical-section",
- "embassy-time",
+ "defmt 1.1.1",
  "embedded-io 0.7.1",
- "env_logger",
- "libc",
- "log",
- "tokio",
+ "embedded-io-async 0.7.0",
 ]
 
 [[package]]
@@ -602,7 +632,7 @@ version = "0.7.0"
 source = "git+https://github.com/embassy-rs/embassy.git?rev=03c826f2544220cb44b2dec05f5d636a80d39382#03c826f2544220cb44b2dec05f5d636a80d39382"
 dependencies = [
  "aligned",
- "bt-hci",
+ "bt-hci 0.9.0",
  "cortex-m",
  "cortex-m-rt",
  "derive_more",
@@ -2086,7 +2116,7 @@ checksum = "2b23ac50abb8261cb38c6e2a7192d3302e0836dac1628f6a93b82b4fad185897"
 name = "linux-examples"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.10.0",
  "bt-hci-linux",
  "critical-section",
  "embassy-sync",
@@ -2110,7 +2140,8 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 name = "linux-serial-examples"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.10.0",
+ "bt-hci-serial",
  "critical-section",
  "embassy-sync",
  "embassy-time",
@@ -2229,7 +2260,7 @@ dependencies = [
 name = "nRF54L15_Connect_Kit"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.10.0",
  "cortex-m",
  "cortex-m-rt",
  "defmt 1.1.1",
@@ -2334,7 +2365,6 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=ff1b3fce5bb57fc6cc1b42604949214d3e27fdec#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -2351,7 +2381,6 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=ff1b3fce5bb57fc6cc1b42604949214d3e27fdec#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -2370,10 +2399,9 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=ff1b3fce5bb57fc6cc1b42604949214d3e27fdec#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
- "bt-hci",
- "bt-hci-driver",
+ "bt-hci 0.10.0",
+ "bt-hci-transport",
  "critical-section",
  "defmt 1.1.1",
  "embassy-nrf",
@@ -2388,7 +2416,6 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=ff1b3fce5bb57fc6cc1b42604949214d3e27fdec#ff1b3fce5bb57fc6cc1b42604949214d3e27fdec"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -3791,7 +3818,7 @@ dependencies = [
 name = "trouble-audio-example-apps"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.10.0",
  "defmt 1.1.1",
  "embassy-futures",
  "embassy-sync",
@@ -3811,7 +3838,7 @@ dependencies = [
 name = "trouble-audio-examples"
 version = "0.1.0"
 dependencies = [
- "bt-hci",
+ "bt-hci 0.10.0",
  "cortex-m",
  "cortex-m-rt",
  "cyw43",
@@ -3836,10 +3863,10 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.7.0"
-source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "aes",
- "bt-hci",
+ "bt-hci 0.10.0",
+ "bt-hci-serial",
  "cmac",
  "defmt 1.1.1",
  "embassy-futures",
@@ -3862,7 +3889,6 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.5.0"
-source = "git+https://github.com/LegitCamper/trouble?rev=679b3fd7a3d3dca1ad0ea890da0de737cecaef9e#679b3fd7a3d3dca1ad0ea890da0de737cecaef9e"
 dependencies = [
  "convert_case 0.8.0",
  "darling",
@@ -3877,7 +3903,7 @@ name = "trouble_audio"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
- "bt-hci",
+ "bt-hci 0.10.0",
  "defmt 1.1.1",
  "embassy-futures",
  "embassy-sync",

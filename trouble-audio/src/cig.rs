@@ -8,19 +8,42 @@
 //! handed to [`RxRunner::run_with_handler`](trouble_host::prelude::RxRunner::run_with_handler);
 //! anything requiring an awaited HCI command is only decided there and carried out by
 //! [`drive_cig`], which must be polled concurrently.
+//!
+//! By default this issues the plain, spec-standard `LE Set CIG Parameters`. Enable this crate's
+//! `nrf-sdc` feature if (and only if) the controller is Nordic's SoftDevice Controller: at least
+//! on the nRF54L, it rejects that command with "Unsupported Feature or Parameter Value" for
+//! otherwise spec-valid parameters, regardless of the values chosen, and Nordic's own documented
+//! workaround is to use `LE Set CIG Parameters Test` instead. That workaround isn't safe to apply
+//! unconditionally to every controller, so it's opt-in rather than this crate's default.
 
 use core::cell::RefCell;
 
-use bt_hci::cmd::le::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetCigParametersTest, LeSetupIsoDataPath};
+use bt_hci::cmd::le::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetupIsoDataPath};
+#[cfg(feature = "nrf-sdc")]
+use bt_hci::cmd::le::LeSetCigParametersTest;
+#[cfg(not(feature = "nrf-sdc"))]
+use bt_hci::cmd::le::LeSetCigParameters;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::event::le::LeCisEstablished;
-use bt_hci::param::{ConnHandle, IsoDataPathDirection, Status};
-
-/// The standard HCI transport `Data_Path_ID`, as opposed to a vendor-specific one.
-const DATA_PATH_ID_HCI: u8 = 0x00;
+#[cfg(feature = "nrf-sdc")]
+use bt_hci::param::CisConfigTest;
+#[cfg(not(feature = "nrf-sdc"))]
+use bt_hci::param::CisConfig;
+use bt_hci::param::{
+    CigId, CisConnConfig, CisId, CodecId, ConnHandle, DataPathDirection, DataPathId, ExtDuration, Framing, Packing, PhyMask, Status,
+};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
 use trouble_host::prelude::*;
+
+/// The command [`drive_cig`] issues to set up a CIG's parameters - `LE Set CIG Parameters Test`
+/// under the `nrf-sdc` feature, or the plain, spec-standard `LE Set CIG Parameters` otherwise (see
+/// the module docs for why). Public so callers can name it in their own `Controller` trait bounds
+/// (e.g. a generic `run<C>` that itself calls [`drive_cig`]) without hardcoding one or the other.
+#[cfg(feature = "nrf-sdc")]
+pub type SetCigParametersCmd<'a> = LeSetCigParametersTest<'a>;
+#[cfg(not(feature = "nrf-sdc"))]
+pub type SetCigParametersCmd<'a> = LeSetCigParameters<'a>;
 
 #[cfg(feature = "defmt")]
 use defmt::{info, warn, Debug2Format};
@@ -31,22 +54,75 @@ use crate::{
     CodingFormat,
 };
 
-/// Number of CIS this crate's CIG creation supports - matches
-/// [`bt_hci::cmd::le::LeSetCigParametersTest`] (itself hardcoded to 2, since `bt_hci::cmd!`'s
-/// params are a fixed struct) and this crate's stereo-only scope.
+/// Number of CIS this crate's CIG creation supports - purely this crate's own stereo-only scope
+/// (the underlying `LE Set CIG Parameters [Test]`/`LE Create CIS` commands take a `cis_configs`
+/// slice, so nothing upstream caps this).
 const CIS_COUNT: usize = 2;
 
-/// `Worst_Case_SCA`/`Packing` for [`LeSetCigParametersTest`]: not a per-ASE concern, so fixed here
-/// rather than threaded through the caller. `0` ("251 ppm to 500 ppm") is the safe default absent
-/// real clock-accuracy data; `0` (Sequential) is the simpler of the two packing schemes.
+/// `Worst_Case_SCA`/`Packing` for `LE Set CIG Parameters [Test]`: not a per-ASE concern, so fixed
+/// here rather than threaded through the caller. `0` ("251 ppm to 500 ppm") is the safe default
+/// absent real clock-accuracy data; Sequential is the simpler of the two packing schemes.
 const WORST_CASE_SCA: u8 = 0;
-const PACKING_SEQUENTIAL: u8 = 0;
 
-/// `Flush_Timeout` (in `ISO_Interval` units) for both directions of [`LeSetCigParametersTest`]:
-/// fixed at the minimum (1) so every subevent - including retransmissions - completes within a
-/// single ISO interval, keeping audio latency to one SDU interval rather than letting the
-/// controller spread retries across several.
+/// `Flush_Timeout` (in `ISO_Interval` units) for both directions of `LE Set CIG Parameters
+/// [Test]`: fixed at the minimum (1) so every subevent - including retransmissions - completes
+/// within a single ISO interval, keeping audio latency to one SDU interval rather than letting
+/// the controller spread retries across several.
 const FLUSH_TIMEOUT: u8 = 1;
+
+/// Converts this crate's [`PhySet`] (already a 1M/2M/Coded bitmask, bit-for-bit) to
+/// [`PhyMask`], the typed form `CisConfig`/`CisConfigTest` require.
+fn phy_mask(phy: PhySet) -> PhyMask {
+    PhyMask::new()
+        .set_le_1m_phy(matches!(phy, PhySet::M1 | PhySet::M1M2 | PhySet::M1Coded | PhySet::M1M2Coded))
+        .set_le_2m_phy(matches!(phy, PhySet::M2 | PhySet::M1M2 | PhySet::M2Coded | PhySet::M1M2Coded))
+        .set_le_coded_phy(matches!(phy, PhySet::Coded | PhySet::M1Coded | PhySet::M2Coded | PhySet::M1M2Coded))
+}
+
+/// `0` = Unframed, `1` = Framed (see [`AseQos::framing`]).
+fn framing(value: u8) -> Framing {
+    if value == 0 {
+        Framing::Unframed
+    } else {
+        Framing::Framed
+    }
+}
+
+/// Builds this ASE's entry for the standard `LE Set CIG Parameters` command - the default,
+/// spec-plain path (see the `nrf-sdc` feature docs on [`crate`] for when
+/// [`cis_config_test`] is used instead).
+#[cfg(not(feature = "nrf-sdc"))]
+fn cis_config(q: &AseQos) -> CisConfig {
+    CisConfig {
+        cis_id: CisId::new(q.cis_id),
+        max_sdu_c_to_p: q.max_sdu,
+        max_sdu_p_to_c: 0, // No peripheral-to-central traffic (Sink ASEs).
+        phy_c_to_p: phy_mask(q.phy),
+        phy_p_to_c: phy_mask(q.phy),
+        rtn_c_to_p: q.retransmission_number,
+        rtn_p_to_c: 0,
+    }
+}
+
+/// Builds this ASE's entry for `LE Set CIG Parameters Test` - the `nrf-sdc` workaround path.
+///
+/// `CisConfigTest` (as published by upstream `bt-hci` today) has no `NSE` field, even though the
+/// Core spec's Test command takes one per CIS - so unlike [`cis_config`]'s `rtn_c_to_p`, this
+/// can't actually request retransmissions; `bn_c_to_p` is fixed at 1 SDU/interval like before.
+#[cfg(feature = "nrf-sdc")]
+fn cis_config_test(q: &AseQos) -> CisConfigTest {
+    CisConfigTest {
+        cis_id: CisId::new(q.cis_id),
+        max_sdu_c_to_p: q.max_sdu,
+        max_sdu_p_to_c: 0,
+        max_pdu_c_to_p: q.max_sdu, // Unfragmented (BN=1), so Max_PDU == Max_SDU.
+        max_pdu_p_to_c: 0,
+        phy_c_to_p: phy_mask(q.phy),
+        phy_p_to_c: phy_mask(q.phy),
+        bn_c_to_p: 1,
+        bn_p_to_c: 0,
+    }
+}
 
 /// Converts a 24-bit little-endian microsecond value (as used for `SDU_Interval`/
 /// `Presentation_Delay` throughout this crate) to a plain `u32`.
@@ -107,8 +183,11 @@ enum CigAction {
     /// [`CigManager::reset`] so reconnect attempts don't hit `Command Disallowed (0x0C)` when
     /// they re-issue `LE Set CIG Parameters` with the same CIG_ID.
     RemoveCig(u8),
-    SetCigParameters(LeSetCigParametersTest),
+    /// Both ASEs' QoS, from which [`drive_cig`] builds the actual command - deferred rather than
+    /// built here since the command borrows a per-CIS slice that can't outlive this action.
+    SetCigParameters(AseQos, AseQos),
     CreateCis {
+        cig_id: u8,
         cis_0: ConnHandle,
         cis_1: ConnHandle,
         acl: ConnHandle,
@@ -207,56 +286,16 @@ impl<M: RawMutex> CigManager<M> {
         if slots.iter().any(|s| s.ase_id.is_none()) {
             return;
         }
-        // Every ASE is configured - build LE Set CIG Parameters Test from both slots' QoS. (Not
-        // the plain LE Set CIG Parameters - on at least one real controller (nRF54L's SoftDevice
-        // Controller) that command rejects this crate's otherwise spec-valid parameters with
-        // "Unsupported Feature or Parameter Value" regardless of the values chosen; the Test
-        // variant's explicit low-level scheduling fields (FT/ISO_Interval/NSE/Max_PDU/BN, in
-        // place of the auto-derived Max_Transport_Latency) sidestep whatever internal derivation
-        // is failing there. This is Nordic's own documented workaround, and since it's a
-        // standard Bluetooth 5.2 command (not vendor-specific), it isn't nRF-specific to use.)
+        // Every ASE is configured - queue LE Set CIG Parameters[/Test] for `drive_cig` to build
+        // and send (see the module docs for why the command variant is feature-gated).
         let (Some(q0), Some(q1)) = (slots[0].qos, slots[1].qos) else { return };
         *self.cig_id.borrow_mut() = Some(q0.cig_id);
         debug_assert_eq!(q0.cig_id, q1.cig_id, "both ASEs of one CIG must share a CIG_ID");
         debug_assert_eq!(q0.sdu_interval, q1.sdu_interval, "both ASEs of one CIG must share an SDU interval");
         // ISO_Interval is in 1.25ms units; unframed PDUs require it to be an integer multiple of
         // SDU_Interval, and this crate always requests a 1:1 mapping.
-        let iso_interval_us = u24_le_to_u32(q0.sdu_interval);
-        debug_assert_eq!(iso_interval_us % 1250, 0, "SDU_Interval must be a multiple of 1.25ms");
-        let iso_interval = (iso_interval_us / 1250) as u16;
-        let params = LeSetCigParametersTest::new(
-            q0.cig_id,
-            q0.sdu_interval,
-            q0.sdu_interval, // No peripheral-to-central traffic (Sink ASEs): same interval, 0 SDU.
-            FLUSH_TIMEOUT,
-            FLUSH_TIMEOUT,
-            iso_interval,
-            WORST_CASE_SCA,
-            PACKING_SEQUENTIAL,
-            q0.framing,
-            CIS_COUNT as u8,
-            q0.cis_id,
-            q0.retransmission_number + 1, // NSE: one initial transmission plus RTN retries.
-            q0.max_sdu,
-            0, // max_sdu_p_to_c
-            q0.max_sdu, // max_pdu_c_to_p: unfragmented (BN=1), so Max_PDU == Max_SDU.
-            0, // max_pdu_p_to_c
-            q0.phy as u8,
-            q0.phy as u8,
-            1, // bn_c_to_p: one SDU burst per ISO interval.
-            0, // bn_p_to_c
-            q1.cis_id,
-            q1.retransmission_number + 1,
-            q1.max_sdu,
-            0,
-            q1.max_sdu,
-            0,
-            q1.phy as u8,
-            q1.phy as u8,
-            1,
-            0,
-        );
-        let _ = self.actions.try_send(CigAction::SetCigParameters(params));
+        debug_assert_eq!(u24_le_to_u32(q0.sdu_interval) % 1250, 0, "SDU_Interval must be a multiple of 1.25ms");
+        let _ = self.actions.try_send(CigAction::SetCigParameters(q0, q1));
     }
 
     /// Called by [`drive_cig`] once `LE Set CIG Parameters` returns, to record the
@@ -271,7 +310,15 @@ impl<M: RawMutex> CigManager<M> {
             warn!("[cig] LE Set CIG Parameters completed before an ACL handle was set");
             return;
         };
+        let Some(cig_id) = *self.cig_id.borrow() else {
+            #[cfg(feature = "log")]
+            log::warn!("[cig] LE Set CIG Parameters completed before a CIG_ID was recorded");
+            #[cfg(feature = "defmt")]
+            warn!("[cig] LE Set CIG Parameters completed before a CIG_ID was recorded");
+            return;
+        };
         let _ = self.actions.try_send(CigAction::CreateCis {
+            cig_id,
             cis_0: connection_handle_0,
             cis_1: connection_handle_1,
             acl,
@@ -372,8 +419,8 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
 pub async fn drive_cig<C, M: RawMutex>(stack: &Stack<'_, C, impl PacketPool>, manager: &CigManager<M>) -> !
 where
     C: Controller
-        + ControllerCmdSync<LeSetCigParametersTest>
-        + ControllerCmdAsync<LeCreateCis>
+        + for<'a> ControllerCmdSync<SetCigParametersCmd<'a>>
+        + for<'a> ControllerCmdAsync<LeCreateCis<'a>>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
         + ControllerCmdSync<LeRemoveIsoDataPath>
         + ControllerCmdSync<LeRemoveCig>,
@@ -384,23 +431,51 @@ where
             CigAction::RemoveCig(cig_id) => {
                 // Errors are expected on the very first connection (no CIG yet) or if the
                 // controller already removed the CIG when the ACL dropped. Ignore them.
-                let _ = iso.command(LeRemoveCig::new(cig_id)).await;
+                let _ = iso.command(LeRemoveCig::new(CigId::new(cig_id))).await;
                 #[cfg(feature = "log")]
                 log::info!("[cig] removed CIG {cig_id} (or it was already gone)");
                 #[cfg(feature = "defmt")]
                 info!("[cig] removed CIG {} (or it was already gone)", cig_id);
             }
-            CigAction::SetCigParameters(params) => match iso.command(params).await {
-                Ok(ret) => manager.cig_parameters_set(ret.connection_handle_0, ret.connection_handle_1),
-                Err(_e) => {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cig] LE Set CIG Parameters Test failed: {_e:?}");
-                    #[cfg(feature = "defmt")]
-                    warn!("[cig] LE Set CIG Parameters Test failed: {}", Debug2Format(&_e));
+            CigAction::SetCigParameters(q0, q1) => {
+                let sdu_interval_us = u24_le_to_u32(q0.sdu_interval);
+                let sdu_interval = ExtDuration::from_u32(sdu_interval_us);
+                // ISO_Interval is in 1.25ms units; unframed PDUs require it to be an integer
+                // multiple of SDU_Interval, and this crate always requests a 1:1 mapping (see the
+                // matching `debug_assert_eq!` in `CigManager::configure`).
+                let iso_interval = (sdu_interval_us / 1250) as u16;
+                #[cfg(feature = "nrf-sdc")]
+                let cis_configs = [cis_config_test(&q0), cis_config_test(&q1)];
+                #[cfg(not(feature = "nrf-sdc"))]
+                let cis_configs = [cis_config(&q0), cis_config(&q1)];
+                let cmd = SetCigParametersCmd::new(
+                    CigId::new(q0.cig_id),
+                    sdu_interval,
+                    sdu_interval, // No peripheral-to-central traffic (Sink ASEs): same interval, 0 SDU.
+                    FLUSH_TIMEOUT,
+                    FLUSH_TIMEOUT,
+                    iso_interval,
+                    WORST_CASE_SCA,
+                    Packing::Sequential,
+                    framing(q0.framing),
+                    &cis_configs,
+                );
+                match iso.command(cmd).await {
+                    Ok(ret) => manager.cig_parameters_set(ret.cis_handles[0], ret.cis_handles[1]),
+                    Err(_e) => {
+                        #[cfg(feature = "log")]
+                        log::warn!("[cig] LE Set CIG Parameters failed: {_e:?}");
+                        #[cfg(feature = "defmt")]
+                        warn!("[cig] LE Set CIG Parameters failed: {}", Debug2Format(&_e));
+                    }
                 }
-            },
-            CigAction::CreateCis { cis_0, cis_1, acl } => {
-                if let Err(_e) = iso.command_async(LeCreateCis::new(CIS_COUNT as u8, cis_0, acl, cis_1, acl)).await {
+            }
+            CigAction::CreateCis { cig_id, cis_0, cis_1, acl } => {
+                let cis_configs = [
+                    CisConnConfig { cis_handle: cis_0, acl_handle: acl },
+                    CisConnConfig { cis_handle: cis_1, acl_handle: acl },
+                ];
+                if let Err(_e) = iso.command_async(LeCreateCis::new(CigId::new(cig_id), &cis_configs)).await {
                     #[cfg(feature = "log")]
                     log::warn!("[cig] LE Create CIS failed: {_e:?}");
                     #[cfg(feature = "defmt")]
@@ -411,12 +486,14 @@ where
                 let result = iso
                     .command(LeSetupIsoDataPath::new(
                         handle,
-                        IsoDataPathDirection::Input,
-                        DATA_PATH_ID_HCI,
-                        u8::from(CodingFormat::Transparent),
-                        0,
-                        0,
-                        [0, 0, 0],
+                        DataPathDirection::Input,
+                        DataPathId::HCI,
+                        CodecId {
+                            coding_format: u8::from(CodingFormat::Transparent),
+                            company_id: 0,
+                            vendor_specific_codec_id: 0,
+                        },
+                        ExtDuration::from_u32(0),
                         &[],
                     ))
                     .await;
@@ -498,14 +575,15 @@ mod tests {
         // The second ASE completes the stereo pair - CIG creation starts.
         manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
         match manager.actions.try_receive() {
-            Ok(CigAction::SetCigParameters(_)) => {}
+            Ok(CigAction::SetCigParameters(_, _)) => {}
             other => panic!("expected SetCigParameters, got {:?}", other.is_ok()),
         }
 
         // Simulate `drive_cig` completing LE Set CIG Parameters.
         manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
         match manager.actions.try_receive() {
-            Ok(CigAction::CreateCis { cis_0, cis_1, acl }) => {
+            Ok(CigAction::CreateCis { cig_id, cis_0, cis_1, acl }) => {
+                assert_eq!(cig_id, 7);
                 assert_eq!(cis_0.raw(), 0x10);
                 assert_eq!(cis_1.raw(), 0x11);
                 assert_eq!(acl.raw(), 0x05);

@@ -2,7 +2,7 @@
 //! instead of a raw HCI socket - see `audio_sink.rs` and the crate README for details.
 
 use bt_hci::controller::ExternalController;
-use bt_hci::transport::SerialTransport;
+use bt_hci_serial::SerialTransport;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use linux_examples::bond_store::source_bond_store;
 use tokio::time::Duration;
