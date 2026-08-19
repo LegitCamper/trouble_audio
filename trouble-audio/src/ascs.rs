@@ -9,7 +9,6 @@
 //! time (the common case for LE Audio unicast sinks/sources such as earbuds), so each ASE slot
 //! is a single, ordinary characteristic rather than a per-connection one.
 
-use alloc::boxed::Box;
 use alloc::vec::Vec as AVec;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
@@ -20,10 +19,8 @@ use trouble_host::{
     types::gatt_traits::*,
 };
 
-#[cfg(feature = "defmt")]
-use defmt::warn;
 
-use crate::{CodecId, LeAudioServerService, MAX_SERVICES};
+use crate::{CodecId, DiscoveryError, LeAudioServerService, MAX_SERVICES};
 
 fn phy_set_from_u8(value: u8) -> Result<PhySet, FromGattError> {
     match value {
@@ -65,31 +62,30 @@ impl AscsClient {
     /// rather than needing them sequenced.
     pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client
-            .services_by_uuid(&Uuid::from(service::AUDIO_STREAM_CONTROL))
-            .await
-            .unwrap();
-        let handle = services.first().unwrap();
+    ) -> Result<Self, DiscoveryError<T::Error>> {
+        let services = client.services_by_uuid(&Uuid::from(service::AUDIO_STREAM_CONTROL)).await?;
+        let handle = services.first().ok_or(DiscoveryError::ServiceNotFound)?;
 
         let ase_control_point = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::ASE_CONTROL_POINT))
             .await
-            .expect("Ase Control point must exist on the server");
+            .map_err(|_| DiscoveryError::CharacteristicNotFound)?;
 
-        let ases: Vec<Characteristic<[u8]>, MAX_ASCS_CHARACTERISTICS> = client.characteristics(handle).await.unwrap();
+        let ases: Vec<Characteristic<[u8]>, MAX_ASCS_CHARACTERISTICS> = client.characteristics(handle).await?;
 
-        // One of the following must be implemented on the server
-        assert!(
-            ases.iter()
-                .any(|c| c.uuid == Uuid::from(characteristic::SINK_ASE) || c.uuid == Uuid::from(characteristic::SOURCE_ASE))
-        );
+        // At least one Sink or Source ASE is mandatory.
+        if !ases
+            .iter()
+            .any(|c| c.uuid == Uuid::from(characteristic::SINK_ASE) || c.uuid == Uuid::from(characteristic::SOURCE_ASE))
+        {
+            return Err(DiscoveryError::CharacteristicNotFound);
+        }
 
-        Self {
+        Ok(Self {
             handle: handle.clone(),
             ase_control_point,
             ases,
-        }
+        })
     }
 
     /// This server's Sink ASE characteristics (one per channel for a stereo sink).
@@ -110,6 +106,17 @@ pub enum AseDirection {
     Sink,
 }
 
+/// Backing-store size that fits any spec-legal ASE characteristic value: ASE_ID + ASE_State (2)
+/// + CodecConfigured's fixed parameters (25) + a maximal Codec_Specific_Configuration (its length
+/// field is one octet, so 255).
+pub const ASE_STORE_SIZE: usize = 282;
+
+/// Backing-store size that fits any ASE Control Point write: ATT caps a characteristic value at
+/// 512 octets, and a maximal multi-ASE Config Codec operation would exceed that - so the ATT cap
+/// is the bound. A device only expecting small LC3 configs can pass a smaller store; oversized
+/// writes are then rejected at the ATT layer.
+pub const ASE_CONTROL_POINT_STORE_SIZE: usize = 512;
+
 /// A Gatt service for controlling unicast audio streams.
 ///
 /// `MAX_ASES` is the max number of sink ASEs plus source ASEs the device supports for its one
@@ -124,20 +131,18 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
     /// Create a new Ascs Gatt Service
     ///
     /// `ases` describes the initial (Idle) ASE endpoints to expose, tagged by direction.
+    /// `ase_stores` must yield one backing buffer per entry in `ases` (see [`ASE_STORE_SIZE`]/
+    /// [`ASE_CONTROL_POINT_STORE_SIZE`] for sizing).
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
         ases: Vec<AseType, MAX_ASES>,
+        control_point_store: &'a mut [u8],
+        ase_stores: impl IntoIterator<Item = &'a mut [u8]>,
     ) -> Self {
         let mut service = table.add_service(Service::new(service::AUDIO_STREAM_CONTROL));
 
         // The Common Audio Profile requires an encrypted link for the ASE Control Point and
         // every ASE characteristic.
-        //
-        // Each characteristic needs `&'static mut [u8]` backing storage.  Using `Box::leak`
-        // gives one independent allocation per call, so:
-        //   - calling `new()` more than once doesn't panic (unlike a `StaticCell`), and
-        //   - each ASE in the loop gets its own backing buffer (a `static` inside a loop is the
-        //     same static on every iteration, so the second iteration's `.init()` would panic).
         let ase_control_point_char = service
             .add_characteristic(
                 characteristic::ASE_CONTROL_POINT,
@@ -147,24 +152,21 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
                     CharacteristicProp::Notify,
                 ],
                 AseControlPointOperation::default(),
-                Box::leak(Box::new([0u8; 90])),
+                control_point_store,
             )
             .write_permission(PermissionLevel::EncryptionRequired)
             .build();
 
+        let mut ase_stores = ase_stores.into_iter();
         let mut ase_chars = Vec::new();
         for ase in ases.iter() {
             let (direction, uuid, value) = match ase {
                 AseType::Source(ase) => (AseDirection::Source, characteristic::SOURCE_ASE, ase.clone()),
                 AseType::Sink(ase) => (AseDirection::Sink, characteristic::SINK_ASE, ase.clone()),
             };
+            let store = ase_stores.next().expect("one ASE store per ASE endpoint required");
             let characteristic = service
-                .add_characteristic(
-                    uuid,
-                    &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                    value,
-                    Box::leak(Box::new([0u8; 90])),
-                )
+                .add_characteristic(uuid, &[CharacteristicProp::Read, CharacteristicProp::Notify], value, store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build();
             ase_chars
@@ -211,7 +213,7 @@ impl<const MAX_ASES: usize, P: PacketPool> LeAudioServerService<P> for AscsServe
                 Ok(_) => Ok(()),
                 Err(_) => {
                     #[cfg(feature = "defmt")]
-                    warn!("[ascs] malformed ASE Control Point write");
+                    defmt::warn!("[ascs] malformed ASE Control Point write");
                     Err(AttErrorCode::WRITE_REQUEST_REJECTED)
                 }
             });
@@ -615,8 +617,10 @@ pub struct AseControlPointOperation {
     encoded: AVec<u8>,
 }
 
+/// A decoded ASE Control Point operation. Obtain via [`AseControlPointOperation::operation`] -
+/// decode once and pass this around, rather than re-decoding per accessor.
 #[derive(Clone)]
-enum Operation {
+pub enum Operation {
     ConfigCodec(AVec<ConfigCodecEntry>),
     ConfigQos(AVec<ConfigQosEntry>),
     Enable(AVec<AseMetadataEntry>),
@@ -628,7 +632,8 @@ enum Operation {
 }
 
 impl Operation {
-    fn opcode(&self) -> u8 {
+    /// This operation's Opcode (Bluetooth ASCS 5, Table 5.1).
+    pub fn opcode(&self) -> u8 {
         match self {
             Self::ConfigCodec(_) => 0x01,
             Self::ConfigQos(_) => 0x02,
@@ -641,7 +646,8 @@ impl Operation {
         }
     }
 
-    fn ase_ids(&self) -> AVec<u8> {
+    /// The ASE_IDs this operation applies to.
+    pub fn ase_ids(&self) -> AVec<u8> {
         match self {
             Self::ConfigCodec(v) => v.iter().map(|e| e.0).collect(),
             Self::ConfigQos(v) => v.iter().map(|e| e.0).collect(),
@@ -652,9 +658,18 @@ impl Operation {
         }
     }
 
+    fn ase_count(&self) -> usize {
+        match self {
+            Self::ConfigCodec(v) => v.len(),
+            Self::ConfigQos(v) => v.len(),
+            Self::Enable(v) | Self::UpdateMetadata(v) => v.len(),
+            Self::ReceiverStartReady(v) | Self::Disable(v) | Self::ReceiverStopReady(v) | Self::Release(v) => v.len(),
+        }
+    }
+
     fn encode(&self, out: &mut AVec<u8>) {
         out.push(self.opcode());
-        out.push(self.ase_ids().len() as u8);
+        out.push(self.ase_count() as u8);
         match self {
             Self::ConfigCodec(entries) => {
                 for (ase_id, target_latency, target_phy, codec_id, config) in entries {
@@ -815,45 +830,12 @@ impl AseControlPointOperation {
         self.encoded.first().copied().unwrap_or(0)
     }
 
-    /// The ASE_IDs this operation applies to.
-    pub fn ase_ids(&self) -> AVec<u8> {
-        self.operation().map(|op| op.ase_ids()).unwrap_or_default()
-    }
-
-    fn operation(&self) -> Result<Operation, FromGattError> {
+    /// Decodes this write into an [`Operation`]. Decode once and pass the result to everything
+    /// that needs it ([`crate::cis::CisManager::observe_operation`],
+    /// [`crate::bap::drive_ase_control_point`]) - each entry owns copies of its variable-length
+    /// operands, so repeated calls repeat that work.
+    pub fn operation(&self) -> Result<Operation, FromGattError> {
         Operation::decode(&self.encoded)
-    }
-
-    /// The decoded entries, if this is a Config Codec operation.
-    pub fn as_config_codec(&self) -> Option<AVec<ConfigCodecEntry>> {
-        match self.operation().ok()? {
-            Operation::ConfigCodec(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    /// The decoded entries, if this is a Config QoS operation.
-    pub fn as_config_qos(&self) -> Option<AVec<ConfigQosEntry>> {
-        match self.operation().ok()? {
-            Operation::ConfigQos(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    /// The decoded entries, if this is an Enable operation.
-    pub fn as_enable(&self) -> Option<AVec<AseMetadataEntry>> {
-        match self.operation().ok()? {
-            Operation::Enable(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    /// The decoded entries, if this is an Update Metadata operation.
-    pub fn as_update_metadata(&self) -> Option<AVec<AseMetadataEntry>> {
-        match self.operation().ok()? {
-            Operation::UpdateMetadata(v) => Some(v),
-            _ => None,
-        }
     }
 }
 

@@ -59,6 +59,13 @@ trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
 trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
   "log",
 ] }
+trouble-host = { workspace = true, features = ["derive", "gatt", "peripheral", "scan", "security", "default-packet-pool"] }
+# For `hci_bridge`: cyw43 still speaks bt-hci 0.9's typed Transport, ExternalController needs
+# bt-hci-transport 0.1's byte-level one.
+bt-hci09 = { package = "bt-hci", version = "0.9" }
+bt-hci-transport = "0.1"
+embedded-io = "0.7"
+embedded-io-async = "0.7"
 
 [build-dependencies]
 reqwest = { version = "0.12.9", features = ["blocking"] }

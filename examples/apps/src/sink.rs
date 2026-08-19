@@ -15,6 +15,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{Either, select, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
+use trouble_audio::ascs::{ASE_CONTROL_POINT_STORE_SIZE, ASE_STORE_SIZE};
 use trouble_audio::cis;
 use trouble_audio::prelude::*;
 pub use trouble_host::prelude::BondInformation;
@@ -64,6 +65,9 @@ pub struct PeripheralConfigStorage {
     sink_audio_locations: [u8; 90],
     source_audio_locations: [u8; 90],
     available_audio_contexts: [u8; 90],
+    ase_control_point: [u8; ASE_CONTROL_POINT_STORE_SIZE],
+    // One per ASE endpoint - four covers the crate's stereo scope in both directions.
+    ase_stores: [[u8; ASE_STORE_SIZE]; 4],
 }
 
 impl Default for PeripheralConfigStorage {
@@ -74,6 +78,8 @@ impl Default for PeripheralConfigStorage {
             sink_audio_locations: [0; 90],
             source_audio_locations: [0; 90],
             available_audio_contexts: [0; 90],
+            ase_control_point: [0; ASE_CONTROL_POINT_STORE_SIZE],
+            ase_stores: [[0; ASE_STORE_SIZE]; 4],
         }
     }
 }
@@ -107,7 +113,11 @@ impl<'a> PeripheralConfig<'a> {
                 &self.available_audio_contexts,
                 &mut storage.available_audio_contexts[..],
             )
-            .add_ascs(ases)
+            .add_ascs(
+                ases,
+                &mut storage.ase_control_point[..],
+                storage.ase_stores.iter_mut().map(|s| &mut s[..]),
+            )
             .add_cis_manager(cis_manager)
             .build()
     }

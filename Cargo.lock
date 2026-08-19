@@ -3839,6 +3839,8 @@ name = "trouble-audio-examples"
 version = "0.1.0"
 dependencies = [
  "bt-hci 0.10.0",
+ "bt-hci 0.9.0",
+ "bt-hci-transport",
  "cortex-m",
  "cortex-m-rt",
  "cyw43",
@@ -3850,6 +3852,8 @@ dependencies = [
  "embassy-time",
  "embassy-usb-logger",
  "embedded-alloc",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "futures",
  "log",
  "panic-probe",
@@ -3857,6 +3861,7 @@ dependencies = [
  "reqwest",
  "static_cell",
  "trouble-audio-example-apps",
+ "trouble-host",
  "trouble_audio",
 ]
 

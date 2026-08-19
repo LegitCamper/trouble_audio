@@ -12,14 +12,13 @@ use trouble_host::{
 };
 
 use crate::{
-    ascs::{Ase, AscsServer, AseControlPointNotification, AseControlPointOperation, AseState},
+    ascs::{Ase, AscsServer, AseControlPointNotification, AseState, Operation},
     MAX_SERVICES,
 };
 
 /// ASE Control Point Response_Code values (Bluetooth ASCS 5, Table 5.2). Not exhaustive - just
 /// enough for the simplified state machine below to report success/failure.
 const RESPONSE_SUCCESS: u8 = 0x00;
-const RESPONSE_UNSPECIFIED_ERROR: u8 = 0x01;
 const RESPONSE_INVALID_ASE_ID: u8 = 0x02;
 const RESPONSE_INVALID_ASE_STATE_MACHINE_TRANSITION: u8 = 0x03;
 
@@ -55,7 +54,7 @@ pub async fn drive_ase_control_point<
     server: &AttributeServer<'_, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
     ascs: &AscsServer<MAX_ASES>,
     conn: &GattConnection<'_, '_, P>,
-    operation: &AseControlPointOperation,
+    operation: &Operation,
 ) -> AseControlPointNotification {
     let mut results: AVec<(u8, u8, u8)> = AVec::new();
 
@@ -68,22 +67,15 @@ pub async fn drive_ase_control_point<
                     let response = (|current_state: Result<AseState, _>| -> Result<AseState, u8> { $body(current_state) })(current_state);
                     match response {
                         Ok(new_state) => {
-                            #[cfg(feature = "log")]
-                            log::info!("[bap] ase {} -> {:?}", ase_id, new_state);
-                            #[cfg(feature = "defmt")]
-                            defmt::info!("[bap] ase {} -> {}", ase_id, new_state);
+                            info!("[bap] ase {} -> {:?}", ase_id, new_state);
                             let new_ase = Ase::with_state(ase_id, new_state);
                             let subscribed = characteristic.should_notify(conn);
                             let notify_result = characteristic.notify(conn, &new_ase, true).await;
-                            #[cfg(feature = "log")]
-                            log::info!(
-                                "[bap] ase {} notified, central subscribed={}, notify result={:?}",
-                                ase_id, subscribed, notify_result.is_ok()
-                            );
-                            #[cfg(feature = "defmt")]
-                            defmt::info!(
+                            info!(
                                 "[bap] ase {} notified, central subscribed={}, notify result={}",
-                                ase_id, subscribed, notify_result.is_ok()
+                                ase_id,
+                                subscribed,
+                                notify_result.is_ok()
                             );
                             results.push((ase_id, RESPONSE_SUCCESS, 0));
                         }
@@ -95,22 +87,12 @@ pub async fn drive_ase_control_point<
         }};
     }
 
-    const OP_CONFIG_CODEC: u8 = 0x01;
-    const OP_CONFIG_QOS: u8 = 0x02;
-    const OP_ENABLE: u8 = 0x03;
-    const OP_RECEIVER_START_READY: u8 = 0x04;
-    const OP_DISABLE: u8 = 0x05;
-    const OP_RECEIVER_STOP_READY: u8 = 0x06;
-    const OP_UPDATE_METADATA: u8 = 0x07;
-    const OP_RELEASE: u8 = 0x08;
-
-    match operation.opcode() {
-        OP_CONFIG_CODEC => {
-            for (ase_id, _target_latency, target_phy, codec_id, config) in operation.as_config_codec().unwrap_or_default()
-            {
-                transition!(ase_id, |_current| Ok(AseState::CodecConfigured {
+    match operation {
+        Operation::ConfigCodec(entries) => {
+            for (ase_id, _target_latency, target_phy, codec_id, config) in entries.iter() {
+                transition!(*ase_id, |_current| Ok(AseState::CodecConfigured {
                     framing: 0,
-                    preferred_phy: target_phy,
+                    preferred_phy: *target_phy,
                     preferred_retransmission_number: 13,
                     max_transport_latency: 100,
                     presentation_delay_min: [0, 0, 0],
@@ -119,39 +101,39 @@ pub async fn drive_ase_control_point<
                     // ASEs after Enable instead of creating a CIS - span the allowed range instead.
                     preferred_presentation_delay_min: [0, 0, 0],
                     preferred_presentation_delay_max: [0x40, 0x9C, 0],
-                    codec_id,
+                    codec_id: *codec_id,
                     codec_specific_configuration: config.clone(),
                 }));
             }
         }
-        OP_CONFIG_QOS => {
+        Operation::ConfigQos(entries) => {
             for (ase_id, cig_id, cis_id, sdu_interval, framing, phy, max_sdu, rtn, max_latency, delay) in
-                operation.as_config_qos().unwrap_or_default()
+                entries.iter()
             {
-                transition!(ase_id, |_current| Ok(AseState::QosConfigured {
-                    cig_id,
-                    cis_id,
-                    sdu_interval,
-                    framing,
-                    phy,
-                    max_sdu,
-                    retransmission_number: rtn,
-                    max_transport_latency: max_latency,
-                    presentation_delay: delay,
+                transition!(*ase_id, |_current| Ok(AseState::QosConfigured {
+                    cig_id: *cig_id,
+                    cis_id: *cis_id,
+                    sdu_interval: *sdu_interval,
+                    framing: *framing,
+                    phy: *phy,
+                    max_sdu: *max_sdu,
+                    retransmission_number: *rtn,
+                    max_transport_latency: *max_latency,
+                    presentation_delay: *delay,
                 }));
             }
         }
-        OP_ENABLE => {
-            for (ase_id, metadata) in operation.as_enable().unwrap_or_default() {
-                transition!(ase_id, |current: Result<AseState, _>| match current {
+        Operation::Enable(entries) => {
+            for (ase_id, metadata) in entries.iter() {
+                transition!(*ase_id, |current: Result<AseState, _>| match current {
                     Ok(AseState::QosConfigured { cig_id, cis_id, .. }) =>
                         Ok(AseState::Enabling { cig_id, cis_id, metadata: metadata.clone() }),
                     _ => Err(RESPONSE_INVALID_ASE_STATE_MACHINE_TRANSITION),
                 });
             }
         }
-        OP_RECEIVER_START_READY => {
-            for ase_id in operation.ase_ids() {
+        Operation::ReceiverStartReady(ids) => {
+            for &ase_id in ids.iter() {
                 transition!(ase_id, |current: Result<AseState, _>| match current {
                     Ok(AseState::Enabling { cig_id, cis_id, metadata }) =>
                         Ok(AseState::Streaming { cig_id, cis_id, metadata }),
@@ -159,9 +141,9 @@ pub async fn drive_ase_control_point<
                 });
             }
         }
-        OP_UPDATE_METADATA => {
-            for (ase_id, metadata) in operation.as_update_metadata().unwrap_or_default() {
-                transition!(ase_id, |current: Result<AseState, _>| match current {
+        Operation::UpdateMetadata(entries) => {
+            for (ase_id, metadata) in entries.iter() {
+                transition!(*ase_id, |current: Result<AseState, _>| match current {
                     Ok(AseState::Enabling { cig_id, cis_id, .. }) =>
                         Ok(AseState::Enabling { cig_id, cis_id, metadata: metadata.clone() }),
                     Ok(AseState::Streaming { cig_id, cis_id, .. }) =>
@@ -170,8 +152,8 @@ pub async fn drive_ase_control_point<
                 });
             }
         }
-        OP_DISABLE | OP_RECEIVER_STOP_READY => {
-            for ase_id in operation.ase_ids() {
+        Operation::Disable(ids) | Operation::ReceiverStopReady(ids) => {
+            for &ase_id in ids.iter() {
                 // Real CIS/ISO teardown isn't modeled here, and `Enabling`/`Streaming` don't
                 // retain the QoS parameters needed to go back to `QosConfigured` (they aren't
                 // part of those states' Additional_ASE_Parameters), so this goes straight to
@@ -182,14 +164,9 @@ pub async fn drive_ase_control_point<
                 });
             }
         }
-        OP_RELEASE => {
-            for ase_id in operation.ase_ids() {
+        Operation::Release(ids) => {
+            for &ase_id in ids.iter() {
                 transition!(ase_id, |_current| Ok(AseState::Idle));
-            }
-        }
-        _ => {
-            for ase_id in operation.ase_ids() {
-                results.push((ase_id, RESPONSE_UNSPECIFIED_ERROR, 0));
             }
         }
     }
@@ -220,14 +197,9 @@ pub async fn notify_ase_streaming<
     };
     let new_ase = Ase::with_state(ase_id, AseState::Streaming { cig_id, cis_id, metadata });
     let notify_result = characteristic.notify(conn, &new_ase, true).await;
-    #[cfg(feature = "log")]
-    log::info!(
-        "[bap] ase {} -> Streaming (autonomous, CIS established), notify result={:?}",
-        ase_id, notify_result.is_ok()
-    );
-    #[cfg(feature = "defmt")]
-    defmt::info!(
+    info!(
         "[bap] ase {} -> Streaming (autonomous, CIS established), notify result={}",
-        ase_id, notify_result.is_ok()
+        ase_id,
+        notify_result.is_ok()
     );
 }

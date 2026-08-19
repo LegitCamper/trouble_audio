@@ -22,25 +22,30 @@ use heapless::Vec as HVec;
 pub const MAX_ISO_PACKET_LEN: usize = 8 + 160;
 
 /// Builds one non-timestamped, "Complete boundary" HCI ISO Data packet - Bluetooth Core 6 Vol 4
-/// Part E §5.4.5. `buf` is overwritten and must outlive the returned `IsoPacket`.
+/// Part E §5.4.5. `buf` is overwritten and must outlive the returned `IsoPacket`. `None` if
+/// `payload` exceeds what [`MAX_ISO_PACKET_LEN`] leaves after the 8 header octets.
 pub fn build_packet<'a>(
     buf: &'a mut HVec<u8, MAX_ISO_PACKET_LEN>,
     cis_handle: ConnHandle,
     sequence_num: u16,
     payload: &[u8],
-) -> IsoPacket<'a> {
+) -> Option<IsoPacket<'a>> {
     const PB_COMPLETE: u16 = 0b10;
+    if payload.len() > MAX_ISO_PACKET_LEN - 8 {
+        return None;
+    }
     let handle_word = (cis_handle.raw() & 0x0fff) | (PB_COMPLETE << 12);
     let data_load_len = 4 + payload.len();
 
     buf.clear();
+    // The bound check above makes every push infallible.
     buf.extend_from_slice(&handle_word.to_le_bytes()).unwrap();
     buf.extend_from_slice(&(data_load_len as u16).to_le_bytes()).unwrap();
     buf.extend_from_slice(&sequence_num.to_le_bytes()).unwrap();
     buf.extend_from_slice(&(payload.len() as u16).to_le_bytes()).unwrap();
     buf.extend_from_slice(payload).unwrap();
 
-    IsoPacket::from_hci_bytes(buf).expect("a packet this module just built always parses").0
+    Some(IsoPacket::from_hci_bytes(buf).expect("a packet this module just built always parses").0)
 }
 
 /// Per-CIS `ISO_SDU_Sequence_Number` (Core 6 Vol 6 Part G §1/3): the host is only required to send
@@ -71,10 +76,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_packet_rejects_a_payload_that_cannot_fit() {
+        let mut buf = HVec::new();
+        let payload = [0u8; MAX_ISO_PACKET_LEN - 7];
+        assert!(build_packet(&mut buf, ConnHandle::new(0x11), 0, &payload).is_none());
+    }
+
+    #[test]
     fn build_packet_round_trips_expected_header_and_payload() {
         let mut buf = HVec::new();
         let payload = [0xAA, 0xBB, 0xCC];
-        let packet = build_packet(&mut buf, ConnHandle::new(0x11), 42, &payload);
+        let packet = build_packet(&mut buf, ConnHandle::new(0x11), 42, &payload).unwrap();
 
         assert_eq!(packet.handle().raw(), 0x11);
         assert_eq!(packet.boundary_flag(), IsoPacketBoundary::Complete);

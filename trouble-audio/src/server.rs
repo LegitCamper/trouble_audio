@@ -7,8 +7,6 @@ use trouble_host::{
     prelude::{service, AsGatt, AttErrorCode, AttributeServer, AttributeTable, DefaultPacketPool, PacketPool},
 };
 
-#[cfg(feature = "defmt")]
-use defmt::*;
 
 use alloc::vec::Vec as AVec;
 
@@ -182,8 +180,15 @@ where
     }
 
     /// Adds the (optional) Audio Stream Control service with the given initial ASEs.
-    pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>) -> Self {
-        let ascs = AscsServer::new(&mut self.table, ases);
+    /// `ase_stores` must yield one backing buffer per entry in `ases` - see
+    /// [`crate::ascs::ASE_STORE_SIZE`]/[`crate::ascs::ASE_CONTROL_POINT_STORE_SIZE`] for sizing.
+    pub fn add_ascs(
+        mut self,
+        ases: Vec<AseType, MAX_ASES>,
+        control_point_store: &'a mut [u8],
+        ase_stores: impl IntoIterator<Item = &'a mut [u8]>,
+    ) -> Self {
+        let ascs = AscsServer::new(&mut self.table, ases, control_point_store, ase_stores);
         self.ascs = Some(ascs);
         self
     }
@@ -498,7 +503,7 @@ where
                     mcs::drive_media_control_point(&self.server, mcs, conn, &operation).await;
                 } else {
                     #[cfg(feature = "defmt")]
-                    warn!("[le audio] malformed Media Control Point write");
+                    defmt::warn!("[le audio] malformed Media Control Point write");
                 }
                 return true;
             }
@@ -607,7 +612,7 @@ where
                     tbs::drive_call_control_point(&self.server, tbs, conn, &operation).await;
                 } else {
                     #[cfg(feature = "defmt")]
-                    warn!("[le audio] malformed Call Control Point write");
+                    defmt::warn!("[le audio] malformed Call Control Point write");
                 }
                 return true;
             }
@@ -624,7 +629,7 @@ where
                     ots::drive_oacp(&self.server, ots, conn, &operation).await;
                 } else {
                     #[cfg(feature = "defmt")]
-                    warn!("[le audio] malformed Object Action Control Point write");
+                    defmt::warn!("[le audio] malformed Object Action Control Point write");
                 }
                 return true;
             }
@@ -638,7 +643,7 @@ where
                     ots::drive_olcp(&self.server, ots, conn, &operation).await;
                 } else {
                     #[cfg(feature = "defmt")]
-                    warn!("[le audio] malformed Object List Control Point write");
+                    defmt::warn!("[le audio] malformed Object List Control Point write");
                 }
                 return true;
             }
@@ -651,9 +656,10 @@ where
                     Ok(reply) => reply.send().await,
                     Err(_) => return true,
                 }
-                if let Ok(operation) = operation {
+                // Decode the operation once here; both consumers below take the decoded form.
+                if let Some(operation) = operation.ok().and_then(|op| op.operation().ok()) {
                     #[cfg(feature = "defmt")]
-                    debug!("[le audio] ASE Control Point write: {}", operation);
+                    defmt::debug!("[le audio] ASE Control Point write: opcode {}", operation.opcode());
                     if let Some(cis) = self.cis {
                         cis.observe_operation(&self.server, ascs, &operation);
                     }
@@ -668,7 +674,7 @@ where
                         .await;
                 } else {
                     #[cfg(feature = "defmt")]
-                    warn!("[le audio] malformed ASE Control Point write");
+                    defmt::warn!("[le audio] malformed ASE Control Point write");
                 }
                 return true;
             }

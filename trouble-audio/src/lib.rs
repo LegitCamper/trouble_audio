@@ -7,6 +7,13 @@
 //! consuming binary must install a global allocator.
 extern crate alloc;
 
+// Several `AsGatt` impls reinterpret native integers as little-endian wire bytes in place.
+#[cfg(target_endian = "big")]
+compile_error!("trouble_audio assumes a little-endian target");
+
+#[macro_use]
+mod fmt;
+
 #[cfg(test)]
 mod test_alloc;
 
@@ -57,6 +64,24 @@ pub mod prelude {
 }
 
 pub type ContentControlID = u8;
+
+/// Why discovering a mandatory LE Audio service on a peer failed. A peer's GATT table is
+/// untrusted input, so discovery is fallible rather than panicking.
+#[derive(Debug)]
+pub enum DiscoveryError<E> {
+    /// The underlying GATT request failed.
+    Host(trouble_host::BleHostError<E>),
+    /// The peer doesn't expose the service at all.
+    ServiceNotFound,
+    /// The service exists but is missing a characteristic its spec makes mandatory.
+    CharacteristicNotFound,
+}
+
+impl<E> From<trouble_host::BleHostError<E>> for DiscoveryError<E> {
+    fn from(e: trouble_host::BleHostError<E>) -> Self {
+        Self::Host(e)
+    }
+}
 
 /// Codec_ID: identifies a codec, either a standard Bluetooth SIG codec (`coding_format` alone,
 /// with `company_id`/`vendor_specific_codec_id` both zero) or a vendor-specific one. 5 octets on

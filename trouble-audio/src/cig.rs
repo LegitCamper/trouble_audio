@@ -45,8 +45,6 @@ pub type SetCigParametersCmd<'a> = LeSetCigParametersTest<'a>;
 #[cfg(not(feature = "nrf-sdc"))]
 pub type SetCigParametersCmd<'a> = LeSetCigParameters<'a>;
 
-#[cfg(feature = "defmt")]
-use defmt::{info, warn, Debug2Format};
 
 use crate::{
     generic_audio::{FrameDuration, SamplingFrequency},
@@ -268,10 +266,13 @@ impl<M: RawMutex> CigManager<M> {
     /// configured, queues `LE Set CIG Parameters` for [`drive_cig`] to carry out.
     pub fn configure(&self, ase_id: u8, qos: AseQos, sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) {
         let mut slots = self.slots.borrow_mut();
-        let Some(idx) = slots.iter().position(|s| s.ase_id.is_none()) else {
-            #[cfg(feature = "log")]
-            log::warn!("[cig] configure() called for more ASEs than this crate's stereo scope supports");
-            #[cfg(feature = "defmt")]
+        // Re-configuring an already-known ASE (e.g. a central retrying Config QoS) must update
+        // its existing slot, not consume a fresh one.
+        let idx = slots
+            .iter()
+            .position(|s| s.ase_id == Some(ase_id))
+            .or_else(|| slots.iter().position(|s| s.ase_id.is_none()));
+        let Some(idx) = idx else {
             warn!("[cig] configure() called for more ASEs than this crate's stereo scope supports");
             return;
         };
@@ -304,16 +305,10 @@ impl<M: RawMutex> CigManager<M> {
         self.slots.borrow_mut()[0].cis_handle = Some(connection_handle_0.raw());
         self.slots.borrow_mut()[1].cis_handle = Some(connection_handle_1.raw());
         let Some(acl) = *self.acl_handle.borrow() else {
-            #[cfg(feature = "log")]
-            log::warn!("[cig] LE Set CIG Parameters completed before an ACL handle was set");
-            #[cfg(feature = "defmt")]
             warn!("[cig] LE Set CIG Parameters completed before an ACL handle was set");
             return;
         };
         let Some(cig_id) = *self.cig_id.borrow() else {
-            #[cfg(feature = "log")]
-            log::warn!("[cig] LE Set CIG Parameters completed before a CIG_ID was recorded");
-            #[cfg(feature = "defmt")]
             warn!("[cig] LE Set CIG Parameters completed before a CIG_ID was recorded");
             return;
         };
@@ -351,9 +346,6 @@ impl<M: RawMutex> CigManager<M> {
 impl<M: RawMutex> EventHandler for CigManager<M> {
     fn on_cis_established(&self, event: &LeCisEstablished) {
         if event.status != Status::SUCCESS {
-            #[cfg(feature = "log")]
-            log::warn!("[cig] CIS establishment failed");
-            #[cfg(feature = "defmt")]
             warn!("[cig] CIS establishment failed");
             return;
         }
@@ -362,9 +354,6 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
         let slot = {
             let slots = self.slots.borrow();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
-                #[cfg(feature = "log")]
-                log::warn!("[cig] CIS established for an untracked handle {}", handle);
-                #[cfg(feature = "defmt")]
                 warn!("[cig] CIS established for an untracked handle {}", handle);
                 return;
             };
@@ -381,9 +370,6 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
             Some(cached) if cached.sampling_frequency == sampling_frequency && cached.frame_duration == frame_duration
         );
         if already_matches {
-            #[cfg(feature = "log")]
-            log::info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
-            #[cfg(feature = "defmt")]
             info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
         } else {
             match Lc3MonoEncoder::new(sampling_frequency, frame_duration) {
@@ -395,20 +381,18 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
                     });
                 }
                 Err(_) => {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cig] unsupported LC3 sampling frequency for established CIS");
-                    #[cfg(feature = "defmt")]
                     warn!("[cig] unsupported LC3 sampling frequency for established CIS");
                     return;
                 }
             }
         }
 
-        #[cfg(feature = "log")]
-        log::info!("[cig] CIS established, setting up ISO data path");
-        #[cfg(feature = "defmt")]
+        let Some(ase_id) = slot.ase_id else {
+            warn!("[cig] CIS established for a slot with no ASE_ID recorded");
+            return;
+        };
         info!("[cig] CIS established, setting up ISO data path");
-        let _ = self.actions.try_send(CigAction::SetupDataPath(event.handle, slot.ase_id.unwrap_or(0)));
+        let _ = self.actions.try_send(CigAction::SetupDataPath(event.handle, ase_id));
     }
 }
 
@@ -432,9 +416,6 @@ where
                 // Errors are expected on the very first connection (no CIG yet) or if the
                 // controller already removed the CIG when the ACL dropped. Ignore them.
                 let _ = iso.command(LeRemoveCig::new(CigId::new(cig_id))).await;
-                #[cfg(feature = "log")]
-                log::info!("[cig] removed CIG {cig_id} (or it was already gone)");
-                #[cfg(feature = "defmt")]
                 info!("[cig] removed CIG {} (or it was already gone)", cig_id);
             }
             CigAction::SetCigParameters(q0, q1) => {
@@ -466,7 +447,7 @@ where
                         #[cfg(feature = "log")]
                         log::warn!("[cig] LE Set CIG Parameters failed: {_e:?}");
                         #[cfg(feature = "defmt")]
-                        warn!("[cig] LE Set CIG Parameters failed: {}", Debug2Format(&_e));
+                        defmt::warn!("[cig] LE Set CIG Parameters failed: {}", defmt::Debug2Format(&_e));
                     }
                 }
             }
@@ -479,7 +460,7 @@ where
                     #[cfg(feature = "log")]
                     log::warn!("[cig] LE Create CIS failed: {_e:?}");
                     #[cfg(feature = "defmt")]
-                    warn!("[cig] LE Create CIS failed: {}", Debug2Format(&_e));
+                    defmt::warn!("[cig] LE Create CIS failed: {}", defmt::Debug2Format(&_e));
                 }
             }
             CigAction::SetupDataPath(handle, ase_id) => {
@@ -499,9 +480,6 @@ where
                     .await;
                 match result {
                     Ok(_) => {
-                        #[cfg(feature = "log")]
-                        log::info!("[cig] ISO data path set up for handle {}", handle.raw());
-                        #[cfg(feature = "defmt")]
                         info!("[cig] ISO data path set up for handle {}", handle.raw());
                         let _ = manager.ready.try_send(ase_id);
                     }
@@ -509,7 +487,7 @@ where
                         #[cfg(feature = "log")]
                         log::warn!("[cig] LE Setup ISO Data Path failed: {_e:?}");
                         #[cfg(feature = "defmt")]
-                        warn!("[cig] LE Setup ISO Data Path failed: {}", Debug2Format(&_e));
+                        defmt::warn!("[cig] LE Setup ISO Data Path failed: {}", defmt::Debug2Format(&_e));
                     }
                 }
             }
@@ -561,6 +539,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn configuring_both_ases_then_establishing_both_cis_drives_cig_setup_in_order() {
         let manager = CigManager::<NoopRawMutex>::new();
         manager.set_acl_handle(ConnHandle::new(0x05));
@@ -611,9 +590,32 @@ mod tests {
         }
     }
 
+    /// A central retrying Config QoS re-configures the same ASE; that must update its existing
+    /// slot, not consume the second slot and build a CIG with duplicate CIS IDs.
+    #[test]
+    fn reconfiguring_the_same_ase_reuses_its_slot() {
+        let manager = CigManager::<NoopRawMutex>::new();
+        manager.set_acl_handle(ConnHandle::new(0x05));
+
+        let sampling_frequency = SamplingFrequency::Hz48000;
+        let frame_duration = FrameDuration::Duration10MS;
+
+        manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
+        manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
+        // The duplicate must not have completed the stereo pair.
+        assert!(manager.actions.try_receive().is_err());
+
+        manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
+        match manager.actions.try_receive() {
+            Ok(CigAction::SetCigParameters(q0, q1)) => assert_ne!(q0.cis_id, q1.cis_id),
+            other => panic!("expected SetCigParameters, got {:?}", other.is_ok()),
+        }
+    }
+
     /// Regression test mirroring `cis::CisManager`'s leak fix: `reset()` used to unconditionally
     /// clear `encoders` on every reconnect, leaking an `Lc3MonoEncoder` per ASE each time.
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn reconnecting_with_the_same_audio_params_reuses_the_existing_encoders() {
         let manager = CigManager::<NoopRawMutex>::new();
         manager.set_acl_handle(ConnHandle::new(0x05));

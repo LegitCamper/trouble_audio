@@ -2,8 +2,9 @@
 //! from a negotiated Codec_Specific_Configuration (Sampling_Frequency, Frame_Duration).
 //!
 //! `lc3-codec`'s encoder/decoder hold state across frames and borrow their scratch buffers rather
-//! than owning them, so this wrapper leaks its buffers (`Box::leak`) to give them `'static`
-//! lifetime for the session's duration.
+//! than owning them, so this wrapper hands them leaked (`'static`) buffers - but keeps the raw
+//! allocation pointers and reclaims them on drop, so replacing a codec (e.g. renegotiating a
+//! different sampling frequency) doesn't leak its predecessor's ~16-28 KB of scratch space.
 //!
 //! # Sizing a `#[global_allocator]` heap
 //!
@@ -66,12 +67,39 @@ const fn to_lc3_frame_duration(value: FrameDuration) -> Lc3FrameDuration {
     }
 }
 
+/// Owns a leaked slice allocation by raw pointer so it can be reclaimed on drop. The `'static`
+/// borrow handed to the codec is derived *from* this pointer (not the other way around), so
+/// freeing is only sound once the codec is dropped - the wrapper structs below guarantee that by
+/// declaring the codec field before this one (fields drop in declaration order).
+struct LeakedSlice<T>(*mut [T]);
+
+// SAFETY: sole owner of the allocation; the pointer is only touched in `drop`.
+unsafe impl<T: Send> Send for LeakedSlice<T> {}
+
+fn leak_slice<T: Clone + Default>(len: usize) -> (LeakedSlice<T>, &'static mut [T]) {
+    let ptr = Box::into_raw(vec![T::default(); len].into_boxed_slice());
+    // SAFETY: fresh from `Box::into_raw`; the borrow is a child of `ptr`, so later use of the
+    // borrow doesn't invalidate `ptr` for the eventual `Box::from_raw`.
+    (LeakedSlice(ptr), unsafe { &mut *ptr })
+}
+
+impl<T> Drop for LeakedSlice<T> {
+    fn drop(&mut self) {
+        // SAFETY: created by `leak_slice`'s `Box::into_raw`; the only borrow derived from it
+        // lives in the already-dropped codec field.
+        unsafe { drop(Box::from_raw(self.0)) }
+    }
+}
+
 /// A single-channel (mono) LC3 encoder. One ASE/CIS carries one audio channel, so this is the
 /// unit of encoding state LE Audio unicast needs - stereo is two of these, one per ASE.
 pub struct Lc3MonoEncoder {
+    // `encoder` must stay declared before `_bufs`: it borrows them, and drop order is
+    // declaration order.
     encoder: Lc3Encoder<'static>,
     /// Number of PCM samples [`Self::encode`] expects per call (`Lc3Config::nf`).
     pub samples_per_frame: usize,
+    _bufs: (LeakedSlice<i16>, LeakedSlice<Scaler>, LeakedSlice<Complex>),
 }
 
 impl Lc3MonoEncoder {
@@ -99,13 +127,14 @@ impl Lc3MonoEncoder {
         let fs = to_lc3_sampling_frequency(sampling_frequency)?;
         let n_ms = to_lc3_frame_duration(frame_duration);
         let (integer_len, scaler_len, complex_len) = Lc3Encoder::calc_working_buffer_lengths(1, n_ms, fs);
-        let integer_buf = Box::leak(vec![0i16; integer_len].into_boxed_slice());
-        let scaler_buf = Box::leak(vec![0.0; scaler_len].into_boxed_slice());
-        let complex_buf = Box::leak(vec![Default::default(); complex_len].into_boxed_slice());
+        let (integer_owner, integer_buf) = leak_slice::<i16>(integer_len);
+        let (scaler_owner, scaler_buf) = leak_slice::<Scaler>(scaler_len);
+        let (complex_owner, complex_buf) = leak_slice::<Complex>(complex_len);
         let encoder = Lc3Encoder::new(1, n_ms, fs, integer_buf, scaler_buf, complex_buf);
         Ok(Self {
             encoder,
             samples_per_frame: Lc3Config::new(fs, n_ms).nf,
+            _bufs: (integer_owner, scaler_owner, complex_owner),
         })
     }
 
@@ -118,9 +147,12 @@ impl Lc3MonoEncoder {
 
 /// A single-channel (mono) LC3 decoder. See [`Lc3MonoEncoder`] for why mono is the unit here.
 pub struct Lc3MonoDecoder {
+    // `decoder` must stay declared before `_bufs`: it borrows them, and drop order is
+    // declaration order.
     decoder: Lc3Decoder<'static>,
     /// Number of PCM samples [`Self::decode`] produces per call (`Lc3Config::nf`).
     pub samples_per_frame: usize,
+    _bufs: (LeakedSlice<Scaler>, LeakedSlice<Complex>),
 }
 
 impl Lc3MonoDecoder {
@@ -145,12 +177,13 @@ impl Lc3MonoDecoder {
         let fs = to_lc3_sampling_frequency(sampling_frequency)?;
         let n_ms = to_lc3_frame_duration(frame_duration);
         let (scaler_len, complex_len) = Lc3Decoder::calc_working_buffer_lengths(1, n_ms, fs);
-        let scaler_buf = Box::leak(vec![0.0; scaler_len].into_boxed_slice());
-        let complex_buf = Box::leak(vec![Default::default(); complex_len].into_boxed_slice());
+        let (scaler_owner, scaler_buf) = leak_slice::<Scaler>(scaler_len);
+        let (complex_owner, complex_buf) = leak_slice::<Complex>(complex_len);
         let decoder = Lc3Decoder::new(1, n_ms, fs, scaler_buf, complex_buf);
         Ok(Self {
             decoder,
             samples_per_frame: Lc3Config::new(fs, n_ms).nf,
+            _bufs: (scaler_owner, complex_owner),
         })
     }
 
@@ -168,6 +201,7 @@ mod tests {
     /// in the right ballpark - this isn't asserting perceptual codec quality, just that the
     /// wrapper is wired up correctly (right buffer sizes, right frame sizes, no panics).
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn encode_then_decode_round_trips_a_sine_wave() {
         let sampling_frequency = SamplingFrequency::Hz48000;
         let frame_duration = FrameDuration::Duration10MS;
@@ -204,6 +238,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn decoder_heap_bytes_is_a_safe_upper_bound_on_what_new_actually_allocates() {
         assert_eq!(DECODER_HEAP_BYTES_48K_10MS, 19884 + 7680 + DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES);
 
@@ -217,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn encoder_heap_bytes_is_a_safe_upper_bound_on_what_new_actually_allocates() {
         let expected = Lc3MonoEncoder::heap_bytes(SamplingFrequency::Hz48000, FrameDuration::Duration10MS).unwrap();
 
@@ -226,6 +262,39 @@ mod tests {
         assert!(
             allocated <= expected,
             "heap_bytes() = {expected} underestimated the real allocation of {allocated} bytes - bump the margin"
+        );
+    }
+
+    /// Miri-checkable exercise of `LeakedSlice`'s pointer/borrow dance (allocate, use the
+    /// derived `'static` borrow, reclaim on drop) without constructing a real codec - the codec
+    /// tests below are `#[ignore]`d under Miri.
+    #[test]
+    fn leaked_slice_reclaims_its_allocation_on_drop() {
+        let a0 = crate::test_alloc::allocated();
+        let f0 = crate::test_alloc::freed();
+        {
+            let (owner, buf) = leak_slice::<i16>(64);
+            buf[0] = 7;
+            buf[63] = 9;
+            assert_eq!(buf[0] + buf[63], 16);
+            drop(owner);
+        }
+        assert_eq!(crate::test_alloc::allocated() - a0, crate::test_alloc::freed() - f0);
+    }
+
+    /// Every byte a codec allocates must come back when it drops - the property `cis`/`cig`'s
+    /// param-change replacement relies on.
+    #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
+    fn dropping_a_codec_reclaims_every_byte_it_allocated() {
+        let a0 = crate::test_alloc::allocated();
+        let f0 = crate::test_alloc::freed();
+        drop(Lc3MonoDecoder::new(SamplingFrequency::Hz48000, FrameDuration::Duration10MS).unwrap());
+        drop(Lc3MonoEncoder::new(SamplingFrequency::Hz48000, FrameDuration::Duration10MS).unwrap());
+        assert_eq!(
+            crate::test_alloc::allocated() - a0,
+            crate::test_alloc::freed() - f0,
+            "codec drop must reclaim exactly what construction allocated"
         );
     }
 

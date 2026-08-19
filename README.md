@@ -13,12 +13,12 @@ every platform example below.
 | Example | Sink | Source | Transport | README |
 | --- | :-: | :-: | --- | --- |
 | [`nRF54L15_Connect_Kit`](examples/nRF54L15_Connect_Kit) | ✅ | ✅ | Real BLE (`nrf-sdc`) | [README](examples/nRF54L15_Connect_Kit/README.md) |
-| [`rp-pico-w`](examples/rp-pico-w) | ✅ | | Real BLE (`cyw43`) | [README](examples/README.md) |
+| [`rp-pico-w`](examples/rp-pico-w) | - | - | Real BLE (`cyw43`) | [README](examples/README.md) |
 | [`linux`](examples/linux) | ✅ | ✅ | Raw HCI socket | [README](examples/linux/README.md) |
 | [`linux-serial`](examples/linux-serial) | ✅ | ✅ | HCI-UART (serial) | [README](examples/linux-serial/README.md) |
 
-`rp-pico-w` pairs with `linux`'s source for a full over-the-air round trip - see
-[`examples/README.md`](examples/README.md).
+`rp-pico-w` is a pure media-control remote (MCS) - its cyw43439 controller has no CIS support, so
+it can't stream audio. See [`examples/README.md`](examples/README.md) for both demos.
 
 ## Testing
 
@@ -32,5 +32,5 @@ Also passes under Miri:
 cd trouble-audio && MIRIFLAGS=-Zmiri-ignore-leaks cargo +nightly miri test --lib --no-default-features --features log
 ```
 
-(`-Zmiri-ignore-leaks` because `trouble_audio::lc3` deliberately leaks its LC3 working buffers by
-design - see that module's docs.)
+(`-Zmiri-ignore-leaks` because test fixtures deliberately `Box::leak` their `'static` GATT store
+buffers.)

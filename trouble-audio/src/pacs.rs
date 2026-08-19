@@ -5,7 +5,7 @@
 
 use alloc::vec::Vec;
 
-use super::{generic_audio::*, CodecId, LeAudioServerService, MAX_SERVICES};
+use super::{generic_audio::*, CodecId, DiscoveryError, LeAudioServerService, MAX_SERVICES};
 use bt_hci::uuid::{characteristic, service};
 use core::mem::size_of;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -30,12 +30,9 @@ impl PacsClient {
     /// Discovers the PACS service and its characteristics on an already-connected `GattClient`.
     pub async fn new<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let services = client
-            .services_by_uuid(&Uuid::from(service::PUBLISHED_AUDIO_CAPABILITIES))
-            .await
-            .unwrap();
-        let handle = services.first().unwrap();
+    ) -> Result<Self, DiscoveryError<T::Error>> {
+        let services = client.services_by_uuid(&Uuid::from(service::PUBLISHED_AUDIO_CAPABILITIES)).await?;
+        let handle = services.first().ok_or(DiscoveryError::ServiceNotFound)?;
 
         let sink_pac = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::SINK_PAC))
@@ -60,14 +57,14 @@ impl PacsClient {
         let supported_audio_contexts = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::SUPPORTED_AUDIO_CONTEXTS))
             .await
-            .expect("The server Must support SUPPORTED_AUDIO_CONTEXTS");
+            .map_err(|_| DiscoveryError::CharacteristicNotFound)?;
 
         let available_audio_contexts = client
             .characteristic_by_uuid(handle, &Uuid::from(characteristic::AVAILABLE_AUDIO_CONTEXTS))
             .await
-            .expect("The server Must support AVAILABLE_AUDIO_CONTEXTS");
+            .map_err(|_| DiscoveryError::CharacteristicNotFound)?;
 
-        Self {
+        Ok(Self {
             handle: handle.clone(),
             sink_pac,
             sink_audio_locations,
@@ -75,7 +72,7 @@ impl PacsClient {
             source_audio_locations,
             supported_audio_contexts,
             available_audio_contexts,
-        }
+        })
     }
     // TODO: handle subscriptions
 }

@@ -29,11 +29,9 @@ use embassy_sync::channel::Channel;
 use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
-#[cfg(feature = "defmt")]
-use defmt::{info, warn};
 
 use crate::{
-    ascs::{AscsServer, AseControlPointOperation, AseDirection},
+    ascs::{AscsServer, AseDirection, Operation},
     generic_audio::{decode_list, AudioLocation, CodecSpecificConfiguration, FrameDuration, SamplingFrequency},
     lc3::{Lc3MonoDecoder, Lc3MonoEncoder},
     CodingFormat, MAX_SERVICES,
@@ -154,22 +152,20 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
         Some(idx)
     }
 
-    /// Feeds one ASE Control Point operation into this manager's side-table: Config Codec
-    /// entries record codec parameters, Config QoS entries record the CIG/CIS identity. Call
-    /// this alongside [`crate::bap::drive_ase_control_point`] for every ASE Control Point write.
+    /// Feeds one decoded ASE Control Point operation into this manager's side-table: Config
+    /// Codec entries record codec parameters, Config QoS entries record the CIG/CIS identity.
+    /// Call this alongside [`crate::bap::drive_ase_control_point`] for every ASE Control Point
+    /// write (decode once via [`crate::ascs::AseControlPointOperation::operation`]).
     pub fn observe_operation<RM: RawMutex, P: PacketPool, const MAX_CONNECTIONS: usize>(
         &self,
         server: &AttributeServer<'_, RM, P, MAX_SERVICES, MAX_CONNECTIONS>,
         ascs: &AscsServer<MAX_ASES>,
-        operation: &AseControlPointOperation,
+        operation: &Operation,
     ) {
-        if let Some(entries) = operation.as_config_codec() {
+        if let Operation::ConfigCodec(entries) = operation {
             for (ase_id, _target_latency, _target_phy, _codec_id, config) in entries.iter() {
                 let Some(direction) = find_ase_direction(server, ascs, *ase_id) else { continue };
                 let Some(audio) = audio_params_from_config(config) else {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cis] ASE {} Config Codec missing sampling frequency/frame duration", ase_id);
-                    #[cfg(feature = "defmt")]
                     warn!("[cis] ASE {} Config Codec missing sampling frequency/frame duration", ase_id);
                     continue;
                 };
@@ -180,7 +176,7 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
                 }
             }
         }
-        if let Some(entries) = operation.as_config_qos() {
+        if let Operation::ConfigQos(entries) = operation {
             for (ase_id, cig_id, cis_id, ..) in entries.iter() {
                 let mut slots = self.slots.borrow_mut();
                 if let Some(idx) = Self::slot_index_for_ase(&mut slots, *ase_id) {
@@ -215,20 +211,11 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             Some(idx) => {
                 slots[idx].cis_handle = Some(event.cis_handle.raw());
                 drop(slots);
-                #[cfg(feature = "log")]
-                log::info!("[cis] accepting CIS request (cig={} cis={})", event.cig_id, event.cis_id);
-                #[cfg(feature = "defmt")]
                 info!("[cis] accepting CIS request (cig={} cis={})", event.cig_id, event.cis_id);
                 let _ = self.actions.try_send(CisAction::Accept(event.cis_handle));
             }
             None => {
                 drop(slots);
-                #[cfg(feature = "log")]
-                log::warn!(
-                    "[cis] rejecting CIS request: no QoS-configured ASE for cig={} cis={}",
-                    event.cig_id, event.cis_id
-                );
-                #[cfg(feature = "defmt")]
                 warn!(
                     "[cis] rejecting CIS request: no QoS-configured ASE for cig={} cis={}",
                     event.cig_id, event.cis_id
@@ -242,9 +229,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
 
     fn on_cis_established(&self, event: &LeCisEstablished) {
         if event.status != Status::SUCCESS {
-            #[cfg(feature = "log")]
-            log::warn!("[cis] CIS establishment failed");
-            #[cfg(feature = "defmt")]
             warn!("[cis] CIS establishment failed");
             return;
         }
@@ -253,9 +237,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         let slot = {
             let slots = self.slots.borrow();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
-                #[cfg(feature = "log")]
-                log::warn!("[cis] CIS established for an untracked handle {}", handle);
-                #[cfg(feature = "defmt")]
                 warn!("[cis] CIS established for an untracked handle {}", handle);
                 return;
             };
@@ -263,9 +244,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         };
         let (idx, slot) = slot;
         let (Some(audio), Some(direction)) = (slot.audio, slot.direction) else {
-            #[cfg(feature = "log")]
-            log::warn!("[cis] CIS established but ASE was never Config Codec'd (no audio params)");
-            #[cfg(feature = "defmt")]
             warn!("[cis] CIS established but ASE was never Config Codec'd (no audio params)");
             return;
         };
@@ -280,9 +258,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             (Some(Codec::Encoder(params, _)), AseDirection::Source) if *params == audio
         );
         if already_matches {
-            #[cfg(feature = "log")]
-            log::info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
-            #[cfg(feature = "defmt")]
             info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
         } else {
             let codec = match direction {
@@ -296,9 +271,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             match codec {
                 Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
                 None => {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cis] unsupported LC3 sampling frequency for established CIS");
-                    #[cfg(feature = "defmt")]
                     warn!("[cis] unsupported LC3 sampling frequency for established CIS");
                     return;
                 }
@@ -312,9 +284,6 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         // Only a Sink ASE's Enabling->Streaming transition is autonomous; a Source ASE instead
         // waits for the client's Receiver Start Ready operation.
         let streaming_ase_id = matches!(direction, AseDirection::Sink).then_some(()).and(slot.ase_id);
-        #[cfg(feature = "log")]
-        log::info!("[cis] CIS established, setting up ISO data path");
-        #[cfg(feature = "defmt")]
         info!("[cis] CIS established, setting up ISO data path");
         let _ = self
             .actions
@@ -326,16 +295,10 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         let (idx, ase_id, channel_allocation) = {
             let slots = self.slots.borrow();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
-                #[cfg(feature = "log")]
-                log::warn!("[cis] on_iso_data: no slot for handle={}", handle);
-                #[cfg(feature = "defmt")]
                 warn!("[cis] on_iso_data: no slot for handle={}", handle);
                 return;
             };
             let Some(ase_id) = slots[idx].ase_id else {
-                #[cfg(feature = "log")]
-                log::warn!("[cis] on_iso_data: slot {} has no ase_id", idx);
-                #[cfg(feature = "defmt")]
                 warn!("[cis] on_iso_data: slot {} has no ase_id", idx);
                 return;
             };
@@ -343,18 +306,12 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         };
         let mut codecs = self.codecs.borrow_mut();
         let Some(Codec::Decoder(_, decoder)) = &mut codecs[idx] else {
-            #[cfg(feature = "log")]
-            log::warn!("[cis] on_iso_data: slot {} has no decoder", idx);
-            #[cfg(feature = "defmt")]
             warn!("[cis] on_iso_data: slot {} has no decoder", idx);
             return;
         };
 
         let mut samples = PcmFrame::new();
         if samples.resize_default(decoder.samples_per_frame).is_err() {
-            #[cfg(feature = "log")]
-            log::warn!("[cis] on_iso_data: resize_default failed");
-            #[cfg(feature = "defmt")]
             warn!("[cis] on_iso_data: resize_default failed");
             return;
         }
@@ -369,16 +326,10 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
                     })
                     .is_err()
                 {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cis] on_iso_data: pcm_out channel full, dropping frame");
-                    #[cfg(feature = "defmt")]
                     warn!("[cis] on_iso_data: pcm_out channel full, dropping frame");
                 }
             }
             Err(_e) => {
-                #[cfg(feature = "log")]
-                log::warn!("[cis] LC3 decode error");
-                #[cfg(feature = "defmt")]
                 warn!("[cis] LC3 decode error");
             }
         }
@@ -413,17 +364,11 @@ where
         match manager.actions.receive().await {
             CisAction::Accept(handle) => {
                 if let Err(_e) = iso.command_async(LeAcceptCisRequest::new(handle)).await {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cis] LE Accept CIS Request failed");
-                    #[cfg(feature = "defmt")]
                     warn!("[cis] LE Accept CIS Request failed");
                 }
             }
             CisAction::Reject(handle, reason) => {
                 if let Err(_e) = iso.command(LeRejectCisRequest::new(handle, reason)).await {
-                    #[cfg(feature = "log")]
-                    log::warn!("[cis] LE Reject CIS Request failed");
-                    #[cfg(feature = "defmt")]
                     warn!("[cis] LE Reject CIS Request failed");
                 }
             }
@@ -444,18 +389,12 @@ where
                     .await;
                 match result {
                     Ok(_) => {
-                        #[cfg(feature = "log")]
-                        log::info!("[cis] ISO data path set up for handle {}", handle.raw());
-                        #[cfg(feature = "defmt")]
                         info!("[cis] ISO data path set up for handle {}", handle.raw());
                         if let Some(ase_id) = streaming_ase_id {
                             let _ = manager.streaming.try_send(ase_id);
                         }
                     }
                     Err(_e) => {
-                        #[cfg(feature = "log")]
-                        log::warn!("[cis] LE Setup ISO Data Path failed");
-                        #[cfg(feature = "defmt")]
                         warn!("[cis] LE Setup ISO Data Path failed");
                     }
                 }
@@ -480,13 +419,6 @@ where
 {
     #[cfg(any(feature = "log", feature = "defmt"))]
     if let Ok(_features) = stack.command(LeReadLocalSupportedFeatures::new()).await {
-        #[cfg(feature = "log")]
-        log::info!(
-            "[cis] controller CIS support: peripheral={} central={}",
-            _features.supports_connected_isochronous_stream_peripheral(),
-            _features.supports_connected_isochronous_stream_central()
-        );
-        #[cfg(feature = "defmt")]
         info!(
             "[cis] controller CIS support: peripheral={} central={}",
             _features.supports_connected_isochronous_stream_peripheral(),
@@ -495,9 +427,6 @@ where
     }
     match stack.command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, 1)).await {
         Ok(_) => {
-            #[cfg(feature = "log")]
-            log::info!("[cis] enabled Isochronous Channels (Host Support)");
-            #[cfg(feature = "defmt")]
             info!("[cis] enabled Isochronous Channels (Host Support)");
             true
         }
@@ -505,7 +434,7 @@ where
             #[cfg(feature = "log")]
             log::warn!("[cis] LE Set Host Feature (CIS) failed: {:?}", _e);
             #[cfg(feature = "defmt")]
-            warn!("[cis] LE Set Host Feature (CIS) failed");
+            defmt::warn!("[cis] LE Set Host Feature (CIS) failed");
             false
         }
     }
@@ -513,6 +442,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
     use alloc::vec::Vec as AVec;
 
     use bt_hci::param::PhyKind;
@@ -521,7 +451,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        ascs::{Ase, AscsServer, AseControlPointOperation, AseType, TargetLatency},
+        ascs::{
+            Ase, AscsServer, AseControlPointOperation, AseType, TargetLatency, ASE_CONTROL_POINT_STORE_SIZE,
+            ASE_STORE_SIZE,
+        },
         generic_audio::{encode_list, FrameDuration, SamplingFrequency},
         lc3::Lc3MonoEncoder,
         CodecId,
@@ -539,24 +472,29 @@ mod tests {
         let mut table: AttributeTable<'static, NoopRawMutex, MAX_SERVICES> = AttributeTable::new();
         let mut ases = HVec::new();
         let _ = ases.push(AseType::Sink(Ase::new(0)));
-        let ascs = AscsServer::new(&mut table, ases);
+        // Test fixtures leak their `'static` GATT stores (see the README's Miri note).
+        let control_point_store: &'static mut [u8] = Box::leak(Box::new([0u8; ASE_CONTROL_POINT_STORE_SIZE]));
+        let ase_store: &'static mut [u8] = Box::leak(Box::new([0u8; ASE_STORE_SIZE]));
+        let ascs = AscsServer::new(&mut table, ases, control_point_store, [ase_store]);
         let server = AttributeServer::new(table);
         (ascs, server)
     }
 
-    fn config_codec_operation(ase_id: u8, sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> AseControlPointOperation {
+    /// Round-trips through the wire encoding so the decoded `Operation` matches what a real
+    /// central's write would produce.
+    fn config_codec_operation(ase_id: u8, sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Operation {
         let config = encode_list(&[
             CodecSpecificConfiguration::SamplingFrequency(sampling_frequency),
             CodecSpecificConfiguration::FrameDuration(frame_duration),
             CodecSpecificConfiguration::OctetsPerCodecFrame(100),
         ]);
         let entries: AVec<_> = [(ase_id, TargetLatency::Lower, PhySet::M1, CodecId::default(), config)].into();
-        AseControlPointOperation::config_codec(entries)
+        AseControlPointOperation::config_codec(entries).operation().unwrap()
     }
 
-    fn config_qos_operation(ase_id: u8, cig_id: u8, cis_id: u8) -> AseControlPointOperation {
+    fn config_qos_operation(ase_id: u8, cig_id: u8, cis_id: u8) -> Operation {
         let entries: AVec<_> = [(ase_id, cig_id, cis_id, [0, 0, 0], 0u8, PhySet::M1, 100u16, 0u8, 10u16, [0, 0, 0])].into();
-        AseControlPointOperation::config_qos(entries)
+        AseControlPointOperation::config_qos(entries).operation().unwrap()
     }
 
     fn established_event(handle: u16) -> LeCisEstablished {
@@ -597,6 +535,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn full_cis_lifecycle_accepts_sets_up_data_path_and_decodes_audio() {
         let (ascs, server) = build_ascs_and_server();
         let manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
@@ -660,6 +599,7 @@ mod tests {
     /// Regression test for the OOM (`handle_alloc_error`) crash repeated reconnects used to cause
     /// by leaking a new [`Lc3MonoDecoder`] every time.
     #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
     fn reconnecting_with_the_same_audio_params_reuses_the_existing_decoder() {
         let (ascs, server) = build_ascs_and_server();
         let manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
@@ -717,5 +657,48 @@ mod tests {
         manager.on_iso_data(&packet);
         let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame from the reused decoder");
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
+    }
+
+    /// Regression test for the param-change leak: replacing a cached decoder whose negotiated
+    /// params changed used to orphan the old decoder's leaked working buffers (~27.5 KB at
+    /// 48kHz/10ms) - repeated renegotiation would OOM.
+    #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
+    fn renegotiating_different_audio_params_frees_the_replaced_decoder() {
+        let (ascs, server) = build_ascs_and_server();
+        let manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
+
+        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS));
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x05),
+            cis_handle: ConnHandle::new(0x11),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive(); // Accept
+        manager.on_cis_established(&established_event(0x11));
+        let _ = manager.actions.try_receive(); // SetupDataPath
+
+        // Renegotiate at a different sampling frequency: the 48 kHz decoder must be freed, not
+        // orphaned, when the 16 kHz one replaces it.
+        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz16000, FrameDuration::Duration10MS));
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x06),
+            cis_handle: ConnHandle::new(0x12),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive(); // Accept
+
+        let freed_before = crate::test_alloc::freed();
+        manager.on_cis_established(&established_event(0x12));
+        let _ = manager.actions.try_receive(); // SetupDataPath
+        let freed_by_replacement = crate::test_alloc::freed() - freed_before;
+        assert!(
+            freed_by_replacement > 20_000,
+            "replacing the 48kHz decoder must free its ~27564-byte working buffers, freed only {freed_by_replacement}"
+        );
     }
 }

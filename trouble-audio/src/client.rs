@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The discovered GATT client side of an LE Audio unicast peripheral. PACS/ASCS are mandatory, so
-/// discovery panics if either is missing; every other service is optional per its own spec, so
+/// discovery fails if either is missing; every other service is optional per its own spec, so
 /// those fields are `None` when the peer doesn't expose them. Driving actual audio session logic
 /// (config codec, enable, mute, ...) is up to the caller.
 pub struct LeAudioClient {
@@ -39,9 +39,9 @@ impl LeAudioClient {
     /// `embassy_futures::select`) for GATT requests to complete at all.
     pub async fn discover<T: Controller, P: PacketPool, const MAX_SERVICES: usize>(
         client: &mut GattClient<'_, T, P, MAX_SERVICES>,
-    ) -> Self {
-        let pacs = PacsClient::new(client).await;
-        let ascs = AscsClient::new(client).await;
+    ) -> Result<Self, crate::DiscoveryError<T::Error>> {
+        let pacs = PacsClient::new(client).await?;
+        let ascs = AscsClient::new(client).await?;
         let mics = MicsClient::discover(client).await;
         let vcs = VcsClient::discover(client).await;
         let csis = CsisClient::discover(client).await;
@@ -54,7 +54,7 @@ impl LeAudioClient {
         let bass = BassClient::discover(client).await;
         let tbs = TbsClient::discover(client).await;
         let ots = OtsClient::discover(client).await;
-        Self {
+        Ok(Self {
             pacs,
             ascs,
             mics,
@@ -69,6 +69,6 @@ impl LeAudioClient {
             bass,
             tbs,
             ots,
-        }
+        })
     }
 }

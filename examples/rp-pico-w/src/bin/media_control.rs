@@ -116,7 +116,8 @@ async fn main(spawner: Spawner) {
     // plain GATT peripheral, which is all `media_control::run` needs. This device is purely a
     // remote control: it plays no audio of its own, and controls the playback of whatever other
     // device a central pairs it with.
-    let controller: ExternalController<_, CONTROLLER_SLOTS> = ExternalController::new(bt_device);
+    let controller: ExternalController<_, CONTROLLER_SLOTS> =
+        ExternalController::new(trouble_audio_examples::hci_bridge::Cyw43Transport::new(bt_device));
 
     // Polls the BOOTSEL button and signals `media_control::BUTTON_PRESSED` on each press -
     // `media_control::run` reacts to that the same way it reacts to a central's Media Control

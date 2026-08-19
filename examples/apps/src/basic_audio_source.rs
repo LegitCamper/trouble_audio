@@ -247,7 +247,16 @@ async fn connect_and_stream<C: Controller>(
     // Only ASCS is needed here (no PACS-driven capability negotiation, no optional services), so
     // `AscsClient::new` is used directly rather than the heavier `LeAudioClient::discover`.
     select(client.task(), async {
-        let ascs = AscsClient::new(&client).await;
+        let ascs = match AscsClient::new(&client).await {
+            Ok(ascs) => ascs,
+            Err(_e) => {
+                #[cfg(feature = "log")]
+                log::warn!("[le_audio_source] ASCS discovery failed: {:?}", _e);
+                #[cfg(feature = "defmt")]
+                warn!("[le_audio_source] ASCS discovery failed");
+                return;
+            }
+        };
         stream_tone(stack, &client, &ascs, cig_manager).await;
     })
     .await;
@@ -397,7 +406,8 @@ async fn play_tone<C: Controller>(stack: &Stack<'_, C, DefaultPacketPool>, cig_m
             }
             if matches!(cig_manager.encode(ase_id, &pcm, &mut encoded), Some(Ok(()))) {
                 let seq = sequence_numbers[channel].next();
-                let packet = iso_tx::build_packet(&mut iso_buf, cis_handle, seq, &encoded);
+                // The frame size is fixed at build time, well under the packet bound.
+                let packet = iso_tx::build_packet(&mut iso_buf, cis_handle, seq, &encoded).unwrap();
                 // Best-effort: an occasional dropped ISO write just drops that one SDU.
                 let _ = stack.iso().send(&packet).await;
             }
