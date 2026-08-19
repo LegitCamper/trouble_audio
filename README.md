@@ -1,9 +1,11 @@
 # trouble_audio
 
 LE Audio on top of [`trouble-host`](https://github.com/embassy-rs/trouble): PACS/ASCS/BAP GATT
-services, ASE Control Point, CIG/CIS/ISO setup, LC3 encode/decode.
+services, ASE Control Point, CIG/CIS/ISO setup, LC3 encode/decode (or raw-LC3 passthrough).
 
-Unicast today; broadcast (Auracast) is a planned direction, not yet implemented.
+Unicast plus a broadcast (Auracast) **source** (`big.rs`: announcement + BASE periodic
+advertising + BIG creation); the broadcast sink role is blocked on bt-hci publishing the periodic
+advertising sync events.
 
 `trouble-audio/` is the core crate. `examples/apps` is shared sink/source/bond-store logic used by
 every platform example below.

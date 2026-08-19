@@ -23,6 +23,7 @@ pub mod ascs;
 pub mod ase_client;
 pub mod bap;
 pub mod bass;
+pub mod big;
 pub mod cig;
 pub mod cis;
 pub mod csis;
@@ -53,6 +54,7 @@ pub mod prelude {
 
     pub use crate::{
         ascs::{Ase, AscsStorage, AseType},
+        big::{drive_big, start_broadcast, stop_broadcast, BigSource, BroadcastConfig},
         cig::{drive_cig, AseQos, CigManager},
         cis::{drive_cis, enable_cis_host_support, CisManager, DecodedPcm, Lc3Frame, PcmFrame, RawLc3},
         generic_audio::{
