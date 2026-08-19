@@ -235,11 +235,14 @@ where
     }
 
     /// Adds the (optional) (Generic) Media Control service.
+    /// `object_ids`, if given, additionally exposes the optional Object ID characteristics
+    /// referencing objects served via [`Self::add_ots`].
     pub fn add_mcs(
         mut self,
         init: mcs::McsInit,
         playing_orders_supported: &'a mcs::PlayingOrdersSupported,
         opcodes_supported: &'a mcs::MediaControlPointOpcodesSupported,
+        object_ids: Option<mcs::McsObjectIds>,
         storage: &'a mut McsStorage,
     ) -> Self {
         self.mcs = Some(McsServer::new(
@@ -247,6 +250,7 @@ where
             init,
             playing_orders_supported,
             opcodes_supported,
+            object_ids,
             storage.as_store(),
         ));
         self

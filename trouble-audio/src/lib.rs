@@ -54,7 +54,7 @@ pub mod prelude {
     pub use crate::{
         ascs::{Ase, AscsStorage, AseType},
         cig::{drive_cig, AseQos, CigManager},
-        cis::{drive_cis, enable_cis_host_support, CisManager, DecodedPcm, PcmFrame},
+        cis::{drive_cis, enable_cis_host_support, CisManager, DecodedPcm, Lc3Frame, PcmFrame, RawLc3},
         generic_audio::{
             AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame,
             SamplingFrequency, SupportedFrameDurations, SupportedSamplingFrequencies,

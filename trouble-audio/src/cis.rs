@@ -1,6 +1,8 @@
 //! Ties the ASE Control Point state machine to real CIS establishment and the ISO audio data
 //! path: accepts/rejects incoming CIS requests, sets up the ISO data path once a CIS is
-//! established, and runs LC3 encode/decode over the resulting ISO data.
+//! established, and runs LC3 encode/decode over the resulting ISO data - or, in passthrough mode
+//! ([`CisManager::new_passthrough`]), hands the still-encoded LC3 frames straight to the
+//! application with no codec at all.
 //!
 //! ASCS's own `AseState` (see `ascs.rs`) only carries the fields the spec defines for an ASE's
 //! *current* state - codec parameters aren't part of QosConfigured/Enabling/Streaming, even
@@ -47,6 +49,23 @@ pub const MAX_PCM_SAMPLES_PER_FRAME: usize = 480;
 
 /// One decoded LC3 frame's worth of PCM samples.
 pub type PcmFrame = HVec<i16, MAX_PCM_SAMPLES_PER_FRAME>;
+
+/// Max encoded LC3 frame this crate handles - the ISO packet payload bound
+/// ([`crate::iso_tx::MAX_ISO_PACKET_LEN`] minus its 8 header octets).
+pub const MAX_LC3_FRAME_LEN: usize = crate::iso_tx::MAX_ISO_PACKET_LEN - 8;
+
+/// One still-encoded LC3 frame, as delivered by a passthrough-mode [`CisManager`].
+pub type Lc3Frame = HVec<u8, MAX_LC3_FRAME_LEN>;
+
+/// A raw (still-encoded) LC3 frame from one Sink ASE - the passthrough-mode counterpart of
+/// [`DecodedPcm`], for applications that consume LC3 directly (forwarding, file capture, an
+/// external decoder) and don't want this crate to spend a decoder's ~28 KB and CPU on it.
+#[derive(Debug, Clone)]
+pub struct RawLc3 {
+    pub ase_id: u8,
+    pub channel_allocation: Option<AudioLocation>,
+    pub frame: Lc3Frame,
+}
 
 /// A decoded LC3 frame from one Sink ASE, tagged with which ASE (and, if the central declared
 /// one via Config Codec's `Audio_Channel_Allocation`, which audio channel location) it came from
@@ -103,6 +122,22 @@ enum Codec {
     Decoder(AudioParams, Lc3MonoDecoder),
 }
 
+/// What [`CisManager`] does with incoming ISO audio - fixed at construction.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SinkMode {
+    /// Build an LC3 decoder per Sink ASE and deliver PCM via [`CisManager::receive_pcm`].
+    Decode,
+    /// Never construct a codec; deliver still-encoded frames via [`CisManager::receive_lc3`].
+    Passthrough,
+}
+
+/// One frame on the shared sink queue - PCM in [`SinkMode::Decode`], raw LC3 in
+/// [`SinkMode::Passthrough`], never mixed within one manager.
+enum SinkFrame {
+    Pcm(DecodedPcm),
+    Lc3(RawLc3),
+}
+
 /// A pending action decided synchronously in an `EventHandler` callback, to be carried out by
 /// [`drive_cis`] since it requires awaiting an HCI command.
 enum CisAction {
@@ -116,12 +151,13 @@ enum CisAction {
 /// Bridges the ASE Control Point state machine to real CIS/ISO setup for up to `MAX_ASES`
 /// concurrently-configured ASEs. See the module docs for how to wire this up.
 pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
+    mode: SinkMode,
     slots: RefCell<[AseSlot; MAX_ASES]>,
     codecs: RefCell<[Option<Codec>; MAX_ASES]>,
     actions: Channel<M, CisAction, 4>,
     // 16, not 4: gives the consumer (e.g. `drive_led`) headroom against bursts at up to 200
     // frames/sec combined (stereo, 10ms each) - 4 caused near-constant drops on hardware.
-    pcm_out: Channel<M, DecodedPcm, 16>,
+    frames_out: Channel<M, SinkFrame, 16>,
     streaming: Channel<M, u8, 4>,
 }
 
@@ -134,11 +170,23 @@ impl<M: RawMutex, const MAX_ASES: usize> Default for CisManager<M, MAX_ASES> {
 impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     /// Creates an empty manager, before any ASE has been configured.
     pub fn new() -> Self {
+        Self::with_mode(SinkMode::Decode)
+    }
+
+    /// Creates an empty manager in LC3 passthrough mode: no decoder is ever constructed (zero
+    /// codec heap), and incoming frames arrive still-encoded via [`Self::receive_lc3`] instead of
+    /// as PCM.
+    pub fn new_passthrough() -> Self {
+        Self::with_mode(SinkMode::Passthrough)
+    }
+
+    fn with_mode(mode: SinkMode) -> Self {
         Self {
+            mode,
             slots: RefCell::new([AseSlot::default(); MAX_ASES]),
             codecs: RefCell::new(core::array::from_fn(|_| None)),
             actions: Channel::new(),
-            pcm_out: Channel::new(),
+            frames_out: Channel::new(),
             streaming: Channel::new(),
         }
     }
@@ -188,9 +236,23 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     }
 
     /// Waits for the next decoded PCM frame from any Sink ASE, tagged with which ASE it came
-    /// from - see [`DecodedPcm`].
+    /// from - see [`DecodedPcm`]. Only produces frames in the default decode mode.
     pub async fn receive_pcm(&self) -> DecodedPcm {
-        self.pcm_out.receive().await
+        loop {
+            if let SinkFrame::Pcm(pcm) = self.frames_out.receive().await {
+                return pcm;
+            }
+        }
+    }
+
+    /// Waits for the next still-encoded LC3 frame from any Sink ASE - see [`RawLc3`]. Only
+    /// produces frames when built with [`Self::new_passthrough`].
+    pub async fn receive_lc3(&self) -> RawLc3 {
+        loop {
+            if let SinkFrame::Lc3(raw) = self.frames_out.receive().await {
+                return raw;
+            }
+        }
     }
 
     /// Waits for the next Sink ASE ready to autonomously move `Enabling` -> `Streaming`. The
@@ -248,31 +310,35 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             return;
         };
 
-        // A reconnect lands back here with typically-unchanged audio params - reuse the existing
-        // codec when it matches, rather than leaking (see `lc3.rs`) a fresh one every time.
-        let already_matches = matches!(
-            (&self.codecs.borrow()[idx], direction),
-            (Some(Codec::Decoder(params, _)), AseDirection::Sink) if *params == audio
-        ) || matches!(
-            (&self.codecs.borrow()[idx], direction),
-            (Some(Codec::Encoder(params, _)), AseDirection::Source) if *params == audio
-        );
-        if already_matches {
-            info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
+        if self.mode == SinkMode::Passthrough {
+            // Raw LC3 in/out: no codec at all.
         } else {
-            let codec = match direction {
-                AseDirection::Sink => Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
-                    .ok()
-                    .map(|d| Codec::Decoder(audio, d)),
-                AseDirection::Source => Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
-                    .ok()
-                    .map(|e| Codec::Encoder(audio, e)),
-            };
-            match codec {
-                Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
-                None => {
-                    warn!("[cis] unsupported LC3 sampling frequency for established CIS");
-                    return;
+            // A reconnect lands back here with typically-unchanged audio params - reuse the
+            // existing codec when it matches, rather than orphaning it for a fresh one.
+            let already_matches = matches!(
+                (&self.codecs.borrow()[idx], direction),
+                (Some(Codec::Decoder(params, _)), AseDirection::Sink) if *params == audio
+            ) || matches!(
+                (&self.codecs.borrow()[idx], direction),
+                (Some(Codec::Encoder(params, _)), AseDirection::Source) if *params == audio
+            );
+            if already_matches {
+                info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
+            } else {
+                let codec = match direction {
+                    AseDirection::Sink => Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
+                        .ok()
+                        .map(|d| Codec::Decoder(audio, d)),
+                    AseDirection::Source => Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
+                        .ok()
+                        .map(|e| Codec::Encoder(audio, e)),
+                };
+                match codec {
+                    Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
+                    None => {
+                        warn!("[cis] unsupported LC3 sampling frequency for established CIS");
+                        return;
+                    }
                 }
             }
         }
@@ -304,6 +370,26 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             };
             (idx, ase_id, slots[idx].audio.and_then(|a| a.channel_allocation))
         };
+
+        if self.mode == SinkMode::Passthrough {
+            let Ok(frame) = Lc3Frame::from_slice(packet.data()) else {
+                warn!("[cis] on_iso_data: frame larger than MAX_LC3_FRAME_LEN, dropping");
+                return;
+            };
+            if self
+                .frames_out
+                .try_send(SinkFrame::Lc3(RawLc3 {
+                    ase_id,
+                    channel_allocation,
+                    frame,
+                }))
+                .is_err()
+            {
+                warn!("[cis] on_iso_data: frame channel full, dropping frame");
+            }
+            return;
+        }
+
         let mut codecs = self.codecs.borrow_mut();
         let Some(Codec::Decoder(_, decoder)) = &mut codecs[idx] else {
             warn!("[cis] on_iso_data: slot {} has no decoder", idx);
@@ -318,15 +404,15 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         match decoder.decode(packet.data(), &mut samples) {
             Ok(()) => {
                 if self
-                    .pcm_out
-                    .try_send(DecodedPcm {
+                    .frames_out
+                    .try_send(SinkFrame::Pcm(DecodedPcm {
                         ase_id,
                         channel_allocation,
                         samples,
-                    })
+                    }))
                     .is_err()
                 {
-                    warn!("[cis] on_iso_data: pcm_out channel full, dropping frame");
+                    warn!("[cis] on_iso_data: frame channel full, dropping frame");
                 }
             }
             Err(_e) => {
@@ -591,7 +677,10 @@ mod tests {
         assert!(rest.is_empty());
         manager.on_iso_data(&packet);
 
-        let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame");
+        let pcm_out = match manager.frames_out.try_receive() {
+            Ok(SinkFrame::Pcm(pcm)) => pcm,
+            _ => panic!("expected a decoded PCM frame"),
+        };
         assert_eq!(pcm_out.ase_id, 0);
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
@@ -655,7 +744,10 @@ mod tests {
         let (packet, rest) = IsoPacket::from_hci_bytes(&raw).unwrap();
         assert!(rest.is_empty());
         manager.on_iso_data(&packet);
-        let pcm_out = manager.pcm_out.try_receive().expect("expected a decoded PCM frame from the reused decoder");
+        let pcm_out = match manager.frames_out.try_receive() {
+            Ok(SinkFrame::Pcm(pcm)) => pcm,
+            _ => panic!("expected a decoded PCM frame from the reused decoder"),
+        };
         assert_eq!(pcm_out.samples.len(), encoder.samples_per_frame);
     }
 
@@ -700,5 +792,43 @@ mod tests {
             freed_by_replacement > 20_000,
             "replacing the 48kHz decoder must free its ~27564-byte working buffers, freed only {freed_by_replacement}"
         );
+    }
+
+    /// Passthrough mode: raw LC3 out, no decoder ever built (zero codec heap).
+    #[test]
+    fn passthrough_delivers_raw_lc3_frames_without_allocating_a_decoder() {
+        let (ascs, server) = build_ascs_and_server();
+        let manager = CisManager::<NoopRawMutex, MAX_ASES>::new_passthrough();
+
+        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS));
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x05),
+            cis_handle: ConnHandle::new(0x11),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive(); // Accept
+
+        let before = crate::test_alloc::allocated();
+        manager.on_cis_established(&established_event(0x11));
+        assert_eq!(
+            crate::test_alloc::allocated() - before,
+            0,
+            "passthrough must not allocate a decoder"
+        );
+        let _ = manager.actions.try_receive(); // SetupDataPath
+
+        let payload = [0xC3u8; 100];
+        let raw = iso_data_packet(0x11, &payload);
+        let (packet, _) = IsoPacket::from_hci_bytes(&raw).unwrap();
+        manager.on_iso_data(&packet);
+
+        let frame = match manager.frames_out.try_receive() {
+            Ok(SinkFrame::Lc3(raw)) => raw,
+            _ => panic!("expected a raw LC3 frame"),
+        };
+        assert_eq!(frame.ase_id, 0);
+        assert_eq!(&frame.frame[..], &payload[..]);
     }
 }

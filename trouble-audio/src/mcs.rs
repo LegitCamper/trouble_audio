@@ -8,13 +8,11 @@
 //! device) rather than per-player MCS instances, matching this crate's single-active-connection,
 //! single-player model (see the analogous note atop ascs.rs).
 //!
-//! Out of scope: every characteristic whose value is an Object Transfer Service (OTS) Object ID
-//! (Media Player Icon Object ID, Current Track/Next Track/Current Group/Parent Group Object ID),
-//! plus Search Control Point/Search Results Object ID. All of these require implementing OTS - a
-//! separate, substantial GATT service - which this crate does not do. Track/group *navigation* by
-//! index (Goto Track, Goto Group, ...) is modeled without OTS backing (see
-//! [`apply_media_operation`]'s doc comment), but nothing here can hand a client a browsable object
-//! hierarchy.
+//! The optional Object ID characteristics (Media Player Icon / Current Track Segments / Current
+//! Track / Next Track / Parent Group / Current Group Object ID) are supported via
+//! [`McsObjectIds`], referencing objects served by this crate's [`crate::ots`] - add both
+//! services to expose a browsable hierarchy. Still out of scope: Search Control Point/Search
+//! Results Object ID (OTS object *filtering*, which `crate::ots` doesn't implement either).
 
 use bitflags::bitflags;
 use bt_hci::uuid::{characteristic, service};
@@ -26,7 +24,7 @@ use trouble_host::{
     types::gatt_traits::*,
 };
 
-use crate::{LeAudioServerService, MAX_SERVICES};
+use crate::{ots::ObjectId, LeAudioServerService, MAX_SERVICES};
 
 /// Media Control Point Notification result codes (MCS, "Media Control Point Notification result
 /// codes" table). Reconstructed from public documentation - verify against the official
@@ -613,6 +611,76 @@ impl McsClient {
 }
 
 /// Initial values for [`McsServer::new`].
+/// An OTS Object ID as an MCS characteristic value: 48 bits, 6 octets LE (OTS 1.0 "Object ID").
+/// `ObjectId(0)` conventionally means "no object selected" here - the spec's alternative
+/// (a zero-length value) doesn't fit a fixed-size characteristic.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectIdValue {
+    encoded: [u8; 6],
+}
+
+impl From<ObjectId> for ObjectIdValue {
+    fn from(id: ObjectId) -> Self {
+        let mut encoded = [0u8; 6];
+        encoded.copy_from_slice(&id.0.to_le_bytes()[..6]);
+        Self { encoded }
+    }
+}
+
+impl ObjectIdValue {
+    pub fn object_id(&self) -> ObjectId {
+        let mut widened = [0u8; 8];
+        widened[..6].copy_from_slice(&self.encoded);
+        ObjectId(u64::from_le_bytes(widened))
+    }
+}
+
+impl AsGatt for ObjectIdValue {
+    const MIN_SIZE: usize = 6;
+    const MAX_SIZE: usize = 6;
+
+    fn as_gatt(&self) -> &[u8] {
+        &self.encoded
+    }
+}
+
+impl FromGatt for ObjectIdValue {
+    fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
+        Ok(Self {
+            encoded: data.try_into().map_err(|_| FromGattError::InvalidLength)?,
+        })
+    }
+}
+
+impl FixedGattValue for ObjectIdValue {
+    const SIZE: usize = 6;
+}
+
+/// Initial values for MCS's optional Object ID characteristics, each referencing an object this
+/// device also serves through [`crate::ots::OtsServer`]. Passing `Some` of this to
+/// [`McsServer::new`] exposes all six characteristics.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct McsObjectIds {
+    pub media_player_icon: ObjectId,
+    pub current_track_segments: ObjectId,
+    pub current_track: ObjectId,
+    pub next_track: ObjectId,
+    pub parent_group: ObjectId,
+    pub current_group: ObjectId,
+}
+
+/// The built Object ID characteristics, present when [`McsServer::new`] was given
+/// [`McsObjectIds`].
+struct McsObjectIdChars {
+    media_player_icon: Characteristic<ObjectIdValue>,
+    current_track_segments: Characteristic<ObjectIdValue>,
+    current_track: Characteristic<ObjectIdValue>,
+    next_track: Characteristic<ObjectIdValue>,
+    parent_group: Characteristic<ObjectIdValue>,
+    current_group: Characteristic<ObjectIdValue>,
+}
+
 pub struct McsInit {
     pub media_player_name: HString<32>,
     pub track_title: HString<64>,
@@ -637,11 +705,15 @@ pub struct McsStore<'a> {
     pub media_state: &'a mut [u8],
     pub media_control_point: &'a mut [u8],
     pub content_control_id: &'a mut [u8],
+    /// One 6-byte store per Object ID characteristic, in [`McsObjectIds`] field order. Unused
+    /// (may be empty) when no [`McsObjectIds`] is given.
+    pub object_ids: [&'a mut [u8]; 6],
 }
 
 /// Owned backing storage for MCS's characteristics.
 pub struct McsStorage {
     pub media_player_name: [u8; 32],
+    pub object_ids: [[u8; 6]; 6],
     pub track_title: [u8; 64],
     pub track_duration: [u8; 4],
     pub track_position: [u8; 4],
@@ -657,6 +729,7 @@ impl Default for McsStorage {
     fn default() -> Self {
         Self {
             media_player_name: [0; 32],
+            object_ids: [[0; 6]; 6],
             track_title: [0; 64],
             track_duration: [0; 4],
             track_position: [0; 4],
@@ -685,6 +758,12 @@ impl McsStorage {
             media_state: &mut self.media_state,
             media_control_point: &mut self.media_control_point,
             content_control_id: &mut self.content_control_id,
+            object_ids: {
+                // `[&mut ...; 6]` can't be built by mapping in stable const fashion - split the
+                // array of arrays into per-element borrows instead.
+                let [a, b, c, d, e, f] = &mut self.object_ids;
+                [&mut a[..], &mut b[..], &mut c[..], &mut d[..], &mut e[..], &mut f[..]]
+            },
         }
     }
 }
@@ -707,9 +786,10 @@ pub struct McsServer {
     opcodes_supported: MediaControlPointOpcodesSupported,
     media_control_point_opcodes_supported_char: Characteristic<MediaControlPointOpcodesSupported>,
     content_control_id: Characteristic<u8>,
+    object_ids: Option<McsObjectIdChars>,
 }
 
-pub const MCS_ATTRIBUTES: usize = 41;
+pub const MCS_ATTRIBUTES: usize = 41 + 6 * 3; // + the optional Object ID characteristics
 
 impl McsServer {
     /// Creates a new (Generic) MCS Gatt service. `Playing Orders Supported`/`Media Control Point
@@ -720,6 +800,7 @@ impl McsServer {
         init: McsInit,
         playing_orders_supported: &'a PlayingOrdersSupported,
         opcodes_supported: &'a MediaControlPointOpcodesSupported,
+        object_ids: Option<McsObjectIds>,
         store: McsStore<'a>,
     ) -> Self {
         let mut service = table.add_service(Service::new(service::GENERIC_MEDIA_CONTROL));
@@ -843,6 +924,37 @@ impl McsServer {
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
+        let object_id_chars = object_ids.map(|ids| {
+            let [icon_store, segments_store, track_store, next_store, parent_store, group_store] = store.object_ids;
+            let mut object_id_char = |uuid, id: ObjectId, char_store: &'a mut [u8]| {
+                service
+                    .add_characteristic(
+                        uuid,
+                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        ObjectIdValue::from(id),
+                        char_store,
+                    )
+                    .read_permission(PermissionLevel::EncryptionRequired)
+                    .build()
+            };
+            McsObjectIdChars {
+                media_player_icon: object_id_char(
+                    characteristic::MEDIA_PLAYER_ICON_OBJECT_ID,
+                    ids.media_player_icon,
+                    icon_store,
+                ),
+                current_track_segments: object_id_char(
+                    characteristic::CURRENT_TRACK_SEGMENTS_OBJECT_ID,
+                    ids.current_track_segments,
+                    segments_store,
+                ),
+                current_track: object_id_char(characteristic::CURRENT_TRACK_OBJECT_ID, ids.current_track, track_store),
+                next_track: object_id_char(characteristic::NEXT_TRACK_OBJECT_ID, ids.next_track, next_store),
+                parent_group: object_id_char(characteristic::PARENT_GROUP_OBJECT_ID, ids.parent_group, parent_store),
+                current_group: object_id_char(characteristic::CURRENT_GROUP_OBJECT_ID, ids.current_group, group_store),
+            }
+        });
+
         Self {
             handle: service.build(),
             media_player_name,
@@ -860,6 +972,7 @@ impl McsServer {
             opcodes_supported: *opcodes_supported,
             media_control_point_opcodes_supported_char,
             content_control_id,
+            object_ids: object_id_chars,
         }
     }
 
@@ -906,6 +1019,27 @@ impl McsServer {
     pub fn content_control_id(&self) -> &Characteristic<u8> {
         &self.content_control_id
     }
+    /// The Current Track Object ID characteristic, when built with [`McsObjectIds`]. Update it
+    /// (`.set(...)` + `.notify(...)`) alongside [`Self::track_changed`] when the player moves to
+    /// a track backed by a different OTS object.
+    pub fn current_track_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.current_track)
+    }
+    pub fn next_track_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.next_track)
+    }
+    pub fn media_player_icon_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.media_player_icon)
+    }
+    pub fn current_track_segments_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.current_track_segments)
+    }
+    pub fn parent_group_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.parent_group)
+    }
+    pub fn current_group_object_id(&self) -> Option<&Characteristic<ObjectIdValue>> {
+        self.object_ids.as_ref().map(|o| &o.current_group)
+    }
 }
 
 impl<P: PacketPool> LeAudioServerService<P> for McsServer {
@@ -925,6 +1059,19 @@ impl<P: PacketPool> LeAudioServerService<P> for McsServer {
         ];
         if handles.contains(&event.handle()) {
             return Some(Ok(()));
+        }
+        if let Some(objects) = &self.object_ids {
+            let object_handles = [
+                objects.media_player_icon.handle,
+                objects.current_track_segments.handle,
+                objects.current_track.handle,
+                objects.next_track.handle,
+                objects.parent_group.handle,
+                objects.current_group.handle,
+            ];
+            if object_handles.contains(&event.handle()) {
+                return Some(Ok(()));
+            }
         }
         None
     }
@@ -1196,6 +1343,7 @@ mod tests {
         static CCID: static_cell::StaticCell<[u8; 1]> = static_cell::StaticCell::new();
         static ORDERS_SUP: static_cell::StaticCell<PlayingOrdersSupported> = static_cell::StaticCell::new();
         static OPS_SUP: static_cell::StaticCell<MediaControlPointOpcodesSupported> = static_cell::StaticCell::new();
+        static OBJ_STORES: static_cell::StaticCell<[[u8; 6]; 6]> = static_cell::StaticCell::new();
 
         let mcs = McsServer::new(
             &mut table,
@@ -1211,6 +1359,10 @@ mod tests {
             },
             ORDERS_SUP.init(PlayingOrdersSupported::InOrderOnce | PlayingOrdersSupported::ShuffleOnce),
             OPS_SUP.init(ALL_SUPPORTED),
+            Some(McsObjectIds {
+                current_track: ObjectId(0x0100),
+                ..Default::default()
+            }),
             McsStore {
                 media_player_name: NAME.init([0; 32]),
                 track_changed: CHANGED.init([0; 0]),
@@ -1223,6 +1375,10 @@ mod tests {
                 media_state: STATE.init([0; 1]),
                 media_control_point: CP.init([0; 5]),
                 content_control_id: CCID.init([0; 1]),
+                object_ids: {
+                    let [a, b, c, d, e, f] = OBJ_STORES.init([[0; 6]; 6]);
+                    [&mut a[..], &mut b[..], &mut c[..], &mut d[..], &mut e[..], &mut f[..]]
+                },
             },
         );
         let server: AttributeServer<'_, NoopRawMutex, DefaultPacketPool, MAX_SERVICES, 1> = AttributeServer::new(table);
@@ -1236,6 +1392,13 @@ mod tests {
 
         mcs.media_state().set(&server, &MediaState::Playing).unwrap();
         assert_eq!(mcs.media_state().get(&server).unwrap(), MediaState::Playing);
+
+        // The OTS-backed Object ID characteristics round-trip through the real attribute table.
+        let current_track = mcs.current_track_object_id().expect("built with McsObjectIds");
+        assert_eq!(current_track.get(&server).unwrap().object_id(), ObjectId(0x0100));
+        current_track.set(&server, &ObjectIdValue::from(ObjectId(0x0200))).unwrap();
+        assert_eq!(current_track.get(&server).unwrap().object_id(), ObjectId(0x0200));
+        assert_eq!(mcs.next_track_object_id().unwrap().get(&server).unwrap().object_id(), ObjectId(0));
     }
 
     #[test]

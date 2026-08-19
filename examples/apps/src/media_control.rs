@@ -111,6 +111,7 @@ fn build_server(storage: &mut Storage) -> Server<'_, MAX_ASES, CONNECTIONS_MAX, 
         },
         &storage.playing_orders_supported,
         &storage.opcodes_supported,
+        None,
         &mut storage.mcs,
     )
     .build()

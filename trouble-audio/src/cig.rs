@@ -2,7 +2,9 @@
 //! and LC3 encoding - the initiator-side mirror of [`crate::cis::CisManager`]. Only handles
 //! streaming *to* Sink ASEs (the central is always the audio source here): once both ASEs of this
 //! crate's stereo scope are QoS-configured, [`CigManager`] creates the CIG, creates both CIS, sets
-//! up each one's ISO data path, and hands back an [`Lc3MonoEncoder`] per ASE once ready.
+//! up each one's ISO data path, and hands back an [`Lc3MonoEncoder`] per ASE once ready - or, in
+//! passthrough mode ([`CigManager::new_passthrough`]), none: the application sends its own
+//! pre-encoded LC3 frames via [`crate::iso_tx`].
 //!
 //! Like `CisManager`, [`CigManager::on_cis_established`] implements [`EventHandler`] so it can be
 //! handed to [`RxRunner::run_with_handler`](trouble_host::prelude::RxRunner::run_with_handler);
@@ -206,6 +208,9 @@ struct CachedEncoder {
 /// stereo scope (exactly [`CIS_COUNT`] ASEs, always Sink ASEs on the peer) and encodes outgoing
 /// audio. See the module docs for how to wire this up.
 pub struct CigManager<M: RawMutex> {
+    /// `true` when built via [`Self::new_passthrough`]: no encoder is ever constructed, the
+    /// application supplies pre-encoded LC3 frames itself (see [`Self::encode`]'s docs).
+    passthrough: bool,
     slots: RefCell<[CigAseSlot; CIS_COUNT]>,
     encoders: RefCell<[Option<CachedEncoder>; CIS_COUNT]>,
     acl_handle: RefCell<Option<ConnHandle>>,
@@ -225,7 +230,20 @@ impl<M: RawMutex> Default for CigManager<M> {
 impl<M: RawMutex> CigManager<M> {
     /// Creates an empty manager, before any ASE has been configured.
     pub fn new() -> Self {
+        Self::with_passthrough(false)
+    }
+
+    /// Creates an empty manager in LC3 passthrough mode: no encoder is ever constructed (zero
+    /// codec heap). The application already has LC3 frames and sends them itself once
+    /// [`Self::next_ready_ase`] fires, via [`crate::iso_tx::build_packet`] addressed with
+    /// [`Self::cis_handle`]; [`Self::encode`] always returns `None`.
+    pub fn new_passthrough() -> Self {
+        Self::with_passthrough(true)
+    }
+
+    fn with_passthrough(passthrough: bool) -> Self {
         Self {
+            passthrough,
             slots: RefCell::new([CigAseSlot::default(); CIS_COUNT]),
             encoders: RefCell::new(core::array::from_fn(|_| None)),
             acl_handle: RefCell::new(None),
@@ -334,7 +352,9 @@ impl<M: RawMutex> CigManager<M> {
     }
 
     /// Encodes one PCM frame for `ase_id`'s CIS, if it's ready (see [`Self::next_ready_ase`]).
-    /// `out`'s length picks the codec frame size, per [`Lc3MonoEncoder::encode`].
+    /// `out`'s length picks the codec frame size, per [`Lc3MonoEncoder::encode`]. Always `None`
+    /// in passthrough mode - send your already-encoded frames directly instead (see
+    /// [`Self::new_passthrough`]).
     pub fn encode(&self, ase_id: u8, pcm: &[i16], out: &mut [u8]) -> Option<Result<(), crate::lc3::Lc3EncoderError>> {
         let idx = self.slots.borrow().iter().position(|s| s.ase_id == Some(ase_id))?;
         let mut encoders = self.encoders.borrow_mut();
@@ -364,25 +384,29 @@ impl<M: RawMutex> EventHandler for CigManager<M> {
             return;
         };
 
-        // Reuse the existing encoder when it matches (see `CachedEncoder`/`reset()` docs).
-        let already_matches = matches!(
-            &self.encoders.borrow()[idx],
-            Some(cached) if cached.sampling_frequency == sampling_frequency && cached.frame_duration == frame_duration
-        );
-        if already_matches {
-            info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
+        if self.passthrough {
+            // Raw LC3 in: the application supplies pre-encoded frames, no encoder needed.
         } else {
-            match Lc3MonoEncoder::new(sampling_frequency, frame_duration) {
-                Ok(encoder) => {
-                    self.encoders.borrow_mut()[idx] = Some(CachedEncoder {
-                        sampling_frequency,
-                        frame_duration,
-                        encoder,
-                    });
-                }
-                Err(_) => {
-                    warn!("[cig] unsupported LC3 sampling frequency for established CIS");
-                    return;
+            // Reuse the existing encoder when it matches (see `CachedEncoder`/`reset()` docs).
+            let already_matches = matches!(
+                &self.encoders.borrow()[idx],
+                Some(cached) if cached.sampling_frequency == sampling_frequency && cached.frame_duration == frame_duration
+            );
+            if already_matches {
+                info!("[cig] reusing existing encoder for ase slot {} (reconnect, same audio params)", idx);
+            } else {
+                match Lc3MonoEncoder::new(sampling_frequency, frame_duration) {
+                    Ok(encoder) => {
+                        self.encoders.borrow_mut()[idx] = Some(CachedEncoder {
+                            sampling_frequency,
+                            frame_duration,
+                            encoder,
+                        });
+                    }
+                    Err(_) => {
+                        warn!("[cig] unsupported LC3 sampling frequency for established CIS");
+                        return;
+                    }
                 }
             }
         }
@@ -666,5 +690,27 @@ mod tests {
         let mut out = [0u8; 100];
         assert!(manager.encode(0, &pcm, &mut out).unwrap().is_ok());
         assert!(manager.encode(1, &pcm, &mut out).unwrap().is_ok());
+    }
+
+    /// Passthrough mode: no encoder is built, but the CIS handles still come up for the
+    /// application to address its own pre-encoded frames at.
+    #[test]
+    fn passthrough_brings_up_cis_without_allocating_encoders() {
+        let manager = CigManager::<NoopRawMutex>::new_passthrough();
+        manager.set_acl_handle(ConnHandle::new(0x05));
+        manager.configure(0, qos(7, 0), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
+        manager.configure(1, qos(7, 1), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
+        let _ = manager.actions.try_receive(); // SetCigParameters
+        manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
+        let _ = manager.actions.try_receive(); // CreateCis
+
+        let before = crate::test_alloc::allocated();
+        manager.on_cis_established(&established_event(0x10));
+        manager.on_cis_established(&established_event(0x11));
+        assert_eq!(crate::test_alloc::allocated() - before, 0, "passthrough must not allocate encoders");
+
+        assert_eq!(manager.cis_handle(0).unwrap().raw(), 0x10);
+        assert_eq!(manager.cis_handle(1).unwrap().raw(), 0x11);
+        assert!(manager.encode(0, &[0i16; 480], &mut [0u8; 100]).is_none());
     }
 }

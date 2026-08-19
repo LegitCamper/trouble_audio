@@ -31,12 +31,8 @@ pub const INVALID_LOCK_VALUE: AttErrorCode = AttErrorCode::new(0x82);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SirkType {
-    /// Encrypted using the CSIS "sef" key-obfuscation function keyed on the LTK, so only a bonded
-    /// peer can recover the real SIRK. **Not implemented** - constructing this variant stores
-    /// `key` as-is (i.e. as if already encrypted upstream, or accepting the reduced privacy of
-    /// sending it in the clear under this label); no encryption/decryption is performed by this
-    /// crate. `SirkType::Plaintext` is the only variant this crate can honestly claim to support
-    /// end-to-end.
+    /// Encrypted using the CSIS "sef" key-obfuscation function keyed on the session LTK, so only
+    /// a bonded peer can recover the real SIRK - see [`Sirk::encrypted`]/[`Sirk::decrypt`].
     Encrypted = 0x00,
     Plaintext = 0x01,
 }
@@ -66,6 +62,102 @@ impl Sirk {
     pub fn plaintext(key: [u8; 16]) -> Self {
         Self { sirk_type: SirkType::Plaintext, key }
     }
+
+    /// Builds an Encrypted-type SIRK value: `sirk` obfuscated with [`sef`] keyed on the session's
+    /// LTK. Both arrays are in wire (least-significant-octet-first) order, matching this
+    /// characteristic's value and `BondInformation`'s LTK.
+    pub fn encrypted(sirk: [u8; 16], ltk: [u8; 16]) -> Self {
+        Self {
+            sirk_type: SirkType::Encrypted,
+            key: sef(&ltk, &sirk),
+        }
+    }
+
+    /// Recovers the plain SIRK: the key itself for a Plaintext value, or [`sdf`] (the inverse of
+    /// [`sef`]) applied with the session's LTK for an Encrypted one.
+    pub fn decrypt(&self, ltk: [u8; 16]) -> [u8; 16] {
+        match self.sirk_type {
+            SirkType::Plaintext => self.key,
+            SirkType::Encrypted => sdf(&ltk, &self.key),
+        }
+    }
+}
+
+/// AES-CMAC over a spec-order (most-significant-octet-first) key and message.
+fn aes_cmac(key_be: &[u8; 16], msg: &[u8]) -> [u8; 16] {
+    use cmac::Mac;
+    let mut mac = cmac::Cmac::<aes::Aes128>::new_from_slice(key_be).unwrap();
+    mac.update(msg);
+    mac.finalize().into_bytes().into()
+}
+
+fn reversed(bytes: &[u8; 16]) -> [u8; 16] {
+    let mut out = *bytes;
+    out.reverse();
+    out
+}
+
+/// CSIS `s1(M) = AES-CMAC` keyed with 16 zero octets (CSIS 4.3).
+fn s1(m: &[u8]) -> [u8; 16] {
+    aes_cmac(&[0u8; 16], m)
+}
+
+/// CSIS `k1(N, SALT, P) = AES-CMAC_T(P)` with `T = AES-CMAC_SALT(N)` (CSIS 4.4). All values in
+/// spec (most-significant-octet-first) order.
+fn k1(n: &[u8], salt: &[u8; 16], p: &[u8]) -> [u8; 16] {
+    let t = aes_cmac(salt, n);
+    aes_cmac(&t, p)
+}
+
+/// CSIS SIRK encryption function `sef(K, SIRK) = k1(K, s1("SIRKenc"), "csis") XOR SIRK`
+/// (CSIS 4.5). `k` (the session LTK) and `sirk` are in wire (least-significant-octet-first)
+/// order, as this crate stores them; the spec-order conversion happens internally.
+pub fn sef(k: &[u8; 16], sirk: &[u8; 16]) -> [u8; 16] {
+    let mut out = k1(&reversed(k), &s1(b"SIRKenc"), b"csis");
+    out.reverse(); // back to wire order
+    for (o, s) in out.iter_mut().zip(sirk) {
+        *o ^= s;
+    }
+    out
+}
+
+/// CSIS SIRK decryption function `sdf` (CSIS 4.6) - the same XOR construction as [`sef`], so
+/// decryption is just re-application.
+pub fn sdf(k: &[u8; 16], encrypted_sirk: &[u8; 16]) -> [u8; 16] {
+    sef(k, encrypted_sirk)
+}
+
+/// CSIS RSI hash function `sih(K, R) = e(K, R') mod 2^24` (CSIS 4.7) - the same construction as
+/// the Core spec's RPA hash `ah`. `k`/`prand` and the returned hash are in wire
+/// (least-significant-octet-first) order.
+pub fn sih(k: &[u8; 16], prand: [u8; 3]) -> [u8; 3] {
+    use aes::cipher::{BlockEncrypt, KeyInit};
+    // R' in spec order: 13 padding octets, then R with its most significant octet first.
+    let mut block = [0u8; 16];
+    block[13] = prand[2];
+    block[14] = prand[1];
+    block[15] = prand[0];
+    let cipher = aes::Aes128::new_from_slice(&reversed(k)).unwrap();
+    let mut b = aes::Block::clone_from_slice(&block);
+    cipher.encrypt_block(&mut b);
+    // The 24 least significant bits, returned least-significant-octet first.
+    [b[15], b[14], b[13]]
+}
+
+/// Builds the 6-octet Resolvable Set Identifier AD value (CSIS 4.8) from this set's SIRK and a
+/// caller-supplied 24-bit random `prand` (both least-significant-octet-first): `hash` then
+/// `prand`, the same layout as a resolvable private address. Advertise it under the RSI AD type
+/// (0x2E); a Set Coordinator resolves it by checking `hash == sih(SIRK, prand)`.
+pub fn rsi(sirk: &[u8; 16], prand: [u8; 3]) -> [u8; 6] {
+    let hash = sih(sirk, prand);
+    [hash[0], hash[1], hash[2], prand[0], prand[1], prand[2]]
+}
+
+/// Checks whether an RSI AD value was generated from `sirk` - the Set Coordinator's half of RSI
+/// resolution.
+pub fn resolve_rsi(sirk: &[u8; 16], rsi: &[u8; 6]) -> bool {
+    let prand = [rsi[3], rsi[4], rsi[5]];
+    sih(sirk, prand) == [rsi[0], rsi[1], rsi[2]]
 }
 
 impl AsGatt for Sirk {
@@ -435,5 +527,62 @@ mod tests {
         assert_eq!(csis.lock().get(&server).unwrap(), Lock::Unlocked);
         csis.lock().set(&server, &Lock::Locked).unwrap();
         assert_eq!(csis.lock().get(&server).unwrap(), Lock::Locked);
+    }
+
+    /// RFC 4493's first two AES-CMAC test vectors, proving the `aes`/`cmac` wiring (key order,
+    /// finalization) underlying s1/k1/sef.
+    #[test]
+    fn aes_cmac_matches_rfc_4493_vectors() {
+        let key = [
+            0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
+        ];
+        assert_eq!(
+            aes_cmac(&key, &[]),
+            [0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28, 0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75, 0x67, 0x46]
+        );
+        let msg = [
+            0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
+        ];
+        assert_eq!(
+            aes_cmac(&key, &msg),
+            [0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44, 0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a, 0x28, 0x7c]
+        );
+    }
+
+    /// `sih` is the same construction as the Core spec's RPA hash `ah` (Vol 3 Part H 2.2.2), so
+    /// the Core spec's `ah` sample data applies: IRK ec0234a357c8ad05341010a60a397d9b,
+    /// prand 0x708194 -> hash 0x0dfbaa. Inputs here are least-significant-octet-first.
+    #[test]
+    fn sih_matches_the_core_spec_ah_sample() {
+        let mut k = [
+            0xec, 0x02, 0x34, 0xa3, 0x57, 0xc8, 0xad, 0x05, 0x34, 0x10, 0x10, 0xa6, 0x0a, 0x39, 0x7d, 0x9b,
+        ];
+        k.reverse();
+        let hash = sih(&k, [0x94, 0x81, 0x70]);
+        assert_eq!(hash, [0xaa, 0xfb, 0x0d]);
+    }
+
+    #[test]
+    fn sef_then_sdf_round_trips_and_actually_obfuscates() {
+        let ltk = [0x11; 16];
+        let sirk = [
+            0x45, 0x7d, 0x7d, 0x09, 0x21, 0xa1, 0xfd, 0x22, 0xce, 0xec, 0xd3, 0x2c, 0x66, 0x5e, 0xa6, 0xe5,
+        ];
+        let encrypted = sef(&ltk, &sirk);
+        assert_ne!(encrypted, sirk);
+        assert_eq!(sdf(&ltk, &encrypted), sirk);
+
+        let value = Sirk::encrypted(sirk, ltk);
+        assert_eq!(value.sirk_type, SirkType::Encrypted);
+        assert_eq!(value.decrypt(ltk), sirk);
+        assert_eq!(Sirk::plaintext(sirk).decrypt(ltk), sirk);
+    }
+
+    #[test]
+    fn rsi_resolves_only_with_the_right_sirk() {
+        let sirk = [0x5a; 16];
+        let ad = rsi(&sirk, [0x12, 0x34, 0x56]);
+        assert!(resolve_rsi(&sirk, &ad));
+        assert!(!resolve_rsi(&[0x00; 16], &ad));
     }
 }

@@ -6,3 +6,8 @@
 # than on Rust's default multi-threaded test harness. Lives at the workspace root (not just
 # `trouble-audio/.cargo/config.toml`) so it still applies when running `cargo test` from here.
 RUST_TEST_THREADS = "1"
+
+# Per-connection CCCD/client-state table in `trouble-host` - its 64-byte default is too small for
+# this crate's full service set (MCS's Object ID characteristics pushed it past; the panic message
+# in `client_att_table.rs` reports the exact need).
+TROUBLE_HOST_CLIENT_ATT_TABLE_SIZE = "128"

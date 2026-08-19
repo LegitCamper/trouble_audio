@@ -35,6 +35,11 @@ trouble-host = { workspace = true, features = [
 
 lc3-codec = "0.2.0"
 
+# CSIS SIRK encryption (sef/sdf) and RSI hashing (sih) - same versions trouble-host's `security`
+# feature uses, so they dedupe.
+aes = "0.8.2"
+cmac = "0.7.2"
+
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4", optional = true }
 static_cell = "2.1.0"

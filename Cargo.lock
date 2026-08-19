@@ -3907,8 +3907,10 @@ dependencies = [
 name = "trouble_audio"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "bitflags 2.13.1",
  "bt-hci 0.10.0",
+ "cmac",
  "defmt 1.1.1",
  "embassy-futures",
  "embassy-sync",
