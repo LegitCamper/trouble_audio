@@ -461,6 +461,60 @@ pub struct AicsStore<'a> {
     pub audio_input_description: &'a mut [u8],
 }
 
+/// Owned backing storage for AICS's characteristics (including the Gain Settings Attribute and
+/// Audio Input Type stores [`crate::ServerBuilder::add_aics`] also needs).
+#[derive(Default)]
+pub struct AicsStorage {
+    pub gain_settings_attribute: [u8; 3],
+    pub input_type: [u8; 1],
+    pub audio_input_state: [u8; 4],
+    pub audio_input_status: [u8; 1],
+    pub audio_input_control_point: [u8; 3],
+    pub audio_input_description: [u8; 32],
+}
+
+impl AicsStorage {
+    /// Splits into the three store arguments [`AicsServer::new`] takes: the Gain Settings
+    /// Attribute store, the Audio Input Type store, and the [`AicsStore`] for the rest.
+    pub fn split(&mut self) -> (&mut [u8], &mut [u8], AicsStore<'_>) {
+        let Self {
+            gain_settings_attribute,
+            input_type,
+            audio_input_state,
+            audio_input_status,
+            audio_input_control_point,
+            audio_input_description,
+        } = self;
+        (
+            &mut gain_settings_attribute[..],
+            &mut input_type[..],
+            AicsStore {
+                audio_input_state,
+                // Unused by `AicsServer::new` - the separate input-type store above backs that
+                // characteristic.
+                audio_input_type: &mut [],
+                audio_input_status,
+                audio_input_control_point,
+                audio_input_description,
+            },
+        )
+    }
+
+    /// The [`AicsStore`] view over this storage (the gain-settings/input-type stores are passed
+    /// separately - see [`Self::split`]). `AicsStore::audio_input_type` is
+    /// unused by `AicsServer::new` (the separate `input_type_store` argument backs that
+    /// characteristic), so it's an empty slice here.
+    pub fn as_store(&mut self) -> AicsStore<'_> {
+        AicsStore {
+            audio_input_state: &mut self.audio_input_state,
+            audio_input_type: &mut [],
+            audio_input_status: &mut self.audio_input_status,
+            audio_input_control_point: &mut self.audio_input_control_point,
+            audio_input_description: &mut self.audio_input_description,
+        }
+    }
+}
+
 impl AicsServer {
     /// Creates a new AICS Gatt service.
     pub fn new<'a, M: RawMutex>(

@@ -110,6 +110,12 @@ pub struct MicsServer {
     mute: Characteristic<Mute>,
 }
 
+/// Owned backing storage for MICS's one runtime-writable characteristic (Mute).
+#[derive(Default)]
+pub struct MicsStorage {
+    pub mute: [u8; 1],
+}
+
 pub const MICS_ATTRIBUTES: usize = 6;
 
 impl MicsServer {

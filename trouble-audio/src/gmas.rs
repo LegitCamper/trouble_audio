@@ -157,6 +157,16 @@ pub struct GmasServer {
     bgr_features: Option<Characteristic<BgrFeatures>>,
 }
 
+/// Owned backing storage for GMAS's characteristics.
+#[derive(Default)]
+pub struct GmasStorage {
+    pub role: [u8; 1],
+    pub ugg_features: [u8; 1],
+    pub ugt_features: [u8; 1],
+    pub bgs_features: [u8; 1],
+    pub bgr_features: [u8; 1],
+}
+
 pub const GMAS_ATTRIBUTES: usize = 11;
 
 impl GmasServer {

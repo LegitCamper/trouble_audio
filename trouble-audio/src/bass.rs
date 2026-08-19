@@ -565,6 +565,25 @@ pub struct BassServer<const MAX_SOURCES: usize> {
     receive_states: HVec<Characteristic<BroadcastReceiveStateValue>, MAX_SOURCES>,
 }
 
+/// Backing-store size for the BASS control point and each Broadcast Receive State slot - fits an
+/// Add/Modify Source operation with a couple of subgroups and modest metadata.
+pub const BASS_STORE_SIZE: usize = 64;
+
+/// Owned backing storage for BASS's characteristics.
+pub struct BassStorage<const MAX_SOURCES: usize> {
+    pub control_point: [u8; BASS_STORE_SIZE],
+    pub receive_states: [[u8; BASS_STORE_SIZE]; MAX_SOURCES],
+}
+
+impl<const MAX_SOURCES: usize> Default for BassStorage<MAX_SOURCES> {
+    fn default() -> Self {
+        Self {
+            control_point: [0; BASS_STORE_SIZE],
+            receive_states: [[0; BASS_STORE_SIZE]; MAX_SOURCES],
+        }
+    }
+}
+
 pub const BASS_ATTRIBUTES: usize = 24;
 
 impl<const MAX_SOURCES: usize> BassServer<MAX_SOURCES> {
@@ -572,7 +591,7 @@ impl<const MAX_SOURCES: usize> BassServer<MAX_SOURCES> {
     pub fn new<'a, M: RawMutex>(
         table: &mut trouble_host::attribute::AttributeTable<'a, M, MAX_SERVICES>,
         control_point_store: &'a mut [u8],
-        receive_state_stores: &'a mut [&'a mut [u8]],
+        receive_state_stores: impl IntoIterator<Item = &'a mut [u8]>,
     ) -> Self {
         let mut service = table.add_service(Service::new(service::BROADCAST_AUDIO_SCAN));
 
@@ -587,7 +606,7 @@ impl<const MAX_SOURCES: usize> BassServer<MAX_SOURCES> {
             .build();
 
         let mut receive_states = HVec::new();
-        for store in receive_state_stores.iter_mut() {
+        for store in receive_state_stores {
             let characteristic = service
                 .add_characteristic(
                     characteristic::BROADCAST_RECEIVE_STATE,
@@ -780,11 +799,9 @@ mod tests {
             trouble_host::attribute::AttributeTable::new();
         static CP: static_cell::StaticCell<[u8; 64]> = static_cell::StaticCell::new();
         static SLOT0: static_cell::StaticCell<[u8; 64]> = static_cell::StaticCell::new();
-        static SLOTS: static_cell::StaticCell<[&'static mut [u8]; 1]> = static_cell::StaticCell::new();
 
         let slot0: &'static mut [u8] = SLOT0.init([0; 64]);
-        let slots = SLOTS.init([slot0]);
-        let bass: BassServer<1> = BassServer::new(&mut table, CP.init([0; 64]), slots);
+        let bass: BassServer<1> = BassServer::new(&mut table, CP.init([0; 64]), [slot0]);
         let server: AttributeServer<'_, NoopRawMutex, DefaultPacketPool, MAX_SERVICES, 1> = AttributeServer::new(table);
 
         assert_eq!(bass.receive_states().len(), 1);

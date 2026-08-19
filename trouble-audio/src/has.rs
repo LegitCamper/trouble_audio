@@ -380,6 +380,24 @@ pub struct HasServer<const MAX_PRESETS: usize> {
     presets: RefCell<HVec<PresetRecord, MAX_PRESETS>>,
 }
 
+/// Owned backing storage for HAS's characteristics.
+pub struct HasStorage {
+    pub features: [u8; 1],
+    /// Opcode + index + a maximal preset name (Write Preset Name is the largest operation).
+    pub preset_control_point: [u8; 2 + MAX_PRESET_NAME_LEN],
+    pub active_preset_index: [u8; 1],
+}
+
+impl Default for HasStorage {
+    fn default() -> Self {
+        Self {
+            features: [0; 1],
+            preset_control_point: [0; 2 + MAX_PRESET_NAME_LEN],
+            active_preset_index: [0; 1],
+        }
+    }
+}
+
 pub const HAS_ATTRIBUTES: usize = 10;
 
 impl<const MAX_PRESETS: usize> HasServer<MAX_PRESETS> {

@@ -52,14 +52,15 @@ pub mod prelude {
     pub use bt_hci::cmd::le::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath};
 
     pub use crate::{
-        ascs::{Ase, AseType},
-        cis::CisManager,
+        ascs::{Ase, AscsStorage, AseType},
+        cig::{drive_cig, AseQos, CigManager},
+        cis::{drive_cis, enable_cis_host_support, CisManager, DecodedPcm, PcmFrame},
         generic_audio::{
             AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame,
             SamplingFrequency, SupportedFrameDurations, SupportedSamplingFrequencies,
         },
-        pacs::{AudioContexts, PACRecord, PAC},
-        CodecId, Server, ServerBuilder,
+        pacs::{AudioContexts, PACRecord, PacsStorage, PAC},
+        CodecId, DiscoveryError, LeAudioClient, Server, ServerBuilder,
     };
 }
 

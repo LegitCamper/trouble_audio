@@ -90,6 +90,12 @@ pub struct TmasServer {
     role: Characteristic<TmapRole>,
 }
 
+/// Owned backing storage for TMAS's one characteristic (TMAP Role).
+#[derive(Default)]
+pub struct TmasStorage {
+    pub role: [u8; 2],
+}
+
 pub const TMAS_ATTRIBUTES: usize = 3;
 
 impl TmasServer {

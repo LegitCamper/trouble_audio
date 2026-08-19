@@ -77,6 +77,33 @@ impl PacsClient {
     // TODO: handle subscriptions
 }
 
+/// Backing-store size for a Sink/Source PAC characteristic - fits several typical LC3 PAC
+/// records; a device exposing unusually rich capabilities can size its own store instead of
+/// using [`PacsStorage`].
+pub const PAC_STORE_SIZE: usize = 128;
+
+/// Owned backing storage for PACS's characteristics - declare one next to the `ServerBuilder`
+/// call and pass it to [`crate::ServerBuilder::add_pacs`].
+pub struct PacsStorage {
+    pub sink_pac: [u8; PAC_STORE_SIZE],
+    pub sink_audio_locations: [u8; 4],
+    pub source_pac: [u8; PAC_STORE_SIZE],
+    pub source_audio_locations: [u8; 4],
+    pub available_audio_contexts: [u8; 4],
+}
+
+impl Default for PacsStorage {
+    fn default() -> Self {
+        Self {
+            sink_pac: [0; PAC_STORE_SIZE],
+            sink_audio_locations: [0; 4],
+            source_pac: [0; PAC_STORE_SIZE],
+            source_audio_locations: [0; 4],
+            available_audio_contexts: [0; 4],
+        }
+    }
+}
+
 /// A Gatt service server exposing Capabilities of an audio device
 pub struct PacsServer {
     handle: u16,

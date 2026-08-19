@@ -639,6 +639,56 @@ pub struct McsStore<'a> {
     pub content_control_id: &'a mut [u8],
 }
 
+/// Owned backing storage for MCS's characteristics.
+pub struct McsStorage {
+    pub media_player_name: [u8; 32],
+    pub track_title: [u8; 64],
+    pub track_duration: [u8; 4],
+    pub track_position: [u8; 4],
+    pub playback_speed: [u8; 1],
+    pub seeking_speed: [u8; 1],
+    pub playing_order: [u8; 1],
+    pub media_state: [u8; 1],
+    pub media_control_point: [u8; 5],
+    pub content_control_id: [u8; 1],
+}
+
+impl Default for McsStorage {
+    fn default() -> Self {
+        Self {
+            media_player_name: [0; 32],
+            track_title: [0; 64],
+            track_duration: [0; 4],
+            track_position: [0; 4],
+            playback_speed: [0; 1],
+            seeking_speed: [0; 1],
+            playing_order: [0; 1],
+            media_state: [0; 1],
+            media_control_point: [0; 5],
+            content_control_id: [0; 1],
+        }
+    }
+}
+
+impl McsStorage {
+    pub fn as_store(&mut self) -> McsStore<'_> {
+        McsStore {
+            media_player_name: &mut self.media_player_name,
+            // Track Changed carries no value - notification-only.
+            track_changed: &mut [],
+            track_title: &mut self.track_title,
+            track_duration: &mut self.track_duration,
+            track_position: &mut self.track_position,
+            playback_speed: &mut self.playback_speed,
+            seeking_speed: &mut self.seeking_speed,
+            playing_order: &mut self.playing_order,
+            media_state: &mut self.media_state,
+            media_control_point: &mut self.media_control_point,
+            content_control_id: &mut self.content_control_id,
+        }
+    }
+}
+
 /// A Gatt service server exposing this device's single media player.
 pub struct McsServer {
     handle: u16,

@@ -55,25 +55,16 @@ pub static BUTTON_PRESSED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Backing storage for [`run`]'s GATT table - declared separately so its borrows can outlive the
 /// `Server` built from it (see `apps::sink::PeripheralConfigStorage` for the same pattern).
-struct McsStorage {
+/// The per-characteristic buffers come from the library's own storage types.
+struct Storage {
     audio_contexts: AudioContexts,
-    audio_contexts_store: [u8; 4],
     playing_orders_supported: PlayingOrdersSupported,
     opcodes_supported: MediaControlPointOpcodesSupported,
-    media_player_name: [u8; 32],
-    track_changed: [u8; 0],
-    track_title: [u8; 64],
-    track_duration: [u8; 4],
-    track_position: [u8; 4],
-    playback_speed: [u8; 1],
-    seeking_speed: [u8; 1],
-    playing_order: [u8; 1],
-    media_state: [u8; 1],
-    media_control_point: [u8; 5],
-    content_control_id: [u8; 1],
+    pacs: trouble_audio::pacs::PacsStorage,
+    mcs: trouble_audio::mcs::McsStorage,
 }
 
-impl Default for McsStorage {
+impl Default for Storage {
     fn default() -> Self {
         Self {
             // This device has no LE Audio streaming capability at all - PACS is only present
@@ -82,26 +73,16 @@ impl Default for McsStorage {
                 sink_contexts: ContextType::empty(),
                 source_contexts: ContextType::empty(),
             },
-            audio_contexts_store: [0; 4],
             playing_orders_supported: PlayingOrdersSupported::InOrderOnce,
             opcodes_supported: MediaControlPointOpcodesSupported::Play
                 | MediaControlPointOpcodesSupported::Pause,
-            media_player_name: [0; 32],
-            track_changed: [0; 0],
-            track_title: [0; 64],
-            track_duration: [0; 4],
-            track_position: [0; 4],
-            playback_speed: [0; 1],
-            seeking_speed: [0; 1],
-            playing_order: [0; 1],
-            media_state: [0; 1],
-            media_control_point: [0; 5],
-            content_control_id: [0; 1],
+            pacs: Default::default(),
+            mcs: Default::default(),
         }
     }
 }
 
-fn build_server(storage: &mut McsStorage) -> Server<'_, MAX_ASES, CONNECTIONS_MAX, NoopRawMutex> {
+fn build_server(storage: &mut Storage) -> Server<'_, MAX_ASES, CONNECTIONS_MAX, NoopRawMutex> {
     ServerBuilder::<MAX_ASES, CONNECTIONS_MAX, NoopRawMutex>::new(
         DEVICE_NAME,
         &appearance::human_interface_device::GENERIC_HUMAN_INTERFACE_DEVICE,
@@ -113,7 +94,7 @@ fn build_server(storage: &mut McsStorage) -> Server<'_, MAX_ASES, CONNECTIONS_MA
         None,
         &storage.audio_contexts,
         &storage.audio_contexts,
-        &mut storage.audio_contexts_store,
+        &mut storage.pacs,
     )
     .add_mcs(
         mcs::McsInit {
@@ -130,19 +111,7 @@ fn build_server(storage: &mut McsStorage) -> Server<'_, MAX_ASES, CONNECTIONS_MA
         },
         &storage.playing_orders_supported,
         &storage.opcodes_supported,
-        mcs::McsStore {
-            media_player_name: &mut storage.media_player_name,
-            track_changed: &mut storage.track_changed,
-            track_title: &mut storage.track_title,
-            track_duration: &mut storage.track_duration,
-            track_position: &mut storage.track_position,
-            playback_speed: &mut storage.playback_speed,
-            seeking_speed: &mut storage.seeking_speed,
-            playing_order: &mut storage.playing_order,
-            media_state: &mut storage.media_state,
-            media_control_point: &mut storage.media_control_point,
-            content_control_id: &mut storage.content_control_id,
-        },
+        &mut storage.mcs,
     )
     .build()
 }
@@ -201,7 +170,7 @@ pub async fn run<C: Controller>(controller: C, bond_store: Option<&dyn BondStore
     .expect("static advertising data always fits in 31 bytes");
     let advertiser_data = &advertiser_data[..adv_data_len];
 
-    let mut storage = McsStorage::default();
+    let mut storage = Storage::default();
     let server = build_server(&mut storage);
     // A player with nothing loaded is `Inactive`, and Play/Pause are rejected while inactive -
     // this simulated remote always has a track "loaded", just not playing yet.

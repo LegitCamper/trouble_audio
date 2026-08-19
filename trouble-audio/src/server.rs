@@ -11,23 +11,23 @@ use trouble_host::{
 use alloc::vec::Vec as AVec;
 
 use crate::{
-    aics::{self, AicsServer, AicsStore, AudioInputState, AudioInputType, AICS_ATTRIBUTES},
-    ascs::{AscsServer, AseType},
+    aics::{self, AicsServer, AicsStorage, AudioInputState, AudioInputType, AICS_ATTRIBUTES},
+    ascs::{AscsServer, AscsStorage, AseType},
     bap,
-    bass::{self, BassServer, BASS_ATTRIBUTES},
+    bass::{self, BassServer, BassStorage, BASS_ATTRIBUTES},
     cis::CisManager,
-    csis::{CsisServer, Lock, Sirk, CSIS_ATTRIBUTES},
+    csis::{CsisServer, CsisStorage, Lock, Sirk, CSIS_ATTRIBUTES},
     generic_audio::AudioLocation,
-    gmas::{BgrFeatures, BgsFeatures, GmapRole, GmasServer, UggFeatures, UgtFeatures, GMAS_ATTRIBUTES},
-    has::{self, HasServer, PresetRecord, HAS_ATTRIBUTES},
-    mcs::{self, McsServer, MCS_ATTRIBUTES},
-    mics::{Mute, MicsServer, MICS_ATTRIBUTES},
-    ots::{self, ObjectRecord, OtsFeature, OtsServer, OTS_ATTRIBUTES},
-    pacs::{AudioContexts, PacsServer, PAC, PACS_ATTRIBUTES},
-    tbs::{self, TbsInit, TbsServer, TbsStore, TBS_ATTRIBUTES},
-    tmas::{TmapRole, TmasServer, TMAS_ATTRIBUTES},
-    vcs::{self, VcsServer, VCS_ATTRIBUTES},
-    vocs::{self, VocsServer, VocsStore, VolumeOffsetState, VOCS_ATTRIBUTES},
+    gmas::{BgrFeatures, BgsFeatures, GmapRole, GmasServer, GmasStorage, UggFeatures, UgtFeatures, GMAS_ATTRIBUTES},
+    has::{self, HasServer, HasStorage, PresetRecord, HAS_ATTRIBUTES},
+    mcs::{self, McsServer, McsStorage, MCS_ATTRIBUTES},
+    mics::{MicsServer, MicsStorage, Mute, MICS_ATTRIBUTES},
+    ots::{self, ObjectRecord, OtsFeature, OtsServer, OtsStorage, OTS_ATTRIBUTES},
+    pacs::{AudioContexts, PacsServer, PacsStorage, PAC, PACS_ATTRIBUTES},
+    tbs::{self, TbsInit, TbsServer, TbsStorage, TBS_ATTRIBUTES},
+    tmas::{TmapRole, TmasServer, TmasStorage, TMAS_ATTRIBUTES},
+    vcs::{self, VcsServer, VcsStorage, VCS_ATTRIBUTES},
+    vocs::{self, VocsServer, VocsStorage, VolumeOffsetState, VOCS_ATTRIBUTES},
 };
 
 /// Fixed capacities for the const-generic LE Audio services (HAS/BASS/TBS/OTS) when wired through
@@ -157,38 +157,36 @@ where
     /// Adds the (mandatory) Published Audio Capabilities service.
     pub fn add_pacs(
         mut self,
-        sink_pac: Option<(&'a PAC, &'a mut [u8])>,
-        sink_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
-        source_pac: Option<(&'a PAC, &'a mut [u8])>,
-        source_audio_locations: Option<(&'a AudioLocation, &'a mut [u8])>,
+        sink_pac: Option<&'a PAC>,
+        sink_audio_locations: Option<&'a AudioLocation>,
+        source_pac: Option<&'a PAC>,
+        source_audio_locations: Option<&'a AudioLocation>,
         supported_audio_contexts: &'a AudioContexts,
         available_audio_contexts: &'a AudioContexts,
-        available_audio_contexts_store: &'a mut [u8],
+        storage: &'a mut PacsStorage,
     ) -> Self {
         let pacs = PacsServer::new(
             &mut self.table,
-            sink_pac,
-            sink_audio_locations,
-            source_pac,
-            source_audio_locations,
+            sink_pac.map(|pac| (pac, &mut storage.sink_pac[..])),
+            sink_audio_locations.map(|loc| (loc, &mut storage.sink_audio_locations[..])),
+            source_pac.map(|pac| (pac, &mut storage.source_pac[..])),
+            source_audio_locations.map(|loc| (loc, &mut storage.source_audio_locations[..])),
             supported_audio_contexts,
             available_audio_contexts,
-            available_audio_contexts_store,
+            &mut storage.available_audio_contexts,
         );
         self.pacs = Some(pacs);
         self
     }
 
     /// Adds the (optional) Audio Stream Control service with the given initial ASEs.
-    /// `ase_stores` must yield one backing buffer per entry in `ases` - see
-    /// [`crate::ascs::ASE_STORE_SIZE`]/[`crate::ascs::ASE_CONTROL_POINT_STORE_SIZE`] for sizing.
-    pub fn add_ascs(
-        mut self,
-        ases: Vec<AseType, MAX_ASES>,
-        control_point_store: &'a mut [u8],
-        ase_stores: impl IntoIterator<Item = &'a mut [u8]>,
-    ) -> Self {
-        let ascs = AscsServer::new(&mut self.table, ases, control_point_store, ase_stores);
+    pub fn add_ascs(mut self, ases: Vec<AseType, MAX_ASES>, storage: &'a mut AscsStorage<MAX_ASES>) -> Self {
+        let ascs = AscsServer::new(
+            &mut self.table,
+            ases,
+            &mut storage.ase_control_point,
+            storage.ases.iter_mut().map(|s| &mut s[..]),
+        );
         self.ascs = Some(ascs);
         self
     }
@@ -201,56 +199,37 @@ where
     }
 
     /// Adds the (optional) Microphone Control service.
-    pub fn add_mics(mut self, initial: Mute, store: &'a mut [u8]) -> Self {
-        self.mics = Some(MicsServer::new(&mut self.table, initial, store));
+    pub fn add_mics(mut self, initial: Mute, storage: &'a mut MicsStorage) -> Self {
+        self.mics = Some(MicsServer::new(&mut self.table, initial, &mut storage.mute));
         self
     }
 
     /// Adds the (optional) Volume Control service.
-    pub fn add_vcs(
-        mut self,
-        initial: vcs::VolumeState,
-        flags: vcs::VolumeFlags,
-        step: u8,
-        volume_state_store: &'a mut [u8],
-        volume_control_point_store: &'a mut [u8],
-        volume_flags_store: &'a mut [u8],
-    ) -> Self {
+    pub fn add_vcs(mut self, initial: vcs::VolumeState, flags: vcs::VolumeFlags, step: u8, storage: &'a mut VcsStorage) -> Self {
         self.vcs = Some(VcsServer::new(
             &mut self.table,
             initial,
             flags,
             step,
-            volume_state_store,
-            volume_control_point_store,
-            volume_flags_store,
+            &mut storage.volume_state,
+            &mut storage.volume_control_point,
+            &mut storage.volume_flags,
         ));
         self
     }
 
     /// Adds the (optional) Coordinated Set Identification service.
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_csis(
-        mut self,
-        sirk: Sirk,
-        set_size: Option<u8>,
-        lock: Lock,
-        rank: Option<u8>,
-        sirk_store: &'a mut [u8],
-        set_size_store: &'a mut [u8],
-        lock_store: &'a mut [u8],
-        rank_store: &'a mut [u8],
-    ) -> Self {
+    pub fn add_csis(mut self, sirk: Sirk, set_size: Option<u8>, lock: Lock, rank: Option<u8>, storage: &'a mut CsisStorage) -> Self {
         self.csis = Some(CsisServer::new(
             &mut self.table,
             sirk,
             set_size,
             lock,
             rank,
-            sirk_store,
-            set_size_store,
-            lock_store,
-            rank_store,
+            &mut storage.sirk,
+            &mut storage.set_size,
+            &mut storage.lock,
+            &mut storage.rank,
         ));
         self
     }
@@ -261,14 +240,19 @@ where
         init: mcs::McsInit,
         playing_orders_supported: &'a mcs::PlayingOrdersSupported,
         opcodes_supported: &'a mcs::MediaControlPointOpcodesSupported,
-        store: mcs::McsStore<'a>,
+        storage: &'a mut McsStorage,
     ) -> Self {
-        self.mcs = Some(McsServer::new(&mut self.table, init, playing_orders_supported, opcodes_supported, store));
+        self.mcs = Some(McsServer::new(
+            &mut self.table,
+            init,
+            playing_orders_supported,
+            opcodes_supported,
+            storage.as_store(),
+        ));
         self
     }
 
     /// Adds the (optional) Gaming Audio service.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_gmas(
         mut self,
         role: GmapRole,
@@ -276,11 +260,7 @@ where
         ugt_features: Option<UgtFeatures>,
         bgs_features: Option<BgsFeatures>,
         bgr_features: Option<BgrFeatures>,
-        role_store: &'a mut [u8],
-        ugg_store: &'a mut [u8],
-        ugt_store: &'a mut [u8],
-        bgs_store: &'a mut [u8],
-        bgr_store: &'a mut [u8],
+        storage: &'a mut GmasStorage,
     ) -> Self {
         self.gmas = Some(GmasServer::new(
             &mut self.table,
@@ -289,23 +269,22 @@ where
             ugt_features,
             bgs_features,
             bgr_features,
-            role_store,
-            ugg_store,
-            ugt_store,
-            bgs_store,
-            bgr_store,
+            &mut storage.role,
+            &mut storage.ugg_features,
+            &mut storage.ugt_features,
+            &mut storage.bgs_features,
+            &mut storage.bgr_features,
         ));
         self
     }
 
     /// Adds the (optional) Telephony and Media Audio service.
-    pub fn add_tmas(mut self, role: TmapRole, store: &'a mut [u8]) -> Self {
-        self.tmas = Some(TmasServer::new(&mut self.table, role, store));
+    pub fn add_tmas(mut self, role: TmapRole, storage: &'a mut TmasStorage) -> Self {
+        self.tmas = Some(TmasServer::new(&mut self.table, role, &mut storage.role));
         self
     }
 
     /// Adds the (optional) Audio Input Control service.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_aics(
         mut self,
         initial_state: AudioInputState,
@@ -313,10 +292,9 @@ where
         input_type: AudioInputType,
         initial_status: aics::AudioInputStatus,
         description: heapless::String<32>,
-        gain_settings_attribute_store: &'a mut [u8],
-        input_type_store: &'a mut [u8],
-        store: AicsStore<'a>,
+        storage: &'a mut AicsStorage,
     ) -> Self {
+        let (gain_store, type_store, store) = storage.split();
         self.aics = Some(AicsServer::new(
             &mut self.table,
             initial_state,
@@ -324,8 +302,8 @@ where
             input_type,
             initial_status,
             description,
-            gain_settings_attribute_store,
-            input_type_store,
+            gain_store,
+            type_store,
             store,
         ));
         self
@@ -337,9 +315,15 @@ where
         initial_state: VolumeOffsetState,
         audio_location: AudioLocation,
         description: heapless::String<32>,
-        store: VocsStore<'a>,
+        storage: &'a mut VocsStorage,
     ) -> Self {
-        self.vocs = Some(VocsServer::new(&mut self.table, initial_state, audio_location, description, store));
+        self.vocs = Some(VocsServer::new(
+            &mut self.table,
+            initial_state,
+            audio_location,
+            description,
+            storage.as_store(),
+        ));
         self
     }
 
@@ -349,38 +333,40 @@ where
         features: has::HearingAidFeatures,
         presets: heapless::Vec<PresetRecord, HAS_MAX_PRESETS>,
         active_preset_index: u8,
-        features_store: &'a mut [u8],
-        control_point_store: &'a mut [u8],
-        active_preset_index_store: &'a mut [u8],
+        storage: &'a mut HasStorage,
     ) -> Self {
         self.has = Some(HasServer::new(
             &mut self.table,
             features,
             presets,
             active_preset_index,
-            features_store,
-            control_point_store,
-            active_preset_index_store,
+            &mut storage.features,
+            &mut storage.preset_control_point,
+            &mut storage.active_preset_index,
         ));
         self
     }
 
     /// Adds the (optional) Broadcast Audio Scan service, with `BASS_MAX_SOURCES` receive-state
     /// slots.
-    pub fn add_bass(mut self, control_point_store: &'a mut [u8], receive_state_stores: &'a mut [&'a mut [u8]]) -> Self {
-        self.bass = Some(BassServer::new(&mut self.table, control_point_store, receive_state_stores));
+    pub fn add_bass(mut self, storage: &'a mut BassStorage<BASS_MAX_SOURCES>) -> Self {
+        self.bass = Some(BassServer::new(
+            &mut self.table,
+            &mut storage.control_point,
+            storage.receive_states.iter_mut().map(|s| &mut s[..]),
+        ));
         self
     }
 
     /// Adds the (optional) (Generic) Telephone Bearer service.
-    pub fn add_tbs(mut self, init: TbsInit, store: TbsStore<'a>) -> Self {
-        self.tbs = Some(TbsServer::new(&mut self.table, init, store));
+    pub fn add_tbs(mut self, init: TbsInit, storage: &'a mut TbsStorage) -> Self {
+        self.tbs = Some(TbsServer::new(&mut self.table, init, storage.as_store()));
         self
     }
 
     /// Adds the (optional) Object Transfer service, with the given initial object list.
-    pub fn add_ots(mut self, feature: OtsFeature, objects: AVec<ObjectRecord>, store: ots::OtsStore<'a>) -> Self {
-        self.ots = Some(OtsServer::new(&mut self.table, feature, objects, store));
+    pub fn add_ots(mut self, feature: OtsFeature, objects: AVec<ObjectRecord>, storage: &'a mut OtsStorage) -> Self {
+        self.ots = Some(OtsServer::new(&mut self.table, feature, objects, storage.as_store()));
         self
     }
 }

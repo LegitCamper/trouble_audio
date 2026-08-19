@@ -117,6 +117,22 @@ pub const ASE_STORE_SIZE: usize = 282;
 /// writes are then rejected at the ATT layer.
 pub const ASE_CONTROL_POINT_STORE_SIZE: usize = 512;
 
+/// Owned backing storage for ASCS's characteristics: one spec-max buffer per ASE endpoint plus
+/// the ASE Control Point. Pass to [`crate::ServerBuilder::add_ascs`].
+pub struct AscsStorage<const MAX_ASES: usize> {
+    pub ase_control_point: [u8; ASE_CONTROL_POINT_STORE_SIZE],
+    pub ases: [[u8; ASE_STORE_SIZE]; MAX_ASES],
+}
+
+impl<const MAX_ASES: usize> Default for AscsStorage<MAX_ASES> {
+    fn default() -> Self {
+        Self {
+            ase_control_point: [0; ASE_CONTROL_POINT_STORE_SIZE],
+            ases: [[0; ASE_STORE_SIZE]; MAX_ASES],
+        }
+    }
+}
+
 /// A Gatt service for controlling unicast audio streams.
 ///
 /// `MAX_ASES` is the max number of sink ASEs plus source ASEs the device supports for its one

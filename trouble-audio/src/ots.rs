@@ -708,6 +708,51 @@ pub struct OtsStore<'a> {
     pub object_changed: &'a mut [u8],
 }
 
+/// Owned backing storage for OTS's characteristics.
+pub struct OtsStorage {
+    pub feature: [u8; 8],
+    pub object_name: [u8; MAX_OBJECT_NAME_LEN],
+    pub object_type: [u8; 16],
+    pub object_size: [u8; 4],
+    pub object_id: [u8; 6],
+    pub object_properties: [u8; 4],
+    pub object_action_control_point: [u8; 16],
+    pub object_list_control_point: [u8; 8],
+    pub object_changed: [u8; 1],
+}
+
+impl Default for OtsStorage {
+    fn default() -> Self {
+        Self {
+            feature: [0; 8],
+            object_name: [0; MAX_OBJECT_NAME_LEN],
+            object_type: [0; 16],
+            object_size: [0; 4],
+            object_id: [0; 6],
+            object_properties: [0; 4],
+            object_action_control_point: [0; 16],
+            object_list_control_point: [0; 8],
+            object_changed: [0; 1],
+        }
+    }
+}
+
+impl OtsStorage {
+    pub fn as_store(&mut self) -> OtsStore<'_> {
+        OtsStore {
+            feature: &mut self.feature,
+            object_name: &mut self.object_name,
+            object_type: &mut self.object_type,
+            object_size: &mut self.object_size,
+            object_id: &mut self.object_id,
+            object_properties: &mut self.object_properties,
+            object_action_control_point: &mut self.object_action_control_point,
+            object_list_control_point: &mut self.object_list_control_point,
+            object_changed: &mut self.object_changed,
+        }
+    }
+}
+
 /// A Gatt service server exposing an object list of up to `MAX_OBJECTS` objects. Only the
 /// currently *selected* object's metadata is exposed through the Object Name/Type/Size/ID/
 /// Properties characteristics at any one time (per OTS - the client uses OLCP to change which

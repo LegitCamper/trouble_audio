@@ -310,6 +310,14 @@ pub struct VcsServer {
     step: u8,
 }
 
+/// Owned backing storage for VCS's characteristics.
+#[derive(Default)]
+pub struct VcsStorage {
+    pub volume_state: [u8; 3],
+    pub volume_control_point: [u8; 3],
+    pub volume_flags: [u8; 1],
+}
+
 pub const VCS_ATTRIBUTES: usize = 10;
 
 impl VcsServer {

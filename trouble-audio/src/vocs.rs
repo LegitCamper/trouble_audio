@@ -171,6 +171,26 @@ pub struct VocsStore<'a> {
     pub audio_output_description: &'a mut [u8],
 }
 
+/// Owned backing storage for VOCS's characteristics.
+#[derive(Default)]
+pub struct VocsStorage {
+    pub volume_offset_state: [u8; 3],
+    pub audio_location: [u8; 4],
+    pub volume_offset_control_point: [u8; 4],
+    pub audio_output_description: [u8; 32],
+}
+
+impl VocsStorage {
+    pub fn as_store(&mut self) -> VocsStore<'_> {
+        VocsStore {
+            volume_offset_state: &mut self.volume_offset_state,
+            audio_location: &mut self.audio_location,
+            volume_offset_control_point: &mut self.volume_offset_control_point,
+            audio_output_description: &mut self.audio_output_description,
+        }
+    }
+}
+
 /// A Gatt service server exposing control over one audio output's volume offset.
 pub struct VocsServer {
     handle: u16,

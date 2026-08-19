@@ -562,6 +562,49 @@ pub struct TbsStore<'a> {
     pub call_control_point: &'a mut [u8],
 }
 
+/// Owned backing storage for TBS's characteristics.
+pub struct TbsStorage {
+    pub bearer_provider_name: [u8; 32],
+    pub bearer_technology: [u8; 1],
+    pub signal_strength: [u8; 1],
+    pub call_state: [u8; 64],
+    pub bearer_list_current_calls: [u8; 64],
+    pub content_control_id: [u8; 1],
+    pub status_flags: [u8; 2],
+    /// Opcode + a maximal Originate URI (the largest operation).
+    pub call_control_point: [u8; 1 + MAX_URI_LEN],
+}
+
+impl Default for TbsStorage {
+    fn default() -> Self {
+        Self {
+            bearer_provider_name: [0; 32],
+            bearer_technology: [0; 1],
+            signal_strength: [0; 1],
+            call_state: [0; 64],
+            bearer_list_current_calls: [0; 64],
+            content_control_id: [0; 1],
+            status_flags: [0; 2],
+            call_control_point: [0; 1 + MAX_URI_LEN],
+        }
+    }
+}
+
+impl TbsStorage {
+    pub fn as_store(&mut self) -> TbsStore<'_> {
+        TbsStore {
+            bearer_provider_name: &mut self.bearer_provider_name,
+            bearer_technology: &mut self.bearer_technology,
+            signal_strength: &mut self.signal_strength,
+            call_state: &mut self.call_state,
+            bearer_list_current_calls: &mut self.bearer_list_current_calls,
+            content_control_id: &mut self.content_control_id,
+            status_flags: &mut self.status_flags,
+            call_control_point: &mut self.call_control_point,
+        }
+    }
+}
+
 /// A Gatt service server exposing this device's telephone bearer, with up to `MAX_CALLS`
 /// concurrent calls.
 pub struct TbsServer<const MAX_CALLS: usize> {

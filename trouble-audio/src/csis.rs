@@ -215,6 +215,15 @@ pub struct CsisServer {
     rank: Option<Characteristic<u8>>,
 }
 
+/// Owned backing storage for CSIS's characteristics.
+#[derive(Default)]
+pub struct CsisStorage {
+    pub sirk: [u8; 17],
+    pub set_size: [u8; 1],
+    pub lock: [u8; 1],
+    pub rank: [u8; 1],
+}
+
 pub const CSIS_ATTRIBUTES: usize = 14;
 
 impl CsisServer {
