@@ -24,6 +24,7 @@ pub mod ase_client;
 pub mod bap;
 pub mod bass;
 pub mod big;
+pub mod big_sink;
 pub mod cig;
 pub mod cis;
 pub mod csis;
@@ -50,19 +51,32 @@ pub mod vocs;
 /// Deliberately excludes optional-service types that collide by name across services (e.g.
 /// `mics::Mute` vs `vcs::Mute`) - import those from their own module.
 pub mod prelude {
-    pub use bt_hci::cmd::le::{LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath};
+    pub use bt_hci::cmd::le::{
+        LeAcceptCisRequest, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetupIsoDataPath,
+    };
 
     pub use crate::{
-        ascs::{Ase, AscsStorage, AseType},
-        big::{drive_big, start_broadcast, stop_broadcast, BigSource, BroadcastConfig},
-        cig::{drive_cig, AseQos, CigManager},
-        cis::{drive_cis, enable_cis_host_support, CisManager, DecodedPcm, Lc3Frame, PcmFrame, RawLc3},
+        CodecId, DiscoveryError, LeAudioClient, Server, ServerBuilder,
+        ascs::{AscsStorage, Ase, AseType},
+        big::{
+            Base, BigSource, BroadcastConfig, BroadcastSource, BroadcastSourceConfigError,
+            BroadcastSourceError, decode_base, drive_big, parse_basic_audio_announcement,
+            parse_broadcast_audio_announcement, start_broadcast, stop_broadcast,
+        },
+        big_sink::{
+            BigSink, BroadcastSinkConfig, BroadcastSinkConfigError, BroadcastSinkError,
+            DecodedBroadcastPcm, RawBroadcastLc3, drive_big_sink, start_broadcast_sync,
+            stop_broadcast_sync,
+        },
+        cig::{AseQos, CigManager, drive_cig},
+        cis::{
+            CisManager, DecodedPcm, Lc3Frame, PcmFrame, RawLc3, drive_cis, enable_cis_host_support,
+        },
         generic_audio::{
             AudioLocation, CodecSpecificCapabilities, ContextType, OctetsPerCodecFrame,
             SamplingFrequency, SupportedFrameDurations, SupportedSamplingFrequencies,
         },
-        pacs::{AudioContexts, PACRecord, PacsStorage, PAC},
-        CodecId, DiscoveryError, LeAudioClient, Server, ServerBuilder,
+        pacs::{AudioContexts, PAC, PACRecord, PacsStorage},
     };
 }
 

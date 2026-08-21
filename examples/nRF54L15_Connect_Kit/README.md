@@ -14,10 +14,15 @@ proves audio is flowing by driving the Green LED (P0.2) on/off with decoded peak
 | Reconnect (e.g. track skip) | ✅ | No longer OOM-panics after repeated reconnects |
 | `source` | ❌ | Builds clean, covered by `trouble_audio::cig`'s unit tests, not yet run on hardware |
 | Bond persistence across reflash | ❌ | Implemented (`src/bond_store.rs`, on-chip RRAM), not yet confirmed end-to-end |
+| Auracast source/sink controller plumbing | ❌ | Compiles against nRF SDC BIS support; host lifecycle is unit-tested, radio validation pending |
 
 **Known open issue**: real ISO packets often show up with `data_len=0` even after a clean CIS
 establishment - not yet root-caused, likely `nrf-sdc` controller-level (ISO buffer/timing). See
 `build_sdc`'s comments in `src/bin/sink.rs`/`src/bin/source.rs`.
+
+The library exposes `run_auracast_source` and `run_auracast_sink`, compile-checked against
+`SoftdeviceController`. A board binary calling them must enable `support_bis_source()` or
+`support_bis_sink()` respectively and provision the matching ISO TX/RX buffers in its SDC builder.
 
 ## Building and flashing
 

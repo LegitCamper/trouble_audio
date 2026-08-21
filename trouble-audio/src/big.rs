@@ -13,23 +13,21 @@
 //! LC3 frames from [`crate::lc3::Lc3MonoEncoder`], or already-encoded LC3 passed straight
 //! through) via [`crate::iso_tx::build_packet`] addressed with [`BigSource::bis_handle`].
 //!
-//! The broadcast **sink** role (scan for announcements, sync to the periodic train, `LE BIG
-//! Create Sync`) is not implemented: bt-hci 0.10 doesn't yet define the LE Periodic Advertising
-//! Sync Established/Report events a sink needs to find the train.
+//! The matching broadcast **sink** role lives in [`crate::big_sink`].
 
 use core::cell::RefCell;
 
 use bt_hci::cmd::le::{
-    LeCreateBig, LeRemoveAdvSet, LeRemoveIsoDataPath, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable,
-    LeSetExtAdvParams, LeSetPeriodicAdvData, LeSetPeriodicAdvEnable, LeSetPeriodicAdvParams, LeSetupIsoDataPath,
-    LeTerminateBig,
+    LeCreateBig, LeRemoveAdvSet, LeRemoveIsoDataPath, LeSetAdvSetRandomAddr, LeSetExtAdvData,
+    LeSetExtAdvEnable, LeSetExtAdvParams, LeSetPeriodicAdvData, LeSetPeriodicAdvEnable,
+    LeSetPeriodicAdvParams, LeSetupIsoDataPath, LeTerminateBig,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::event::le::LeCreateBigComplete;
 use bt_hci::param::{
     AddrKind, AdvChannelMap, AdvEventProps, AdvFilterPolicy, AdvHandle, AdvSet, BdAddr, ConnHandle,
-    DataPathDirection, DataPathId, Duration, EncryptionMode, ExtDuration, Framing, Operation, Packing,
-    PeriodicAdvProps, PhyKind, PhyMask,
+    DataPathDirection, DataPathId, Duration, EncryptionMode, ExtDuration, Framing, Operation,
+    Packing, PeriodicAdvProps, PhyKind, PhyMask,
 };
 use bt_hci::uuid::service;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -37,11 +35,184 @@ use embassy_sync::channel::Channel;
 use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
-use crate::generic_audio::{encode_list, AudioLocation, CodecSpecificConfiguration, FrameDuration, Metadata, SamplingFrequency};
+use crate::generic_audio::{
+    AudioLocation, CodecSpecificConfiguration, FrameDuration, Metadata, SamplingFrequency,
+    encode_list,
+};
 use crate::{CodecId, CodingFormat};
 
 /// Matches this crate's stereo scope: one BIS per channel, at most two.
 pub const MAX_BIS: usize = 2;
+
+/// Why an Auracast announcement or BASE could not be decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastParseError {
+    /// An AD structure or BASE field ended before its declared length.
+    Truncated,
+    /// An AD structure used the reserved zero length before the end of the payload.
+    InvalidAdLength,
+    /// A BASE advertised no subgroups or a subgroup advertised no BIS.
+    Empty,
+    /// Bytes remained after all declared BASE subgroups and BIS entries.
+    TrailingData,
+}
+
+/// A discovered Broadcast Audio Announcement and the advertiser needed to synchronize to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BroadcastSource {
+    pub advertiser_address_type: AddrKind,
+    pub advertiser_address: BdAddr,
+    pub advertising_sid: u8,
+    pub broadcast_id: [u8; 3],
+}
+
+/// One BIS entry decoded from a BASE.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseBis {
+    /// One-based BIS index.
+    pub index: u8,
+    /// BIS-specific Codec_Specific_Configuration LTV bytes.
+    pub codec_configuration: alloc::vec::Vec<u8>,
+}
+
+/// One subgroup decoded from a BASE.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseSubgroup {
+    pub codec_id: CodecId,
+    /// Subgroup-level Codec_Specific_Configuration LTV bytes.
+    pub codec_configuration: alloc::vec::Vec<u8>,
+    /// Subgroup metadata LTV bytes.
+    pub metadata: alloc::vec::Vec<u8>,
+    pub bis: alloc::vec::Vec<BaseBis>,
+}
+
+/// A decoded Basic Audio Announcement (BASE).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Base {
+    pub presentation_delay_us: u32,
+    pub subgroups: alloc::vec::Vec<BaseSubgroup>,
+}
+
+fn service_data(data: &[u8], uuid: u16) -> Result<Option<&[u8]>, BroadcastParseError> {
+    let mut offset = 0;
+    while offset < data.len() {
+        let len = usize::from(data[offset]);
+        if len == 0 {
+            return if data[offset + 1..].iter().all(|byte| *byte == 0) {
+                Ok(None)
+            } else {
+                Err(BroadcastParseError::InvalidAdLength)
+            };
+        }
+        let end = offset
+            .checked_add(len + 1)
+            .filter(|end| *end <= data.len())
+            .ok_or(BroadcastParseError::Truncated)?;
+        let structure = &data[offset + 1..end];
+        if structure.len() >= 3
+            && structure[0] == 0x16
+            && u16::from_le_bytes([structure[1], structure[2]]) == uuid
+        {
+            return Ok(Some(&structure[3..]));
+        }
+        offset = end;
+    }
+    Ok(None)
+}
+
+/// Finds a Broadcast Audio Announcement service-data structure in an extended advertising
+/// payload. Other AD structures are ignored.
+pub fn parse_broadcast_audio_announcement(
+    data: &[u8],
+) -> Result<Option<[u8; 3]>, BroadcastParseError> {
+    let uuid = u16::from_le_bytes(service::BROADCAST_AUDIO_ANNOUNCEMENT.to_le_bytes());
+    let Some(payload) = service_data(data, uuid)? else {
+        return Ok(None);
+    };
+    let id = payload.get(..3).ok_or(BroadcastParseError::Truncated)?;
+    Ok(Some([id[0], id[1], id[2]]))
+}
+
+struct BaseCursor<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> BaseCursor<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { remaining: data }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], BroadcastParseError> {
+        if self.remaining.len() < len {
+            return Err(BroadcastParseError::Truncated);
+        }
+        let (value, remaining) = self.remaining.split_at(len);
+        self.remaining = remaining;
+        Ok(value)
+    }
+
+    fn u8(&mut self) -> Result<u8, BroadcastParseError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn len_prefixed(&mut self) -> Result<&'a [u8], BroadcastParseError> {
+        let len = usize::from(self.u8()?);
+        self.take(len)
+    }
+}
+
+/// Decodes a BASE service-data payload (without its UUID).
+pub fn decode_base(data: &[u8]) -> Result<Base, BroadcastParseError> {
+    let mut cursor = BaseCursor::new(data);
+    let delay = cursor.take(3)?;
+    let presentation_delay_us = u32::from_le_bytes([delay[0], delay[1], delay[2], 0]);
+    let subgroup_count = usize::from(cursor.u8()?);
+    if subgroup_count == 0 {
+        return Err(BroadcastParseError::Empty);
+    }
+
+    let mut subgroups = alloc::vec::Vec::with_capacity(subgroup_count);
+    for _ in 0..subgroup_count {
+        let bis_count = usize::from(cursor.u8()?);
+        if bis_count == 0 {
+            return Err(BroadcastParseError::Empty);
+        }
+        let codec_id = CodecId::from_le_bytes(
+            cursor
+                .take(CodecId::SIZE)?
+                .try_into()
+                .map_err(|_| BroadcastParseError::Truncated)?,
+        );
+        let codec_configuration = alloc::vec::Vec::from(cursor.len_prefixed()?);
+        let metadata = alloc::vec::Vec::from(cursor.len_prefixed()?);
+        let mut bis = alloc::vec::Vec::with_capacity(bis_count);
+        for _ in 0..bis_count {
+            bis.push(BaseBis {
+                index: cursor.u8()?,
+                codec_configuration: alloc::vec::Vec::from(cursor.len_prefixed()?),
+            });
+        }
+        subgroups.push(BaseSubgroup {
+            codec_id,
+            codec_configuration,
+            metadata,
+            bis,
+        });
+    }
+    if !cursor.remaining.is_empty() {
+        return Err(BroadcastParseError::TrailingData);
+    }
+    Ok(Base {
+        presentation_delay_us,
+        subgroups,
+    })
+}
+
+/// Finds and decodes a Basic Audio Announcement service-data structure in periodic advertising.
+pub fn parse_basic_audio_announcement(data: &[u8]) -> Result<Option<Base>, BroadcastParseError> {
+    let uuid = u16::from_le_bytes(service::BASIC_AUDIO_ANNOUNCEMENT.to_le_bytes());
+    service_data(data, uuid)?.map(decode_base).transpose()
+}
 
 /// Everything needed to put one subgroup of up-to-stereo LC3 broadcast audio on the air.
 pub struct BroadcastConfig {
@@ -74,6 +245,79 @@ pub struct BroadcastConfig {
     pub broadcast_code: Option<[u8; 16]>,
 }
 
+/// Invalid host-side input rejected before creating a broadcast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastSourceConfigError {
+    InvalidBigHandle,
+    InvalidAdvertisingHandle,
+    InvalidAdvertisingSid,
+    InvalidRandomAddress,
+    EmptyBis,
+    InvalidSduInterval,
+    InvalidTransportLatency,
+    InvalidRetransmissionNumber,
+    InvalidPresentationDelay,
+    InvalidOctetsPerFrame,
+}
+
+/// Failure to start an Auracast broadcast source.
+#[derive(Debug)]
+pub enum BroadcastSourceError<E> {
+    InvalidConfig(BroadcastSourceConfigError),
+    Host(BleHostError<E>),
+}
+
+impl<E> From<BleHostError<E>> for BroadcastSourceError<E> {
+    fn from(error: BleHostError<E>) -> Self {
+        Self::Host(error)
+    }
+}
+
+impl BroadcastConfig {
+    /// Validates the Core and one-LC3-frame-per-SDU constraints used by [`start_broadcast`].
+    pub fn validate(&self) -> Result<(), BroadcastSourceConfigError> {
+        if self.big_handle > 0xef {
+            return Err(BroadcastSourceConfigError::InvalidBigHandle);
+        }
+        if self.adv_handle > 0xef {
+            return Err(BroadcastSourceConfigError::InvalidAdvertisingHandle);
+        }
+        if self.adv_sid > 0x0f {
+            return Err(BroadcastSourceConfigError::InvalidAdvertisingSid);
+        }
+        let random_part_all_zero =
+            self.random_addr[..5].iter().all(|byte| *byte == 0) && self.random_addr[5] & 0x3f == 0;
+        let random_part_all_one = self.random_addr[..5].iter().all(|byte| *byte == 0xff)
+            && self.random_addr[5] & 0x3f == 0x3f;
+        if self.random_addr[5] & 0xc0 != 0xc0 || random_part_all_zero || random_part_all_one {
+            return Err(BroadcastSourceConfigError::InvalidRandomAddress);
+        }
+        if self.bis.is_empty() {
+            return Err(BroadcastSourceConfigError::EmptyBis);
+        }
+        let expected_interval = match self.frame_duration {
+            FrameDuration::Duration7_5MS => 7_500,
+            FrameDuration::Duration10MS => 10_000,
+        };
+        if self.sdu_interval_us != expected_interval {
+            return Err(BroadcastSourceConfigError::InvalidSduInterval);
+        }
+        if !(5..=4_000).contains(&self.max_transport_latency_ms) {
+            return Err(BroadcastSourceConfigError::InvalidTransportLatency);
+        }
+        if self.rtn > 30 {
+            return Err(BroadcastSourceConfigError::InvalidRetransmissionNumber);
+        }
+        if self.presentation_delay_us > 0x00ff_ffff {
+            return Err(BroadcastSourceConfigError::InvalidPresentationDelay);
+        }
+        if self.octets_per_frame == 0 {
+            return Err(BroadcastSourceConfigError::InvalidOctetsPerFrame);
+        }
+        Ok(())
+    }
+}
+
 /// Encodes the BASE (Basic Audio Announcement service data payload, BAP §3.7.2.2) for `config`:
 /// one subgroup, one BIS per configured channel. Pure and allocation-transparent for testing.
 pub fn encode_base(config: &BroadcastConfig) -> alloc::vec::Vec<u8> {
@@ -94,7 +338,9 @@ pub fn encode_base(config: &BroadcastConfig) -> alloc::vec::Vec<u8> {
     out.extend_from_slice(&metadata);
     for (i, location) in config.bis.iter().enumerate() {
         out.push(i as u8 + 1); // BIS_index, 1-based
-        let bis_config = encode_list(&[CodecSpecificConfiguration::AudioChannelAllocation(*location)]);
+        let bis_config = encode_list(&[CodecSpecificConfiguration::AudioChannelAllocation(
+            *location,
+        )]);
         out.push(bis_config.len() as u8);
         out.extend_from_slice(&bis_config);
     }
@@ -105,7 +351,15 @@ pub fn encode_base(config: &BroadcastConfig) -> alloc::vec::Vec<u8> {
 /// with the Broadcast Audio Announcement Service UUID and the Broadcast_ID.
 pub fn broadcast_audio_announcement(broadcast_id: [u8; 3]) -> [u8; 7] {
     let uuid = service::BROADCAST_AUDIO_ANNOUNCEMENT.to_le_bytes();
-    [6, 0x16, uuid[0], uuid[1], broadcast_id[0], broadcast_id[1], broadcast_id[2]]
+    [
+        6,
+        0x16,
+        uuid[0],
+        uuid[1],
+        broadcast_id[0],
+        broadcast_id[1],
+        broadcast_id[2],
+    ]
 }
 
 /// Wraps a BASE in the periodic-advertising AD structure (Service Data, Basic Audio Announcement
@@ -164,7 +418,7 @@ impl<M: RawMutex> EventHandler for BigSource<M> {
             warn!("[big] BIG creation failed");
             return;
         }
-        if event.big_handle.into_inner() != u16::from(self.big_handle) {
+        if event.big_handle.into_inner() != self.big_handle {
             return;
         }
         let mut handles = self.bis_handles.borrow_mut();
@@ -178,9 +432,14 @@ impl<M: RawMutex> EventHandler for BigSource<M> {
                 warn!("[big] controller reported more BIS than MAX_BIS");
                 break;
             }
-            let _ = self.actions.try_send(BigAction::SetupDataPath(handle, i as u8));
+            let _ = self
+                .actions
+                .try_send(BigAction::SetupDataPath(handle, i as u8));
         }
-        info!("[big] BIG established ({} BIS), setting up ISO data paths", handles.len());
+        info!(
+            "[big] BIG established ({} BIS), setting up ISO data paths",
+            handles.len()
+        );
     }
 }
 
@@ -193,7 +452,7 @@ pub async fn start_broadcast<C, M: RawMutex>(
     stack: &Stack<'_, C, impl PacketPool>,
     source: &BigSource<M>,
     config: &BroadcastConfig,
-) -> Result<(), BleHostError<C::Error>>
+) -> Result<(), BroadcastSourceError<C::Error>>
 where
     C: Controller
         + ControllerCmdSync<LeSetExtAdvParams>
@@ -205,6 +464,9 @@ where
         + ControllerCmdSync<LeSetPeriodicAdvEnable>
         + ControllerCmdAsync<LeCreateBig>,
 {
+    config
+        .validate()
+        .map_err(BroadcastSourceError::InvalidConfig)?;
     let adv_handle = AdvHandle::new(config.adv_handle);
 
     // Non-connectable, non-scannable extended advertising - the only shape that may carry a
@@ -229,7 +491,10 @@ where
         ))
         .await?;
     stack
-        .command(LeSetAdvSetRandomAddr::new(adv_handle, BdAddr::new(config.random_addr)))
+        .command(LeSetAdvSetRandomAddr::new(
+            adv_handle,
+            BdAddr::new(config.random_addr),
+        ))
         .await?;
     stack
         .command(LeSetExtAdvData::new(
@@ -258,13 +523,18 @@ where
         ))
         .await?;
     stack
-        .command(LeSetExtAdvEnable::new(true, &[AdvSet {
-            adv_handle,
-            duration: Duration::from_secs(0),
-            max_ext_adv_events: 0,
-        }]))
+        .command(LeSetExtAdvEnable::new(
+            true,
+            &[AdvSet {
+                adv_handle,
+                duration: Duration::from_secs(0),
+                max_ext_adv_events: 0,
+            }],
+        ))
         .await?;
-    stack.command(LeSetPeriodicAdvEnable::new(true, adv_handle)).await?;
+    stack
+        .command(LeSetPeriodicAdvEnable::new(true, adv_handle))
+        .await?;
 
     let (encryption, code) = match config.broadcast_code {
         Some(code) => (EncryptionMode::Encrypted, code),
@@ -273,7 +543,7 @@ where
     stack
         .iso()
         .command_async(LeCreateBig::new(
-            source.big_handle,
+            bt_hci::param::BigHandle(source.big_handle),
             adv_handle,
             config.bis.len() as u8,
             ExtDuration::from_micros(u64::from(config.sdu_interval_us)),
@@ -307,9 +577,14 @@ where
     let adv_handle = AdvHandle::new(config.adv_handle);
     stack
         .iso()
-        .command_async(LeTerminateBig::new(config.big_handle, REASON_REMOTE_USER_TERMINATED))
+        .command_async(LeTerminateBig::new(
+            bt_hci::param::BigHandle(config.big_handle),
+            REASON_REMOTE_USER_TERMINATED,
+        ))
         .await?;
-    stack.command(LeSetPeriodicAdvEnable::new(false, adv_handle)).await?;
+    stack
+        .command(LeSetPeriodicAdvEnable::new(false, adv_handle))
+        .await?;
     stack.command(LeSetExtAdvEnable::new(false, &[])).await?;
     stack.command(LeRemoveAdvSet::new(adv_handle)).await?;
     Ok(())
@@ -318,9 +593,14 @@ where
 /// Drives the awaited HCI side of BIS bring-up (ISO data path setup), as decided by
 /// [`BigSource`]'s [`EventHandler`]. Poll concurrently with the runner, like
 /// [`crate::cig::drive_cig`].
-pub async fn drive_big<C, M: RawMutex>(stack: &Stack<'_, C, impl PacketPool>, source: &BigSource<M>) -> !
+pub async fn drive_big<C, M: RawMutex>(
+    stack: &Stack<'_, C, impl PacketPool>,
+    source: &BigSource<M>,
+) -> !
 where
-    C: Controller + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>> + ControllerCmdSync<LeRemoveIsoDataPath>,
+    C: Controller
+        + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
+        + ControllerCmdSync<LeRemoveIsoDataPath>,
 {
     let iso = stack.iso();
     loop {
@@ -367,7 +647,7 @@ mod tests {
             big_handle: 0,
             adv_handle: 1,
             adv_sid: 0,
-            random_addr: [0xC0, 1, 2, 3, 4, 5],
+            random_addr: [1, 2, 3, 4, 5, 0xC0],
             broadcast_id: [0xAB, 0xCD, 0xEF],
             bis,
             sampling_frequency: SamplingFrequency::Hz48000,
@@ -424,5 +704,87 @@ mod tests {
         assert_eq!(periodic[1], 0x16);
         assert_eq!(&periodic[2..4], &0x1851u16.to_le_bytes());
         assert_eq!(&periodic[4..], &base[..]);
+    }
+
+    #[test]
+    fn announcement_parser_ignores_unrelated_ad_structures() {
+        let mut advertisement = alloc::vec![2, 0x01, 0x06];
+        advertisement.extend_from_slice(&broadcast_audio_announcement([0x12, 0x34, 0x56]));
+        advertisement.extend_from_slice(&[3, 0x09, b'L', b'E']);
+
+        assert_eq!(
+            parse_broadcast_audio_announcement(&advertisement).unwrap(),
+            Some([0x12, 0x34, 0x56])
+        );
+    }
+
+    #[test]
+    fn source_base_round_trips_through_structural_decoder() {
+        let encoded = encode_base(&config());
+        let base = decode_base(&encoded).unwrap();
+
+        assert_eq!(base.presentation_delay_us, 40_000);
+        assert_eq!(base.subgroups.len(), 1);
+        assert_eq!(base.subgroups[0].codec_id, CodecId::new(CodingFormat::LC3));
+        assert_eq!(base.subgroups[0].bis[0].index, 1);
+        assert_eq!(base.subgroups[0].bis[1].index, 2);
+    }
+
+    #[test]
+    fn every_truncated_source_base_is_rejected_without_panicking() {
+        let encoded = encode_base(&config());
+        for len in 0..encoded.len() {
+            assert!(
+                decode_base(&encoded[..len]).is_err(),
+                "accepted truncation at {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_ad_length_is_rejected() {
+        let truncated = [6, 0x16, 0x52, 0x18, 1, 2];
+        assert_eq!(
+            parse_broadcast_audio_announcement(&truncated),
+            Err(BroadcastParseError::Truncated)
+        );
+    }
+
+    #[test]
+    fn source_config_rejects_values_that_would_be_truncated_or_rejected_by_hci() {
+        let mut invalid = config();
+        invalid.adv_sid = 16;
+        assert_eq!(
+            invalid.validate(),
+            Err(BroadcastSourceConfigError::InvalidAdvertisingSid)
+        );
+
+        invalid = config();
+        invalid.random_addr = [0; 6];
+        assert_eq!(
+            invalid.validate(),
+            Err(BroadcastSourceConfigError::InvalidRandomAddress)
+        );
+
+        invalid = config();
+        invalid.bis.clear();
+        assert_eq!(
+            invalid.validate(),
+            Err(BroadcastSourceConfigError::EmptyBis)
+        );
+
+        invalid = config();
+        invalid.presentation_delay_us = 0x0100_0000;
+        assert_eq!(
+            invalid.validate(),
+            Err(BroadcastSourceConfigError::InvalidPresentationDelay)
+        );
+
+        invalid = config();
+        invalid.sdu_interval_us = 7_500;
+        assert_eq!(
+            invalid.validate(),
+            Err(BroadcastSourceConfigError::InvalidSduInterval)
+        );
     }
 }

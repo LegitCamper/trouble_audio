@@ -19,7 +19,7 @@ bt-hci = { version = "0.10", default-features = false, features = [
   "log",
   "uuid",
 ] }
-bt-hci-linux = { path = "../../../trouble/bt-hci-linux" }
+bt-hci-linux = "0.2"
 
 trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
   "log",

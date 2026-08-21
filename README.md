@@ -3,12 +3,18 @@
 LE Audio on top of [`trouble-host`](https://github.com/embassy-rs/trouble): PACS/ASCS/BAP GATT
 services, ASE Control Point, CIG/CIS/ISO setup, LC3 encode/decode (or raw-LC3 passthrough).
 
-Unicast plus a broadcast (Auracast) **source** (`big.rs`: announcement + BASE periodic
-advertising + BIG creation); the broadcast sink role is blocked on bt-hci publishing the periodic
-advertising sync events.
+Unicast plus both Auracast roles:
 
-`trouble-audio/` is the core crate. `examples/apps` is shared sink/source/bond-store logic used by
-every platform example below.
+- `big.rs`: Broadcast Audio Announcement, BASE periodic advertising, BIG creation, encrypted or
+  unencrypted broadcasts, and BIS data-path setup.
+- `big_sink.rs`: discovery, fragmented BASE reassembly, periodic-advertising and BIG
+  synchronization, BIS selection, encrypted Broadcast Codes, and raw-LC3 or decoded-PCM output.
+
+The complete source-to-sink lifecycle is exercised with synthetic HCI events and ISO packets, so
+the host behavior can be tested without a radio. Real-controller validation is still required.
+
+`trouble-audio/` is the core crate. `examples/apps` includes complete reusable Auracast source and
+sink loops as well as the shared unicast/bond-store logic used by the platform examples below.
 
 ## Examples
 
@@ -36,3 +42,19 @@ cd trouble-audio && MIRIFLAGS=-Zmiri-ignore-leaks cargo +nightly miri test --lib
 
 (`-Zmiri-ignore-leaks` because test fixtures deliberately `Box::leak` their `'static` GATT store
 buffers.)
+
+## Temporary upstream requirements
+
+Auracast behavior remains in this repository. The current local patches are only a compile harness
+for three controller/host plumbing changes that belong upstream:
+
+- `bt-hci`: model `BigHandle` as the one-octet HCI value and encode both `BIG_Handle` and the
+  two-octet periodic `Sync_Handle` in `LE BIG Create Sync`.
+- `trouble-host`: forward periodic-advertising sync/report/lost and BIG sync established/lost
+  events to `EventHandler`.
+- `nrf-sdc`: implement its existing controller C APIs for create/terminate BIG, BIG create/terminate
+  sync, including the variable-length BIS array.
+
+Once those changes are published, remove the corresponding local `[patch]` entries in the workspace
+manifest. No Auracast policy, BASE parsing, codec selection, or lifecycle state needs to live in a
+fork.

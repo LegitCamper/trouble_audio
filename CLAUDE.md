@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-LE Audio (unicast; Auracast not yet implemented) on top of `trouble-host`: the full set of LE Audio
+LE Audio (unicast and Auracast source/sink) on top of `trouble-host`: the full set of LE Audio
 GATT services, ASE Control Point, CIG/CIS/ISO setup, and LC3 encode/decode. `no_std` + `alloc` —
 the consuming binary must install a global allocator. Pinned nightly toolchain (`rust-toolchain`);
 uses `generic_const_exprs`.

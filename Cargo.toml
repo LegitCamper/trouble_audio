@@ -9,25 +9,24 @@ members = [
   "examples/nRF54L15_Connect_Kit",
 ]
 
-# Not crates.io, so it can't go through [patch.crates-io] - members opt in via
-# `trouble-host = { workspace = true, features = [...] }`.
+# Keep the dependency source upstream; the workspace-wide patch below supplies the
+# local checkout while the Auracast event-routing PRs are under review.
 [workspace.dependencies]
-# Not `main` (c21b1239) - that branch is missing the alloc_buf()/Controller::Buffer fix from
-# `nrf54-bt-hci-alloc`, which is still at this commit. Overridden below to the local checkout,
-# which has that fix plus the bt-hci 0.10 migration (see `[patch]`).
-trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "679b3fd7a3d3dca1ad0ea890da0de737cecaef9e" }
+trouble-host = { git = "https://github.com/embassy-rs/trouble", rev = "4eea72088fdbb91326a3ac95160b3154fdff802a" }
 
 [profile.release]
 debug = 2
 
-# Local checkouts of the user's own forks (see `../trouble`, `../nrf-sdc`), not yet pushed:
-# `trouble-host` bumped to `bt-hci` 0.10 (see below - upstream published the CIS/CIG/ISO data
-# path commands this crate needs, so there's no more need to patch `bt-hci` itself to a fork), and
-# `nrf-sdc`/`nrf-mpsl` similarly updated plus adapted to the new HCI commands' shape.
-[patch."https://github.com/LegitCamper/trouble"]
+# Applies to every workspace member using `trouble-host = { workspace = true }`.
+# Remove after the Auracast event-routing PRs land upstream.
+[patch."https://github.com/embassy-rs/trouble"]
 trouble-host = { path = "../trouble/host" }
 
 [patch.crates-io]
+# Required until the BIG handle width and LE BIG Create Sync fields are fixed in bt-hci.
+bt-hci = { path = "../bt-hci/bt-hci" }
+# Keep command types and controllers on the same transport crate as the patched bt-hci.
+bt-hci-transport = { path = "../bt-hci/bt-hci-transport" }
 # Not embassy's true HEAD (6826068f) - its embassy-net/embassy-stm32-wpan manifests don't parse
 # (upstream bug, commit 680b19296). This is HEAD's parent.
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }

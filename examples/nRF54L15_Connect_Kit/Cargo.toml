@@ -59,6 +59,7 @@ cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
 static_cell = "2"
 embedded-alloc = "0.6.0"
+heapless = "0.9"
 # Backs `bond_store::rram_bond_store`.
 embedded-storage = "0.3.1"
 

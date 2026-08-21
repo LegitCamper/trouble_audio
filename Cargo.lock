@@ -276,14 +276,12 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.8.0",
 ]
 
 [[package]]
 name = "bt-hci"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9670c1c3285fdaa99ade6edf5a3ed47bc14227f49b5e48cc587ef190485eaeb"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -292,25 +290,20 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.8.0",
  "log",
  "serde",
 ]
 
 [[package]]
 name = "bt-hci-linux"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eef9c927ed89e2e0fdf06c12b48c9607dcfbdfa87e50d05004c09dbd0b37a930"
 dependencies = [
- "bt-hci 0.10.0",
  "bt-hci-transport",
- "critical-section",
- "embassy-time",
  "embedded-io 0.7.1",
- "embedded-io-adapters",
- "embedded-io-async 0.7.0",
- "env_logger",
  "libc",
- "log",
  "tokio",
 ]
 
@@ -329,8 +322,6 @@ dependencies = [
 [[package]]
 name = "bt-hci-transport"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ffb9819c69cf88877f5eebc8c5ade0ab50f2bf9475bbb3eb714d66c55b0cb64"
 dependencies = [
  "defmt 1.1.1",
  "embedded-io 0.7.1",
@@ -2273,6 +2264,7 @@ dependencies = [
  "embedded-alloc",
  "embedded-storage",
  "futures",
+ "heapless 0.9.3",
  "nrf-mpsl",
  "nrf-sdc",
  "panic-probe",
@@ -3867,11 +3859,10 @@ dependencies = [
 
 [[package]]
 name = "trouble-host"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes",
  "bt-hci 0.10.0",
- "bt-hci-serial",
  "cmac",
  "defmt 1.1.1",
  "embassy-futures",
@@ -3893,7 +3884,7 @@ dependencies = [
 
 [[package]]
 name = "trouble-host-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "convert_case 0.8.0",
  "darling",
