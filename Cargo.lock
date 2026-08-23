@@ -2358,8 +2358,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-mpsl"
-version = "0.3.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
+version = "0.4.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=478e1f5c5ba2e6c749c06f3a2bf290784194b415#478e1f5c5ba2e6c749c06f3a2bf290784194b415"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -2375,8 +2375,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-mpsl-sys"
-version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
+version = "0.3.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=478e1f5c5ba2e6c749c06f3a2bf290784194b415#478e1f5c5ba2e6c749c06f3a2bf290784194b415"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -2395,7 +2395,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=478e1f5c5ba2e6c749c06f3a2bf290784194b415#478e1f5c5ba2e6c749c06f3a2bf290784194b415"
 dependencies = [
  "bt-hci 0.10.0",
  "bt-hci-transport",
@@ -2412,8 +2412,8 @@ dependencies = [
 
 [[package]]
 name = "nrf-sdc-sys"
-version = "0.2.1"
-source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
+version = "0.3.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=478e1f5c5ba2e6c749c06f3a2bf290784194b415#478e1f5c5ba2e6c749c06f3a2bf290784194b415"
 dependencies = [
  "bindgen",
  "doxygen-rs",

@@ -39,5 +39,5 @@ embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = 
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 
-nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "7ae16881a1994558a3f0ea667866f851490d2673" }
-nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "7ae16881a1994558a3f0ea667866f851490d2673" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "478e1f5c5ba2e6c749c06f3a2bf290784194b415" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "478e1f5c5ba2e6c749c06f3a2bf290784194b415" }

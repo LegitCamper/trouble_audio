@@ -36,7 +36,7 @@ nrf-sdc = { version = "0.4", default-features = false, features = [
   "peripheral",
   "central",
 ] }
-nrf-mpsl = { version = "0.3", default-features = false, features = [
+nrf-mpsl = { version = "0.4", default-features = false, features = [
   "defmt",
   "critical-section-impl",
 ] }
