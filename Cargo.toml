@@ -9,24 +9,17 @@ members = [
   "examples/nRF54L15_Connect_Kit",
 ]
 
-# Keep the dependency source upstream; the workspace-wide patch below supplies the
-# local checkout while the Auracast event-routing PRs are under review.
 [workspace.dependencies]
-trouble-host = { git = "https://github.com/embassy-rs/trouble", rev = "4eea72088fdbb91326a3ac95160b3154fdff802a" }
+trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "d30c550f4022c3dbf61a27c49b84873d51dc64fd" }
 
 [profile.release]
 debug = 2
 
-# Applies to every workspace member using `trouble-host = { workspace = true }`.
-# Remove after the Auracast event-routing PRs land upstream.
-[patch."https://github.com/embassy-rs/trouble"]
-trouble-host = { path = "../trouble/host" }
-
 [patch.crates-io]
 # Required until the BIG handle width and LE BIG Create Sync fields are fixed in bt-hci.
-bt-hci = { path = "../bt-hci/bt-hci" }
+bt-hci = { git = "https://github.com/LegitCamper/bt-hci", rev = "48337e506a15d7665f5d4caa4d4613388b2e7c64" }
 # Keep command types and controllers on the same transport crate as the patched bt-hci.
-bt-hci-transport = { path = "../bt-hci/bt-hci-transport" }
+bt-hci-transport = { git = "https://github.com/LegitCamper/bt-hci", rev = "48337e506a15d7665f5d4caa4d4613388b2e7c64" }
 # Not embassy's true HEAD (6826068f) - its embassy-net/embassy-stm32-wpan manifests don't parse
 # (upstream bug, commit 680b19296). This is HEAD's parent.
 embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
@@ -46,5 +39,5 @@ embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy.git", rev = 
 cyw43 = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2544220cb44b2dec05f5d636a80d39382" }
 
-nrf-sdc = { path = "../nrf-sdc/nrf-sdc" }
-nrf-mpsl = { path = "../nrf-sdc/nrf-mpsl" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "7ae16881a1994558a3f0ea667866f851490d2673" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "7ae16881a1994558a3f0ea667866f851490d2673" }

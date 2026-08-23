@@ -16,7 +16,7 @@
 //! path require awaiting HCI commands - so they only decide and hand off to [`drive_cis`], which
 //! must be polled concurrently (e.g. via `select`) to actually send those commands.
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
 use bt_hci::cmd::le::{
     LeAcceptCisRequest, LeReadLocalSupportedFeatures, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetHostFeature,
@@ -158,6 +158,7 @@ pub struct CisManager<M: RawMutex, const MAX_ASES: usize> {
     // 16, not 4: gives the consumer (e.g. `drive_led`) headroom against bursts at up to 200
     // frames/sec combined (stereo, 10ms each) - 4 caused near-constant drops on hardware.
     frames_out: Channel<M, SinkFrame, 16>,
+    dropped_frames: Cell<u32>,
     streaming: Channel<M, u8, 4>,
 }
 
@@ -187,7 +188,16 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
             codecs: RefCell::new(core::array::from_fn(|_| None)),
             actions: Channel::new(),
             frames_out: Channel::new(),
+            dropped_frames: Cell::new(0),
             streaming: Channel::new(),
+        }
+    }
+
+    fn note_dropped_frame(&self) {
+        let dropped = self.dropped_frames.get().wrapping_add(1);
+        self.dropped_frames.set(dropped);
+        if dropped == 1 || dropped % 100 == 0 {
+            warn!("[cis] frame channel full, dropped {} frames", dropped);
         }
     }
 
@@ -385,7 +395,7 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
                 }))
                 .is_err()
             {
-                warn!("[cis] on_iso_data: frame channel full, dropping frame");
+                self.note_dropped_frame();
             }
             return;
         }
@@ -412,7 +422,7 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
                     }))
                     .is_err()
                 {
-                    warn!("[cis] on_iso_data: frame channel full, dropping frame");
+                    self.note_dropped_frame();
                 }
             }
             Err(_e) => {

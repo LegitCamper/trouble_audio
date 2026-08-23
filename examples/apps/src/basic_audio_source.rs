@@ -17,6 +17,7 @@ use trouble_audio::cig::{self, AseQos, CigManager, SetCigParametersCmd};
 use trouble_audio::generic_audio::{
     encode_list, AudioLocation, CodecSpecificConfiguration, ContextType, FrameDuration, Metadata, SamplingFrequency,
 };
+use trouble_audio::lc3::Lc3MonoEncoder;
 use trouble_audio::{ase_client, cis, iso_tx, CodecId};
 use trouble_host::prelude::*;
 
@@ -48,6 +49,14 @@ const MAX_TRANSPORT_LATENCY_MS: u16 = 20;
 /// 40000us (40ms) - a typical LC3 presentation delay.
 const PRESENTATION_DELAY: [u8; 3] = [0x40, 0x9c, 0x00];
 const RETRANSMISSION_NUMBER: u8 = 2;
+
+const TONE_FREQUENCIES_HZ: [f32; 2] = [440.0, 880.0];
+const TONE_AMPLITUDE: f32 = 8000.0;
+const SAMPLE_RATE_HZ: f32 = 48_000.0;
+// Both tones complete an integer number of cycles in 50 ms (22 and 44 respectively), so five
+// 10-ms frames form a seamless repeating test waveform.
+const TONE_PERIOD_FRAMES: usize = 5;
+type EncodedTone = [[[u8; OCTETS_PER_FRAME as usize]; TONE_PERIOD_FRAMES]; 2];
 
 /// Runs the audio source central forever on the given controller: connects to `target` (a
 /// "random" address, e.g. [`crate::basic_audio_sink::ADDRESS`]), then streams a generated stereo
@@ -82,7 +91,10 @@ where
     }
     let mut runner = stack.runner();
     let mut central = stack.central();
-    let cig_manager = CigManager::<NoopRawMutex>::new();
+    // This example sends a fixed pre-encoded tone. Passthrough avoids retaining two large LC3
+    // encoders after the tone has been cached and lets the first ISO packet be sent immediately
+    // when the data paths open.
+    let cig_manager = CigManager::<NoopRawMutex>::new_passthrough();
 
     select4(
         async {
@@ -350,6 +362,11 @@ async fn stream_tone<C: Controller, const N: usize>(
         return;
     }
 
+    // Encoding two channels live takes longer than the 10-ms radio interval on the nRF54L15.
+    // Prepare the repeating waveform before CIG creation so sequence zero is ready as soon as the
+    // CIS data paths become usable.
+    let tone = encode_test_tone();
+
     // Both ASEs are QoS-configured - `cig_manager` now has everything it needs to create the CIG
     // and both CIS (carried out by `cig::drive_cig`, running concurrently - see `run`).
     cig_manager.configure(ase_ids[0], qos_0, SAMPLING_FREQUENCY, FRAME_DURATION);
@@ -379,39 +396,77 @@ async fn stream_tone<C: Controller, const N: usize>(
     #[cfg(feature = "defmt")]
     info!("[le_audio_source] both channels streaming");
 
-    play_tone(stack, cig_manager, ase_ids).await;
+    // The peer learns that each CIS is established before its asynchronous HCI data-path setup
+    // command has necessarily completed. Give a small embedded peer time to install both paths;
+    // sending immediately can keep its receive runner continuously ready and starve the second
+    // setup command.
+    embassy_time::Timer::after_millis(250).await;
+
+    play_tone(stack, cig_manager, ase_ids, &tone).await;
+}
+
+fn encode_test_tone() -> EncodedTone {
+    let mut tone = [[[0u8; OCTETS_PER_FRAME as usize]; TONE_PERIOD_FRAMES]; 2];
+    for (channel, frequency_hz) in TONE_FREQUENCIES_HZ.into_iter().enumerate() {
+        let mut encoder = Lc3MonoEncoder::new(SAMPLING_FREQUENCY, FRAME_DURATION)
+            .expect("the negotiated LC3 sampling frequency is supported");
+        for frame in 0..TONE_PERIOD_FRAMES {
+            let mut pcm = [0i16; SAMPLES_PER_FRAME];
+            for (i, sample) in pcm.iter_mut().enumerate() {
+                let sample_index = frame * SAMPLES_PER_FRAME + i;
+                let t = sample_index as f32 / SAMPLE_RATE_HZ;
+                *sample = (libm::sinf(2.0 * core::f32::consts::PI * frequency_hz * t) * TONE_AMPLITUDE) as i16;
+            }
+            encoder
+                .encode(&pcm, &mut tone[channel][frame])
+                .expect("fixed-size LC3 test-tone frame is valid");
+        }
+    }
+    tone
 }
 
 /// Encodes and sends a generated two-tone stereo signal (440 Hz left, 880 Hz right) forever, paced
 /// to the negotiated SDU interval.
-async fn play_tone<C: Controller>(stack: &Stack<'_, C, DefaultPacketPool>, cig_manager: &CigManager<NoopRawMutex>, ase_ids: [u8; 2]) -> ! {
-    const FREQUENCIES_HZ: [f32; 2] = [440.0, 880.0];
-    const AMPLITUDE: f32 = 8000.0;
-    const SAMPLE_RATE_HZ: f32 = 48_000.0;
-
+async fn play_tone<C: Controller>(
+    stack: &Stack<'_, C, DefaultPacketPool>,
+    cig_manager: &CigManager<NoopRawMutex>,
+    ase_ids: [u8; 2],
+    tone: &EncodedTone,
+) -> ! {
     let mut ticker = iso_tx::ticker_for_sdu_interval(SDU_INTERVAL);
     let mut sequence_numbers = [iso_tx::SequenceNumber::default(); 2];
-    let mut sample_index: u32 = 0;
-    let mut encoded = [0u8; OCTETS_PER_FRAME as usize];
     let mut iso_buf: HVec<u8, { iso_tx::MAX_ISO_PACKET_LEN }> = HVec::new();
+    let mut frames = 0u32;
+    let mut packets_sent = 0u32;
+    let mut packets_dropped = 0u32;
 
     loop {
         ticker.next().await;
+        let frame = frames as usize % TONE_PERIOD_FRAMES;
         for (channel, &ase_id) in ase_ids.iter().enumerate() {
             let Some(cis_handle) = cig_manager.cis_handle(ase_id) else { continue };
-            let mut pcm = [0i16; SAMPLES_PER_FRAME];
-            for (i, sample) in pcm.iter_mut().enumerate() {
-                let t = (sample_index as usize + i) as f32 / SAMPLE_RATE_HZ;
-                *sample = (libm::sinf(2.0 * core::f32::consts::PI * FREQUENCIES_HZ[channel] * t) * AMPLITUDE) as i16;
-            }
-            if matches!(cig_manager.encode(ase_id, &pcm, &mut encoded), Some(Ok(()))) {
-                let seq = sequence_numbers[channel].next();
-                // The frame size is fixed at build time, well under the packet bound.
-                let packet = iso_tx::build_packet(&mut iso_buf, cis_handle, seq, &encoded).unwrap();
-                // Best-effort: an occasional dropped ISO write just drops that one SDU.
-                let _ = stack.iso().send(&packet).await;
+            let seq = sequence_numbers[channel].next();
+            // The frame size is fixed at build time, well under the packet bound.
+            let packet = iso_tx::build_packet(&mut iso_buf, cis_handle, seq, &tone[channel][frame]).unwrap();
+            // Best-effort: an occasional dropped ISO write just drops that one SDU.
+            match stack.iso().send(&packet).await {
+                Ok(()) => packets_sent = packets_sent.wrapping_add(1),
+                Err(_) => packets_dropped = packets_dropped.wrapping_add(1),
             }
         }
-        sample_index = sample_index.wrapping_add(SAMPLES_PER_FRAME as u32);
+        frames = frames.wrapping_add(1);
+        if frames % 100 == 0 {
+            #[cfg(feature = "log")]
+            log::info!(
+                "[le_audio_source] ISO packets: sent={}, dropped={}",
+                packets_sent,
+                packets_dropped
+            );
+            #[cfg(feature = "defmt")]
+            info!(
+                "[le_audio_source] ISO packets: sent={}, dropped={}",
+                packets_sent, packets_dropped
+            );
+        }
     }
 }

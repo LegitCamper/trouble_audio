@@ -12,13 +12,15 @@ proves audio is flowing by driving the Green LED (P0.2) on/off with decoded peak
 | Pairing + CIS/ISO | ✅ | JustWorks, real stereo connection against a Samsung Galaxy S23+ |
 | LC3 decode + LED indicator | ✅ | Both the boot self-test blink and real playback |
 | Reconnect (e.g. track skip) | ✅ | No longer OOM-panics after repeated reconnects |
-| `source` | ❌ | Builds clean, covered by `trouble_audio::cig`'s unit tests, not yet run on hardware |
-| Bond persistence across reflash | ❌ | Implemented (`src/bond_store.rs`, on-chip RRAM), not yet confirmed end-to-end |
+| Two-board `source` -> `sink` | ✅ | Stereo CIG/two CIS paths, 200 ISO packets/s, and LC3 decode verified with two nRF54L15 Connect Kits |
+| Bond persistence across reflash | ✅ | Both boards reconnect and encrypt from their on-chip RRAM bond after reflashing |
 | Auracast source/sink controller plumbing | ❌ | Compiles against nRF SDC BIS support; host lifecycle is unit-tested, radio validation pending |
 
-**Known open issue**: real ISO packets often show up with `data_len=0` even after a clean CIS
-establishment - not yet root-caused, likely `nrf-sdc` controller-level (ISO buffer/timing). See
-`build_sdc`'s comments in `src/bin/sink.rs`/`src/bin/source.rs`.
+**Known open issue**: the sink receives and LC3-decodes the continuous two-board test stream, but
+its decoded-frame application queue eventually fills because the continuously-ready controller
+receive loop can starve the LED consumer. The drop warning is rate-limited; this does not affect
+CIG/CIS establishment or prove a radio/decoder failure, but the LED path is not lossless under
+this synthetic sustained load.
 
 The library exposes `run_auracast_source` and `run_auracast_sink`, compile-checked against
 `SoftdeviceController`. A board binary calling them must enable `support_bis_source()` or

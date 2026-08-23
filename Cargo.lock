@@ -276,12 +276,13 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.8.0",
+ "heapless 0.9.3",
 ]
 
 [[package]]
 name = "bt-hci"
 version = "0.10.0"
+source = "git+https://github.com/LegitCamper/bt-hci?rev=48337e506a15d7665f5d4caa4d4613388b2e7c64#48337e506a15d7665f5d4caa4d4613388b2e7c64"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -290,7 +291,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.8.0",
+ "heapless 0.9.3",
  "log",
  "serde",
 ]
@@ -322,6 +323,7 @@ dependencies = [
 [[package]]
 name = "bt-hci-transport"
 version = "0.1.0"
+source = "git+https://github.com/LegitCamper/bt-hci?rev=48337e506a15d7665f5d4caa4d4613388b2e7c64#48337e506a15d7665f5d4caa4d4613388b2e7c64"
 dependencies = [
  "defmt 1.1.1",
  "embedded-io 0.7.1",
@@ -2357,6 +2359,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.3.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -2373,6 +2376,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.2.1"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -2391,6 +2395,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
 dependencies = [
  "bt-hci 0.10.0",
  "bt-hci-transport",
@@ -2408,6 +2413,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.2.1"
+source = "git+https://github.com/LegitCamper/nrf-sdc?rev=7ae16881a1994558a3f0ea667866f851490d2673#7ae16881a1994558a3f0ea667866f851490d2673"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -3860,6 +3866,7 @@ dependencies = [
 [[package]]
 name = "trouble-host"
 version = "0.8.0"
+source = "git+https://github.com/LegitCamper/trouble?rev=d30c550f4022c3dbf61a27c49b84873d51dc64fd#d30c550f4022c3dbf61a27c49b84873d51dc64fd"
 dependencies = [
  "aes",
  "bt-hci 0.10.0",
@@ -3885,6 +3892,7 @@ dependencies = [
 [[package]]
 name = "trouble-host-macros"
 version = "0.6.0"
+source = "git+https://github.com/LegitCamper/trouble?rev=d30c550f4022c3dbf61a27c49b84873d51dc64fd#d30c550f4022c3dbf61a27c49b84873d51dc64fd"
 dependencies = [
  "convert_case 0.8.0",
  "darling",

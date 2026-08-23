@@ -10,10 +10,10 @@ use embassy_executor::Spawner;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embedded_alloc::LlffHeap as Heap;
-use nrf54l15_connect_kit::bond_store::rram_bond_store;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::vendor::NordicCigReservedTimeSet;
 use nrf_sdc::{self as sdc, mpsl};
+use nrf54l15_connect_kit::bond_store::rram_bond_store;
 use static_cell::StaticCell;
 use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
 use trouble_audio::lc3::Lc3MonoEncoder;
@@ -36,10 +36,11 @@ const CHANNEL_COUNT: usize = 2;
 /// Headroom for everything else `alloc`-backed - not computed exactly like the LC3 buffers below.
 const MISC_ALLOC_BUDGET_BYTES: usize = 16 * 1024;
 
-const ENCODER_HEAP_BYTES: usize = match Lc3MonoEncoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
-    Ok(n) => n,
-    Err(_) => panic!("unsupported sampling frequency"),
-};
+const ENCODER_HEAP_BYTES: usize =
+    match Lc3MonoEncoder::heap_bytes(NEGOTIATED_SAMPLING_FREQUENCY, NEGOTIATED_FRAME_DURATION) {
+        Ok(n) => n,
+        Err(_) => panic!("unsupported sampling frequency"),
+    };
 const _: () = assert!(
     HEAP_SIZE >= CHANNEL_COUNT * ENCODER_HEAP_BYTES + MISC_ALLOC_BUDGET_BYTES,
     "HEAP_SIZE too small to fit one Lc3MonoEncoder per channel plus misc allocation headroom"
@@ -177,5 +178,11 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Running ble audio source example");
 
-    basic_audio_source::run(sdc, OUR_ADDRESS, basic_audio_sink::ADDRESS, Some(&bond_store)).await
+    basic_audio_source::run(
+        sdc,
+        OUR_ADDRESS,
+        basic_audio_sink::ADDRESS,
+        Some(&bond_store),
+    )
+    .await
 }

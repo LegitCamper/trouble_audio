@@ -105,14 +105,18 @@ const LED_ON_THRESHOLD: u16 = 512;
 /// Plain on/off GPIO, not PWM brightness: `SimplePwm` on this chip/pin never lit the LED in
 /// testing (tried both `DutyCycle::normal` and `::inverted`), while plain `Output` worked.
 async fn drive_led(led: &mut Output<'_>, cis_manager: &CisManager<NoopRawMutex, { basic_audio_sink::MAX_ASES }>) -> ! {
+    let mut frames = 0u32;
     loop {
         let pcm = cis_manager.receive_pcm().await;
         let peak = pcm.samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0).min(i16::MAX as u16);
-        defmt::debug!("[sink] drive_led: ase_id={} peak={}", pcm.ase_id, peak);
         if peak >= LED_ON_THRESHOLD {
             led.set_high();
         } else {
             led.set_low();
+        }
+        frames = frames.wrapping_add(1);
+        if frames % 100 == 0 {
+            defmt::debug!("[sink] decoded frames={} latest_ase_id={} peak={}", frames, pcm.ase_id, peak);
         }
     }
 }
