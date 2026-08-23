@@ -14,6 +14,8 @@ trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "d30c550f
 
 [profile.release]
 debug = 2
+lto = true
+codegen-units = 1
 
 [patch.crates-io]
 # Required until the BIG handle width and LE BIG Create Sync fields are fixed in bt-hci.

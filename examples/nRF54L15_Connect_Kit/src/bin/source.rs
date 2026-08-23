@@ -14,7 +14,7 @@ use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::vendor::NordicCigReservedTimeSet;
 use nrf_sdc::{self as sdc, mpsl};
 use nrf54l15_connect_kit::bond_store::rram_bond_store;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
 use trouble_audio::lc3::Lc3MonoEncoder;
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
@@ -100,8 +100,9 @@ fn build_sdc<'d, const N: usize>(
 async fn main(spawner: Spawner) {
     defmt::info!("start");
     {
-        static HEAP_MEM: StaticCell<[MaybeUninit<u8>; HEAP_SIZE]> = StaticCell::new();
-        let heap_mem = HEAP_MEM.init([const { MaybeUninit::uninit() }; HEAP_SIZE]);
+        static HEAP_MEM: ConstStaticCell<[MaybeUninit<u8>; HEAP_SIZE]> =
+            ConstStaticCell::new([const { MaybeUninit::uninit() }; HEAP_SIZE]);
+        let heap_mem = HEAP_MEM.take();
         unsafe { HEAP.init(heap_mem.as_ptr() as usize, HEAP_SIZE) }
     }
 
