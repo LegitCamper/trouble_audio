@@ -735,6 +735,13 @@ where
         self.mcs.as_ref()
     }
 
+    /// This server's Volume Control service, if [`ServerBuilder::add_vcs`] was called - e.g. so a
+    /// caller can read [`VcsServer::volume_state`] after [`Self::handle`] processes a Volume
+    /// Control Point write, to apply the resulting volume and mute to its own audio path.
+    pub fn vcs(&self) -> Option<&VcsServer> {
+        self.vcs.as_ref()
+    }
+
     fn handle_read(&self, event: &ReadEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
         if let Some(res) = self.pacs.handle_read_event(event) {
             return Some(res);
