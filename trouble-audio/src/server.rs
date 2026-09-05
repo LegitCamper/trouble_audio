@@ -653,15 +653,7 @@ where
                     if let Some(cis) = self.cis {
                         cis.observe_operation(&self.server, ascs, &operation);
                     }
-                    let notification = bap::drive_ase_control_point(&self.server, ascs, conn, &operation).await;
-                    // The Control Point characteristic's write value (`AseControlPointOperation`)
-                    // and its notified response (`AseControlPointNotification`) are different
-                    // logical shapes multiplexed onto the same ATT value, so `notify_raw` is used
-                    // here instead of the type-checked `notify`.
-                    let _ = ascs
-                        .ase_control_point()
-                        .notify_raw(conn, notification.as_gatt(), false)
-                        .await;
+                    let _ = bap::drive_ase_control_point(&self.server, ascs, conn, &operation).await;
                 } else {
                     #[cfg(feature = "defmt")]
                     defmt::warn!("[le audio] malformed ASE Control Point write");
@@ -709,6 +701,30 @@ where
     pub async fn notify_ase_streaming(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
         if let Some(ascs) = &self.ascs {
             bap::notify_ase_streaming(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
+    /// Completes a Release procedure after the ISO data path has been removed.
+    pub async fn notify_ase_released(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
+        if let Some(ascs) = &self.ascs {
+            bap::notify_ase_released(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
+    /// Restores an ASE's cached QoS state after an unexpected CIS link loss.
+    pub async fn notify_ase_qos_configured(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
+        if let Some(ascs) = &self.ascs {
+            bap::notify_ase_qos_configured(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
+    /// Clears connection-scoped ASE and CIS state after an ACL disconnect.
+    pub fn reset_connection(&self) {
+        if let Some(ascs) = &self.ascs {
+            ascs.reset_connection(&self.server);
+        }
+        if let Some(cis) = self.cis {
+            cis.reset_connection();
         }
     }
 

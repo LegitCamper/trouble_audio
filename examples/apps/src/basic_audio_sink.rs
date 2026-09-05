@@ -99,8 +99,8 @@ where
     };
 
     let mut ases = HVec::new();
-    let _ = ases.push(AseType::Sink(Ase::new(0)));
     let _ = ases.push(AseType::Sink(Ase::new(1)));
+    let _ = ases.push(AseType::Sink(Ase::new(2)));
 
     run_peripheral::<C, NoopRawMutex, MAX_ASES, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX>(
         controller,

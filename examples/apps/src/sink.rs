@@ -12,7 +12,7 @@
 
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetHostFeature};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
-use embassy_futures::select::{Either, select, select4};
+use embassy_futures::select::{Either4, select4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_audio::ascs::AscsStorage;
@@ -197,10 +197,25 @@ pub async fn run_peripheral<
                         // bonding, and `bond_store`/the resolving-list update below never run.
                         let _ = conn.raw().set_bondable(true);
                         loop {
-                            let event = match select(conn.next(), cis_manager.next_streaming_ase()).await {
-                                Either::First(event) => event,
-                                Either::Second(ase_id) => {
+                            let event = match select4(
+                                conn.next(),
+                                cis_manager.next_streaming_ase(),
+                                cis_manager.next_released_ase(),
+                                cis_manager.next_qos_configured_ase(),
+                            )
+                            .await
+                            {
+                                Either4::First(event) => event,
+                                Either4::Second(ase_id) => {
                                     server.notify_ase_streaming(&conn, ase_id).await;
+                                    continue;
+                                }
+                                Either4::Third(ase_id) => {
+                                    server.notify_ase_released(&conn, ase_id).await;
+                                    continue;
+                                }
+                                Either4::Fourth(ase_id) => {
+                                    server.notify_ase_qos_configured(&conn, ase_id).await;
                                     continue;
                                 }
                             };
@@ -210,6 +225,7 @@ pub async fn run_peripheral<
                                     log::info!("[le_audio] disconnected: {:?}", _reason);
                                     #[cfg(feature = "defmt")]
                                     info!("[le_audio] disconnected: {}", Debug2Format(&_reason));
+                                    server.reset_connection();
                                     break;
                                 }
                                 GattConnectionEvent::Gatt { event } => {

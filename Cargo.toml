@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.dependencies]
-trouble-host = { git = "https://github.com/LegitCamper/trouble", rev = "d30c550f4022c3dbf61a27c49b84873d51dc64fd" }
+trouble-host = { git = "https://github.com/LegitCamper/trouble", branch = "fix/iso-disconnection-events" }
 
 [profile.release]
 debug = 2

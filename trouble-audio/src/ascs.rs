@@ -10,6 +10,7 @@
 //! is a single, ordinary characteristic rather than a per-connection one.
 
 use alloc::vec::Vec as AVec;
+use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use heapless::Vec;
 use trouble_host::{
@@ -141,6 +142,9 @@ pub struct AscsServer<const MAX_ASES: usize> {
     handle: u16,
     ase_control_point: Characteristic<AseControlPointOperation>,
     ases: Vec<(AseDirection, Characteristic<Ase>), MAX_ASES>,
+    // QoS parameters are absent from the Enabling/Streaming wire values but are required when
+    // Disable returns an ASE to QoS Configured.
+    qos_cache: RefCell<[Option<AseState>; MAX_ASES]>,
 }
 
 impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
@@ -195,6 +199,7 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
             handle: service.build(),
             ase_control_point: ase_control_point_char,
             ases: ase_chars,
+            qos_cache: RefCell::new(core::array::from_fn(|_| None)),
         }
     }
 
@@ -206,6 +211,35 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
     /// The ASE Control Point characteristic.
     pub fn ase_control_point(&self) -> &Characteristic<AseControlPointOperation> {
         &self.ase_control_point
+    }
+
+    pub(crate) fn cache_qos(&self, index: usize, state: AseState) {
+        if let Some(slot) = self.qos_cache.borrow_mut().get_mut(index) {
+            *slot = Some(state);
+        }
+    }
+
+    pub(crate) fn cached_qos(&self, index: usize) -> Option<AseState> {
+        self.qos_cache.borrow().get(index).and_then(Clone::clone)
+    }
+
+    pub(crate) fn clear_cached_qos(&self, index: usize) {
+        if let Some(slot) = self.qos_cache.borrow_mut().get_mut(index) {
+            *slot = None;
+        }
+    }
+
+    /// Restores all ASE characteristics to Idle after their owning ACL connection is lost.
+    pub fn reset_connection<M: RawMutex, P: PacketPool, const MAX_CONNECTIONS: usize>(
+        &self,
+        server: &AttributeServer<'_, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
+    ) {
+        for (index, (_, characteristic)) in self.ases.iter().enumerate() {
+            if let Ok(current) = characteristic.get(server) {
+                let _ = characteristic.set(server, &Ase::new(current.id()));
+            }
+            self.clear_cached_qos(index);
+        }
     }
 }
 
@@ -725,14 +759,14 @@ impl Operation {
     }
 
     fn decode(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() < 2 {
+        if data.len() < 2 || data[1] == 0 {
             return Err(FromGattError::InvalidLength);
         }
         let opcode = data[0];
         let count = data[1] as usize;
         let mut pos = 2usize;
 
-        match opcode {
+        let operation = match opcode {
             0x01 => {
                 let mut entries = AVec::with_capacity(count);
                 for _ in 0..count {
@@ -748,7 +782,7 @@ impl Operation {
                     pos = config_end;
                     entries.push((ase_id, target_latency, target_phy, codec_id, config));
                 }
-                Ok(Self::ConfigCodec(entries))
+                Self::ConfigCodec(entries)
             }
             0x02 => {
                 let mut entries = AVec::with_capacity(count);
@@ -768,7 +802,7 @@ impl Operation {
                         [entry[13], entry[14], entry[15]],        // presentation_delay
                     ));
                 }
-                Ok(Self::ConfigQos(entries))
+                Self::ConfigQos(entries)
             }
             0x03 | 0x07 => {
                 let mut entries = AVec::with_capacity(count);
@@ -782,22 +816,27 @@ impl Operation {
                     entries.push((ase_id, metadata));
                 }
                 if opcode == 0x03 {
-                    Ok(Self::Enable(entries))
+                    Self::Enable(entries)
                 } else {
-                    Ok(Self::UpdateMetadata(entries))
+                    Self::UpdateMetadata(entries)
                 }
             }
             0x04 | 0x05 | 0x06 | 0x08 => {
                 let ids = AVec::from(data.get(pos..pos + count).ok_or(FromGattError::InvalidLength)?);
+                pos += count;
                 match opcode {
-                    0x04 => Ok(Self::ReceiverStartReady(ids)),
-                    0x05 => Ok(Self::Disable(ids)),
-                    0x06 => Ok(Self::ReceiverStopReady(ids)),
-                    _ => Ok(Self::Release(ids)),
+                    0x04 => Self::ReceiverStartReady(ids),
+                    0x05 => Self::Disable(ids),
+                    0x06 => Self::ReceiverStopReady(ids),
+                    _ => Self::Release(ids),
                 }
             }
-            _ => Err(FromGattError::InvalidLength),
+            _ => return Err(FromGattError::InvalidLength),
+        };
+        if pos != data.len() {
+            return Err(FromGattError::InvalidLength);
         }
+        Ok(operation)
     }
 }
 
@@ -928,5 +967,20 @@ impl FromGatt for AseControlPointNotification {
             return Err(FromGattError::InvalidLength);
         }
         Ok(Self { encoded: AVec::from(data) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_point_operation_rejects_zero_ases() {
+        assert!(AseControlPointOperation::from_gatt(&[0x08, 0x00]).is_err());
+    }
+
+    #[test]
+    fn control_point_operation_rejects_trailing_bytes() {
+        assert!(AseControlPointOperation::from_gatt(&[0x08, 0x01, 0x01, 0xff]).is_err());
     }
 }
