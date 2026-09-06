@@ -398,6 +398,40 @@ where
     ots: Option<OtsServer<OTS_MAX_OBJECTS>>,
 }
 
+/// Sends the ATT reply for a decoded write outcome: accept on `Ok`, reject with the code on
+/// `Err`. A failure from `accept`/`reject` itself (peer already gone) is dropped, same as every
+/// dispatch site below did inline before this was factored out.
+async fn reply<P: PacketPool>(event: GattEvent<'_, '_, P>, outcome: Result<(), AttErrorCode>) {
+    match outcome {
+        Ok(()) => {
+            if let Ok(reply) = event.accept() {
+                reply.send().await;
+            }
+        }
+        Err(err) => {
+            if let Ok(reply) = event.reject(err) {
+                reply.send().await;
+            }
+        }
+    }
+}
+
+/// Tries `$self.pacs` (not an `Option`, unlike every other service) then each `$field` in order,
+/// returning the first `Some`; mirrors the handle-collision order of [`Server::handle`].
+macro_rules! dispatch_to_service {
+    ($self:expr, $event:expr, $method:ident, [$($field:ident),+ $(,)?]) => {{
+        if let Some(res) = $self.pacs.$method($event) {
+            return Some(res);
+        }
+        $(
+            if let Some(res) = $self.$field.as_ref().and_then(|svc| svc.$method($event)) {
+                return Some(res);
+            }
+        )+
+        None
+    }};
+}
+
 impl<const MAX_ASES: usize, const MAX_CONNECTIONS: usize, M, P> Server<'_, MAX_ASES, MAX_CONNECTIONS, M, P>
 where
     M: RawMutex,
@@ -409,6 +443,49 @@ where
     /// notification the spec requires. Returns `false` for events this server doesn't otherwise
     /// touch (e.g. `GattEvent::Other`/`NotAllowed`), so the caller can still inspect them.
     pub async fn handle(&self, conn: &GattConnection<'_, '_, P>, event: GattEvent<'_, '_, P>) -> bool {
+        // Family B (vcs/aics/vocs/has/bass): decode the control-point write, run it through
+        // `drive_*`, and reply with whatever `Result` that returns.
+        macro_rules! control_point_reply {
+            ($svc:ident, $char:ident, $drive:path) => {
+                if let (GattEvent::Write(write_event), Some($svc)) = (&event, &self.$svc) {
+                    if write_event.handle() == $svc.$char().handle {
+                        let operation = write_event.value($svc.$char());
+                        let outcome = match operation {
+                            Ok(operation) => $drive(&self.server, $svc, conn, &operation).await,
+                            Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
+                        };
+                        reply(event, outcome).await;
+                        return true;
+                    }
+                }
+            };
+        }
+
+        // Family C (mcs/tbs/ots OACP/ots OLCP): accept immediately, then drive only once the
+        // value has decoded (a malformed write still gets the spec-mandated reply, just no
+        // procedure to run).
+        macro_rules! control_point_drive {
+            ($svc:ident, $char:ident, $drive:path, $msg:literal) => {
+                if let (GattEvent::Write(write_event), Some($svc)) = (&event, &self.$svc) {
+                    if write_event.handle() == $svc.$char().handle {
+                        let operation = write_event.value($svc.$char());
+                        match event.accept() {
+                            Ok(resp) => resp.send().await,
+                            Err(_) => return true,
+                        }
+                        if let Ok(operation) = operation {
+                            $drive(&self.server, $svc, conn, &operation).await;
+                        } else {
+                            warn!($msg);
+                        }
+                        return true;
+                    }
+                }
+            };
+        }
+
+        // Family A (mics/csis): validate the written value against current state; on success
+        // accept and notify the new value, on failure reject.
         if let (GattEvent::Write(write_event), Some(mics)) = (&event, &self.mics) {
             if write_event.handle() == mics.mute().handle {
                 let outcome = write_event.value(mics.mute()).map_err(|_| AttErrorCode::WRITE_REQUEST_REJECTED).and_then(|requested| {
@@ -417,43 +494,16 @@ where
                 });
                 match outcome {
                     Ok(new_mute) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
+                        reply(event, Ok(())).await;
                         let _ = mics.mute().notify(conn, &new_mute, true).await;
                     }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
+                    Err(err) => reply(event, Err(err)).await,
                 }
                 return true;
             }
         }
 
-        if let (GattEvent::Write(write_event), Some(vcs)) = (&event, &self.vcs) {
-            if write_event.handle() == vcs.volume_control_point().handle {
-                let operation = write_event.value(vcs.volume_control_point());
-                let outcome = match operation {
-                    Ok(operation) => vcs::drive_volume_control_point(&self.server, vcs, conn, &operation).await,
-                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
-                };
-                match outcome {
-                    Ok(()) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
-                    }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
-                }
-                return true;
-            }
-        }
+        control_point_reply!(vcs, volume_control_point, vcs::drive_volume_control_point);
 
         if let (GattEvent::Write(write_event), Some(csis)) = (&event, &self.csis) {
             if write_event.handle() == csis.lock().handle {
@@ -467,178 +517,25 @@ where
                 };
                 match outcome {
                     Ok(new_lock) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
+                        reply(event, Ok(())).await;
                         let _ = csis.lock().notify(conn, &new_lock, true).await;
                     }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
+                    Err(err) => reply(event, Err(err)).await,
                 }
                 return true;
             }
         }
 
-        if let (GattEvent::Write(write_event), Some(mcs)) = (&event, &self.mcs) {
-            if write_event.handle() == mcs.media_control_point().handle {
-                let operation = write_event.value(mcs.media_control_point());
-                match event.accept() {
-                    Ok(reply) => reply.send().await,
-                    Err(_) => return true,
-                }
-                if let Ok(operation) = operation {
-                    mcs::drive_media_control_point(&self.server, mcs, conn, &operation).await;
-                } else {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[le audio] malformed Media Control Point write");
-                }
-                return true;
-            }
-        }
+        control_point_drive!(mcs, media_control_point, mcs::drive_media_control_point, "[le audio] malformed Media Control Point write");
+        control_point_reply!(aics, audio_input_control_point, aics::drive_input_control_point);
+        control_point_reply!(vocs, volume_offset_control_point, vocs::drive_volume_offset_control_point);
+        control_point_reply!(has, preset_control_point, has::drive_preset_control_point);
+        control_point_reply!(bass, control_point, bass::drive_control_point);
+        control_point_drive!(tbs, call_control_point, tbs::drive_call_control_point, "[le audio] malformed Call Control Point write");
+        control_point_drive!(ots, object_action_control_point, ots::drive_oacp, "[le audio] malformed Object Action Control Point write");
+        control_point_drive!(ots, object_list_control_point, ots::drive_olcp, "[le audio] malformed Object List Control Point write");
 
-        if let (GattEvent::Write(write_event), Some(aics)) = (&event, &self.aics) {
-            if write_event.handle() == aics.audio_input_control_point().handle {
-                let operation = write_event.value(aics.audio_input_control_point());
-                let outcome = match operation {
-                    Ok(operation) => aics::drive_input_control_point(&self.server, aics, conn, &operation).await,
-                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
-                };
-                match outcome {
-                    Ok(()) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
-                    }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-
-        if let (GattEvent::Write(write_event), Some(vocs)) = (&event, &self.vocs) {
-            if write_event.handle() == vocs.volume_offset_control_point().handle {
-                let operation = write_event.value(vocs.volume_offset_control_point());
-                let outcome = match operation {
-                    Ok(operation) => vocs::drive_volume_offset_control_point(&self.server, vocs, conn, &operation).await,
-                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
-                };
-                match outcome {
-                    Ok(()) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
-                    }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-
-        if let (GattEvent::Write(write_event), Some(has)) = (&event, &self.has) {
-            if write_event.handle() == has.preset_control_point().handle {
-                let operation = write_event.value(has.preset_control_point());
-                let outcome = match operation {
-                    Ok(operation) => has::drive_preset_control_point(&self.server, has, conn, &operation).await,
-                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
-                };
-                match outcome {
-                    Ok(()) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
-                    }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-
-        if let (GattEvent::Write(write_event), Some(bass)) = (&event, &self.bass) {
-            if write_event.handle() == bass.control_point().handle {
-                let operation = write_event.value(bass.control_point());
-                let outcome = match operation {
-                    Ok(operation) => bass::drive_control_point(&self.server, bass, conn, &operation).await,
-                    Err(_) => Err(AttErrorCode::WRITE_REQUEST_REJECTED),
-                };
-                match outcome {
-                    Ok(()) => {
-                        if let Ok(reply) = event.accept() {
-                            reply.send().await;
-                        }
-                    }
-                    Err(err) => {
-                        if let Ok(reply) = event.reject(err) {
-                            reply.send().await;
-                        }
-                    }
-                }
-                return true;
-            }
-        }
-
-        if let (GattEvent::Write(write_event), Some(tbs)) = (&event, &self.tbs) {
-            if write_event.handle() == tbs.call_control_point().handle {
-                let operation = write_event.value(tbs.call_control_point());
-                match event.accept() {
-                    Ok(reply) => reply.send().await,
-                    Err(_) => return true,
-                }
-                if let Ok(operation) = operation {
-                    tbs::drive_call_control_point(&self.server, tbs, conn, &operation).await;
-                } else {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[le audio] malformed Call Control Point write");
-                }
-                return true;
-            }
-        }
-
-        if let (GattEvent::Write(write_event), Some(ots)) = (&event, &self.ots) {
-            if write_event.handle() == ots.object_action_control_point().handle {
-                let operation = write_event.value(ots.object_action_control_point());
-                match event.accept() {
-                    Ok(reply) => reply.send().await,
-                    Err(_) => return true,
-                }
-                if let Ok(operation) = operation {
-                    ots::drive_oacp(&self.server, ots, conn, &operation).await;
-                } else {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[le audio] malformed Object Action Control Point write");
-                }
-                return true;
-            }
-            if write_event.handle() == ots.object_list_control_point().handle {
-                let operation = write_event.value(ots.object_list_control_point());
-                match event.accept() {
-                    Ok(reply) => reply.send().await,
-                    Err(_) => return true,
-                }
-                if let Ok(operation) = operation {
-                    ots::drive_olcp(&self.server, ots, conn, &operation).await;
-                } else {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[le audio] malformed Object List Control Point write");
-                }
-                return true;
-            }
-        }
-
+        // ASCS also feeds CisManager's side-table before driving, so it doesn't fit family C.
         if let (GattEvent::Write(write_event), Some(ascs)) = (&event, &self.ascs) {
             if write_event.handle() == ascs.ase_control_point().handle {
                 let operation = write_event.value(ascs.ase_control_point());
@@ -648,23 +545,13 @@ where
                 }
                 // Decode the operation once here; both consumers below take the decoded form.
                 if let Some(operation) = operation.ok().and_then(|op| op.operation().ok()) {
-                    #[cfg(feature = "defmt")]
-                    defmt::debug!("[le audio] ASE Control Point write: opcode {}", operation.opcode());
+                    debug!("[le audio] ASE Control Point write: opcode {}", operation.opcode());
                     if let Some(cis) = self.cis {
                         cis.observe_operation(&self.server, ascs, &operation);
                     }
-                    let notification = bap::drive_ase_control_point(&self.server, ascs, conn, &operation).await;
-                    // The Control Point characteristic's write value (`AseControlPointOperation`)
-                    // and its notified response (`AseControlPointNotification`) are different
-                    // logical shapes multiplexed onto the same ATT value, so `notify_raw` is used
-                    // here instead of the type-checked `notify`.
-                    let _ = ascs
-                        .ase_control_point()
-                        .notify_raw(conn, notification.as_gatt(), false)
-                        .await;
+                    let _ = bap::drive_ase_control_point(&self.server, ascs, conn, &operation).await;
                 } else {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[le audio] malformed ASE Control Point write");
+                    warn!("[le audio] malformed ASE Control Point write");
                 }
                 return true;
             }
@@ -677,16 +564,7 @@ where
         };
 
         match result {
-            Some(Ok(())) => {
-                if let Ok(reply) = event.accept() {
-                    reply.send().await;
-                }
-            }
-            Some(Err(err)) => {
-                if let Ok(reply) = event.reject(err) {
-                    reply.send().await;
-                }
-            }
+            Some(outcome) => reply(event, outcome).await,
             None => {
                 // Neither PACS nor ASCS recognizes this handle as one of their own
                 // characteristic *values* - which is also true of every CCCD (framework-managed,
@@ -712,6 +590,30 @@ where
         }
     }
 
+    /// Completes a Release procedure after the ISO data path has been removed.
+    pub async fn notify_ase_released(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
+        if let Some(ascs) = &self.ascs {
+            bap::notify_ase_released(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
+    /// Restores an ASE's cached QoS state after an unexpected CIS link loss.
+    pub async fn notify_ase_qos_configured(&self, conn: &GattConnection<'_, '_, P>, ase_id: u8) {
+        if let Some(ascs) = &self.ascs {
+            bap::notify_ase_qos_configured(&self.server, ascs, conn, ase_id).await;
+        }
+    }
+
+    /// Clears connection-scoped ASE and CIS state after an ACL disconnect.
+    pub fn reset_connection(&self) {
+        if let Some(ascs) = &self.ascs {
+            ascs.reset_connection(&self.server);
+        }
+        if let Some(cis) = self.cis {
+            cis.reset_connection();
+        }
+    }
+
     /// This server's (Generic) Media Control service, if [`ServerBuilder::add_mcs`] was called -
     /// e.g. so a caller can read [`McsServer::media_state`] after [`Self::handle`] processes a
     /// Media Control Point write, to react to the resulting Play/Pause/... transition itself.
@@ -719,95 +621,18 @@ where
         self.mcs.as_ref()
     }
 
+    /// This server's Volume Control service, if [`ServerBuilder::add_vcs`] was called - e.g. so a
+    /// caller can read [`VcsServer::volume_state`] after [`Self::handle`] processes a Volume
+    /// Control Point write, to apply the resulting volume and mute to its own audio path.
+    pub fn vcs(&self) -> Option<&VcsServer> {
+        self.vcs.as_ref()
+    }
+
     fn handle_read(&self, event: &ReadEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
-        if let Some(res) = self.pacs.handle_read_event(event) {
-            return Some(res);
-        }
-        if let Some(res) = self.ascs.as_ref().and_then(|ascs| ascs.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.mics.as_ref().and_then(|mics| mics.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.vcs.as_ref().and_then(|vcs| vcs.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.csis.as_ref().and_then(|csis| csis.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.mcs.as_ref().and_then(|mcs| mcs.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.gmas.as_ref().and_then(|gmas| gmas.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.tmas.as_ref().and_then(|tmas| tmas.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.aics.as_ref().and_then(|aics| aics.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.vocs.as_ref().and_then(|vocs| vocs.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.has.as_ref().and_then(|has| has.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.bass.as_ref().and_then(|bass| bass.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.tbs.as_ref().and_then(|tbs| tbs.handle_read_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.ots.as_ref().and_then(|ots| ots.handle_read_event(event)) {
-            return Some(res);
-        }
-        None
+        dispatch_to_service!(self, event, handle_read_event, [ascs, mics, vcs, csis, mcs, gmas, tmas, aics, vocs, has, bass, tbs, ots])
     }
 
     fn handle_write(&self, event: &WriteEvent<'_, '_, P>) -> Option<Result<(), AttErrorCode>> {
-        if let Some(res) = self.pacs.handle_write_event(event) {
-            return Some(res);
-        }
-        if let Some(res) = self.ascs.as_ref().and_then(|ascs| ascs.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.mics.as_ref().and_then(|mics| mics.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.vcs.as_ref().and_then(|vcs| vcs.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.csis.as_ref().and_then(|csis| csis.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.mcs.as_ref().and_then(|mcs| mcs.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.gmas.as_ref().and_then(|gmas| gmas.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.tmas.as_ref().and_then(|tmas| tmas.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.aics.as_ref().and_then(|aics| aics.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.vocs.as_ref().and_then(|vocs| vocs.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.has.as_ref().and_then(|has| has.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.bass.as_ref().and_then(|bass| bass.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.tbs.as_ref().and_then(|tbs| tbs.handle_write_event(event)) {
-            return Some(res);
-        }
-        if let Some(res) = self.ots.as_ref().and_then(|ots| ots.handle_write_event(event)) {
-            return Some(res);
-        }
-        None
+        dispatch_to_service!(self, event, handle_write_event, [ascs, mics, vcs, csis, mcs, gmas, tmas, aics, vocs, has, bass, tbs, ots])
     }
 }

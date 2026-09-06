@@ -402,7 +402,7 @@ pub fn apply_input_operation(
 
 /// A Gatt service client for reading/controlling one audio input.
 pub struct AicsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub audio_input_state: Characteristic<AudioInputState>,
     pub gain_settings_attribute: Characteristic<GainSettingsAttribute>,
     pub audio_input_type: Characteristic<AudioInputType>,
@@ -441,7 +441,7 @@ impl AicsClient {
 
 /// A Gatt service server exposing control over one audio input.
 pub struct AicsServer {
-    handle: u16,
+    pub handle: u16,
     audio_input_state: Characteristic<AudioInputState>,
     gain_settings_attribute: GainSettingsAttribute,
     audio_input_type: Characteristic<AudioInputType>,
@@ -533,7 +533,7 @@ impl AicsServer {
         let audio_input_state = service
             .add_characteristic(
                 characteristic::AUDIO_INPUT_STATE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 initial_state,
                 store.audio_input_state,
             )
@@ -543,7 +543,7 @@ impl AicsServer {
         let _gain_settings_attribute_char = service
             .add_characteristic(
                 characteristic::GAIN_SETTINGS_ATTRIBUTE,
-                &[CharacteristicProp::Read],
+                [CharacteristicProp::Read],
                 gain_settings_attribute,
                 gain_settings_attribute_store,
             )
@@ -551,14 +551,14 @@ impl AicsServer {
             .build();
 
         let audio_input_type = service
-            .add_characteristic(characteristic::AUDIO_INPUT_TYPE, &[CharacteristicProp::Read], input_type, input_type_store)
+            .add_characteristic(characteristic::AUDIO_INPUT_TYPE, [CharacteristicProp::Read], input_type, input_type_store)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let audio_input_status = service
             .add_characteristic(
                 characteristic::AUDIO_INPUT_STATUS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 initial_status,
                 store.audio_input_status,
             )
@@ -568,7 +568,7 @@ impl AicsServer {
         let audio_input_control_point = service
             .add_characteristic(
                 characteristic::AUDIO_INPUT_CONTROL_POINT,
-                &[CharacteristicProp::Write],
+                [CharacteristicProp::Write],
                 AudioInputControlPointOperation::default(),
                 store.audio_input_control_point,
             )
@@ -578,7 +578,7 @@ impl AicsServer {
         let audio_input_description = service
             .add_characteristic(
                 characteristic::AUDIO_INPUT_DESCRIPTION,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 description,
                 store.audio_input_description,
             )

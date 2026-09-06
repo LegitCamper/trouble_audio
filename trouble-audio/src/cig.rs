@@ -20,7 +20,7 @@
 
 use core::cell::RefCell;
 
-use bt_hci::cmd::le::{LeCreateCis, LeRemoveCig, LeRemoveIsoDataPath, LeSetupIsoDataPath};
+use bt_hci::cmd::le::{LeCreateCis, LeRemoveCig, LeSetupIsoDataPath};
 #[cfg(feature = "nrf-sdc")]
 use bt_hci::cmd::le::LeSetCigParametersTest;
 #[cfg(not(feature = "nrf-sdc"))]
@@ -424,7 +424,6 @@ where
         + for<'a> ControllerCmdSync<SetCigParametersCmd<'a>>
         + for<'a> ControllerCmdAsync<LeCreateCis<'a>>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
-        + ControllerCmdSync<LeRemoveIsoDataPath>
         + ControllerCmdSync<LeRemoveCig>,
 {
     let iso = stack.iso();

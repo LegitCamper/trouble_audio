@@ -62,7 +62,7 @@ impl FixedGattValue for VolumeOffsetState {
 
 /// The value written to the Volume Offset Control Point characteristic: Opcode (1, always `0x01`
 /// - Set Volume Offset is VOCS's only defined opcode) | Change_Counter (1) | Volume_Offset (2,
-/// signed LE).
+///   signed LE).
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -130,7 +130,7 @@ pub fn apply_volume_offset_operation(current: VolumeOffsetState, operation: SetV
 
 /// A Gatt service client for reading/controlling one audio output's volume offset.
 pub struct VocsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub volume_offset_state: Characteristic<VolumeOffsetState>,
     pub audio_location: Characteristic<AudioLocation>,
     pub volume_offset_control_point: Characteristic<SetVolumeOffset>,
@@ -193,7 +193,7 @@ impl VocsStorage {
 
 /// A Gatt service server exposing control over one audio output's volume offset.
 pub struct VocsServer {
-    handle: u16,
+    pub handle: u16,
     volume_offset_state: Characteristic<VolumeOffsetState>,
     audio_location: Characteristic<AudioLocation>,
     volume_offset_control_point: Characteristic<SetVolumeOffset>,
@@ -216,7 +216,7 @@ impl VocsServer {
         let volume_offset_state = service
             .add_characteristic(
                 characteristic::VOLUME_OFFSET_STATE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 initial_state,
                 store.volume_offset_state,
             )
@@ -226,7 +226,7 @@ impl VocsServer {
         let audio_location = service
             .add_characteristic(
                 characteristic::AUDIO_LOCATION,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 audio_location,
                 store.audio_location,
             )
@@ -236,7 +236,7 @@ impl VocsServer {
         let volume_offset_control_point = service
             .add_characteristic(
                 characteristic::VOLUME_OFFSET_CONTROL_POINT,
-                &[CharacteristicProp::Write],
+                [CharacteristicProp::Write],
                 SetVolumeOffset::default(),
                 store.volume_offset_control_point,
             )
@@ -246,7 +246,7 @@ impl VocsServer {
         let audio_output_description = service
             .add_characteristic(
                 characteristic::AUDIO_OUTPUT_DESCRIPTION,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 description,
                 store.audio_output_description,
             )

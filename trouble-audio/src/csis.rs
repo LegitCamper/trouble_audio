@@ -251,7 +251,7 @@ impl Lock {
 
 /// A Gatt service client for discovering a device's coordinated-set membership.
 pub struct CsisClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub sirk: Characteristic<Sirk>,
     pub set_size: Option<Characteristic<u8>>,
     pub lock: Characteristic<Lock>,
@@ -300,7 +300,7 @@ impl CsisClient {
 
 /// A Gatt service server exposing this device's coordinated-set membership.
 pub struct CsisServer {
-    handle: u16,
+    pub handle: u16,
     sirk: Characteristic<Sirk>,
     set_size: Option<Characteristic<u8>>,
     lock: Characteristic<Lock>,
@@ -338,7 +338,7 @@ impl CsisServer {
         let sirk = service
             .add_characteristic(
                 characteristic::SET_IDENTITY_RESOLVING_KEY,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 sirk,
                 sirk_store,
             )
@@ -349,7 +349,7 @@ impl CsisServer {
             service
                 .add_characteristic(
                     characteristic::COORDINATED_SET_SIZE,
-                    &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                    [CharacteristicProp::Read, CharacteristicProp::Notify],
                     size,
                     set_size_store,
                 )
@@ -360,7 +360,7 @@ impl CsisServer {
         let lock = service
             .add_characteristic(
                 characteristic::SET_MEMBER_LOCK,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 lock,
                 lock_store,
             )
@@ -372,7 +372,7 @@ impl CsisServer {
             service
                 .add_characteristic(
                     characteristic::SET_MEMBER_RANK,
-                    &[CharacteristicProp::Read],
+                    [CharacteristicProp::Read],
                     rank,
                     rank_store,
                 )

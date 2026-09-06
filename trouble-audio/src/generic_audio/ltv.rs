@@ -19,6 +19,10 @@ pub trait Ltv: Sized {
 }
 
 /// Encodes a list of LTV entries back-to-back.
+///
+/// The `Length` field is 1 octet, so a single entry's Type+Value cannot exceed 255 octets;
+/// entries that do are dropped rather than silently truncated into a corrupt stream (reachable
+/// via `Metadata::VendorSpecific`, which carries application-supplied bytes of unbounded length).
 pub fn encode_list<T: Ltv>(items: &[T]) -> Vec<u8> {
     let mut out = Vec::new();
     for item in items {
@@ -27,6 +31,11 @@ pub fn encode_list<T: Ltv>(items: &[T]) -> Vec<u8> {
         out.push(item.ltv_type());
         item.encode_value(&mut out);
         let len = out.len() - len_pos - 1;
+        debug_assert!(len <= u8::MAX as usize, "LTV entry exceeds the 1-octet Length field");
+        if len > u8::MAX as usize {
+            out.truncate(len_pos);
+            continue;
+        }
         out[len_pos] = len as u8;
     }
     out
@@ -46,4 +55,34 @@ pub fn decode_list<T: Ltv>(mut data: &[u8]) -> Result<Vec<T>, FromGattError> {
         data = &data[1 + len..];
     }
     Ok(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fake LTV entry whose value is longer than the 1-octet Length field can express.
+    struct OverLong;
+
+    impl Ltv for OverLong {
+        fn ltv_type(&self) -> u8 {
+            0x01
+        }
+
+        fn encode_value(&self, out: &mut Vec<u8>) {
+            out.extend(core::iter::repeat(0xaa).take(300));
+        }
+
+        fn decode(_ty: u8, _value: &[u8]) -> Result<Self, FromGattError> {
+            Ok(Self)
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "LTV entry exceeds the 1-octet Length field")]
+    fn encode_list_flags_an_entry_that_overflows_the_length_octet() {
+        // Debug builds (including `cargo test`) must fail loudly rather than truncate the
+        // Length byte and emit a corrupt stream; release builds hit the drop path instead.
+        let _ = encode_list(&[OverLong]);
+    }
 }

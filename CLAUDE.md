@@ -49,10 +49,12 @@ workspace root will try to build them for the host and fail; check the core crat
   codec-specific config, metadata); use `heapless` for fixed-capacity data.
 - The `nrf-sdc` feature switches CIG setup to Nordic's documented `LE Set CIG Parameters Test`
   workaround. It must stay opt-in — it's wrong for every other controller.
-- Root `Cargo.toml` pins `trouble-host` to the user's own fork and `[patch]`es it (plus
-  `nrf-sdc`/`nrf-mpsl`) to local checkouts at `../trouble` and `../nrf-sdc`; embassy is pinned to
-  a specific rev. Each pin has a manifest comment explaining why — don't bump or "clean up" these
-  without reading it. The forks are the user's own and free to edit directly.
+- Root `Cargo.toml` pins `trouble-host` (in `[workspace.dependencies]`) to the user's own
+  LegitCamper/trouble fork on branch `fix/iso-disconnection-events`, and `[patch.crates-io]`es
+  `bt-hci`/`bt-hci-transport`, `nrf-sdc`/`nrf-mpsl`, and ~15 embassy crates to specific git revs
+  (all LegitCamper or embassy-rs forks, not local path checkouts). Each pin has a manifest comment
+  explaining why — don't bump or "clean up" these without reading it. The forks are the user's own
+  and free to edit directly.
 
 ## Architecture
 

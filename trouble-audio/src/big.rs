@@ -18,9 +18,9 @@
 use core::cell::RefCell;
 
 use bt_hci::cmd::le::{
-    LeCreateBig, LeRemoveAdvSet, LeRemoveIsoDataPath, LeSetAdvSetRandomAddr, LeSetExtAdvData,
-    LeSetExtAdvEnable, LeSetExtAdvParams, LeSetPeriodicAdvData, LeSetPeriodicAdvEnable,
-    LeSetPeriodicAdvParams, LeSetupIsoDataPath, LeTerminateBig,
+    LeCreateBig, LeRemoveAdvSet, LeSetAdvSetRandomAddr, LeSetExtAdvData, LeSetExtAdvEnable,
+    LeSetExtAdvParams, LeSetPeriodicAdvData, LeSetPeriodicAdvEnable, LeSetPeriodicAdvParams,
+    LeSetupIsoDataPath, LeTerminateBig,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::event::le::LeCreateBigComplete;
@@ -585,7 +585,18 @@ where
     stack
         .command(LeSetPeriodicAdvEnable::new(false, adv_handle))
         .await?;
-    stack.command(LeSetExtAdvEnable::new(false, &[])).await?;
+    // Core 6 Vol 4 Part E §7.8.56: Enable=0x00 with an empty Advertising_Handle[] (Num_Sets=0x00)
+    // disables *every* set on the controller, not just this one - must name our own set instead.
+    stack
+        .command(LeSetExtAdvEnable::new(
+            false,
+            &[AdvSet {
+                adv_handle,
+                duration: Duration::from_secs(0),
+                max_ext_adv_events: 0,
+            }],
+        ))
+        .await?;
     stack.command(LeRemoveAdvSet::new(adv_handle)).await?;
     Ok(())
 }
@@ -598,9 +609,7 @@ pub async fn drive_big<C, M: RawMutex>(
     source: &BigSource<M>,
 ) -> !
 where
-    C: Controller
-        + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
-        + ControllerCmdSync<LeRemoveIsoDataPath>,
+    C: Controller + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>,
 {
     let iso = stack.iso();
     loop {

@@ -339,7 +339,7 @@ pub fn write_preset_name(presets: &mut [PresetRecord], index: u8, name: HString<
 
 /// A Gatt service client for reading/controlling a hearing aid's presets.
 pub struct HasClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub hearing_aid_features: Characteristic<HearingAidFeatures>,
     pub preset_control_point: Characteristic<PresetControlPointOperation>,
     pub active_preset_index: Characteristic<u8>,
@@ -373,7 +373,7 @@ impl HasClient {
 /// A Gatt service server exposing a hearing aid's preset control, with up to `MAX_PRESETS` stored
 /// presets.
 pub struct HasServer<const MAX_PRESETS: usize> {
-    handle: u16,
+    pub handle: u16,
     hearing_aid_features: Characteristic<HearingAidFeatures>,
     preset_control_point: Characteristic<PresetControlPointOperation>,
     active_preset_index: Characteristic<u8>,
@@ -414,14 +414,14 @@ impl<const MAX_PRESETS: usize> HasServer<MAX_PRESETS> {
         let mut service = table.add_service(Service::new(service::HEARING_ACCESS));
 
         let hearing_aid_features = service
-            .add_characteristic(characteristic::HEARING_AID_FEATURES, &[CharacteristicProp::Read], features, features_store)
+            .add_characteristic(characteristic::HEARING_AID_FEATURES, [CharacteristicProp::Read], features, features_store)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let preset_control_point = service
             .add_characteristic(
                 characteristic::HEARING_AID_PRESET_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Write, CharacteristicProp::Notify],
                 PresetControlPointOperation::default(),
                 control_point_store,
             )
@@ -431,7 +431,7 @@ impl<const MAX_PRESETS: usize> HasServer<MAX_PRESETS> {
         let active_preset_index = service
             .add_characteristic(
                 characteristic::ACTIVE_PRESET_INDEX,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 active_preset_index,
                 active_preset_index_store,
             )

@@ -112,7 +112,7 @@ u8_bitflags_gatt!(BgrFeatures);
 
 /// A Gatt service client for reading a device's GMAP role/feature support.
 pub struct GmasClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub role: Characteristic<GmapRole>,
     pub ugg_features: Option<Characteristic<UggFeatures>>,
     pub ugt_features: Option<Characteristic<UgtFeatures>>,
@@ -149,7 +149,7 @@ impl GmasClient {
 
 /// A Gatt service server exposing this device's GMAP role/feature support.
 pub struct GmasServer {
-    handle: u16,
+    pub handle: u16,
     role: Characteristic<GmapRole>,
     ugg_features: Option<Characteristic<UggFeatures>>,
     ugt_features: Option<Characteristic<UgtFeatures>>,
@@ -190,31 +190,31 @@ impl GmasServer {
         let mut service = table.add_service(Service::new(service::GAMING_AUDIO));
 
         let role = service
-            .add_characteristic(characteristic::GMAP_ROLE, &[CharacteristicProp::Read], role, role_store)
+            .add_characteristic(characteristic::GMAP_ROLE, [CharacteristicProp::Read], role, role_store)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let ugg_features = ugg_features.map(|v| {
             service
-                .add_characteristic(characteristic::UGG_FEATURES, &[CharacteristicProp::Read], v, ugg_store)
+                .add_characteristic(characteristic::UGG_FEATURES, [CharacteristicProp::Read], v, ugg_store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build()
         });
         let ugt_features = ugt_features.map(|v| {
             service
-                .add_characteristic(characteristic::UGT_FEATURES, &[CharacteristicProp::Read], v, ugt_store)
+                .add_characteristic(characteristic::UGT_FEATURES, [CharacteristicProp::Read], v, ugt_store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build()
         });
         let bgs_features = bgs_features.map(|v| {
             service
-                .add_characteristic(characteristic::BGS_FEATURES, &[CharacteristicProp::Read], v, bgs_store)
+                .add_characteristic(characteristic::BGS_FEATURES, [CharacteristicProp::Read], v, bgs_store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build()
         });
         let bgr_features = bgr_features.map(|v| {
             service
-                .add_characteristic(characteristic::BGR_FEATURES, &[CharacteristicProp::Read], v, bgr_store)
+                .add_characteristic(characteristic::BGR_FEATURES, [CharacteristicProp::Read], v, bgr_store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build()
         });

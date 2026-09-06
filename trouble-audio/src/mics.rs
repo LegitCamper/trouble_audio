@@ -84,7 +84,7 @@ impl FixedGattValue for Mute {
 
 /// A Gatt service client for reading/controlling a device's microphone mute state.
 pub struct MicsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub mute: Characteristic<Mute>,
 }
 
@@ -106,7 +106,7 @@ impl MicsClient {
 
 /// A Gatt service server exposing microphone mute control.
 pub struct MicsServer {
-    handle: u16,
+    pub handle: u16,
     mute: Characteristic<Mute>,
 }
 
@@ -132,7 +132,7 @@ impl MicsServer {
         let mute = service
             .add_characteristic(
                 characteristic::MUTE,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 initial,
                 store,
             )

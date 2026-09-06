@@ -10,6 +10,21 @@ Unicast plus both Auracast roles:
 - `big_sink.rs`: discovery, fragmented BASE reassembly, periodic-advertising and BIG
   synchronization, BIS selection, encrypted Broadcast Codes, and raw-LC3 or decoded-PCM output.
 
+### Vendor codecs (LDAC)
+
+`ldac.rs` supplies the de facto LDAC codec identity (Sony vendor ID `0x012D`, codec `0x00AA`) and
+the capability/configuration and media-payload framing that cooperating LE Audio peers can agree
+on. Both streaming paths accept it as a vendor codec: unicast via `CisManager::receive_encoded` and
+`CigManager::configure_vendor`, broadcast via `big::VendorCodec` and `BigSink::receive_encoded`;
+`iso_tx.rs` fragments outgoing HCI ISO SDUs across HCI packets to carry the larger frames vendor
+codecs produce.
+
+- Bluetooth defines no LDAC-over-BAP profile — this crate's identity and payload representation are
+  a de facto convention, not a spec.
+- Encoded LDAC moves through the crate's raw ISO APIs; actual encode/decode is left to the
+  application or an audio DSP.
+- This does not make ordinary A2DP LDAC products interoperate with an LE Audio stream.
+
 The complete source-to-sink lifecycle is exercised with synthetic HCI events and ISO packets, so
 the host behavior can be tested without a radio. Real-controller validation is still required.
 

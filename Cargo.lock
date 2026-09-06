@@ -282,7 +282,7 @@ dependencies = [
 [[package]]
 name = "bt-hci"
 version = "0.10.0"
-source = "git+https://github.com/LegitCamper/bt-hci?rev=48337e506a15d7665f5d4caa4d4613388b2e7c64#48337e506a15d7665f5d4caa4d4613388b2e7c64"
+source = "git+https://github.com/LegitCamper/bt-hci?rev=7ce96497d0d439fe16900aa0b66565a7087b7ea5#7ce96497d0d439fe16900aa0b66565a7087b7ea5"
 dependencies = [
  "bt-hci-transport",
  "btuuid",
@@ -323,7 +323,7 @@ dependencies = [
 [[package]]
 name = "bt-hci-transport"
 version = "0.1.0"
-source = "git+https://github.com/LegitCamper/bt-hci?rev=48337e506a15d7665f5d4caa4d4613388b2e7c64#48337e506a15d7665f5d4caa4d4613388b2e7c64"
+source = "git+https://github.com/LegitCamper/bt-hci?rev=7ce96497d0d439fe16900aa0b66565a7087b7ea5#7ce96497d0d439fe16900aa0b66565a7087b7ea5"
 dependencies = [
  "defmt 1.1.1",
  "embedded-io 0.7.1",
