@@ -523,7 +523,7 @@ pub fn apply_remove_source(slots: &mut [BroadcastReceiveState], source_id: u8) -
 
 /// A Gatt service client for discovering/controlling a Scan Delegator's broadcast sources.
 pub struct BassClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub control_point: Characteristic<BroadcastAudioScanControlPointOperation>,
     pub receive_states: HVec<Characteristic<BroadcastReceiveStateValue>, 8>,
 }
@@ -560,7 +560,7 @@ impl BassClient {
 /// A Gatt service server exposing Scan Delegator control over up to `MAX_SOURCES` broadcast
 /// sources.
 pub struct BassServer<const MAX_SOURCES: usize> {
-    handle: u16,
+    pub handle: u16,
     control_point: Characteristic<BroadcastAudioScanControlPointOperation>,
     receive_states: HVec<Characteristic<BroadcastReceiveStateValue>, MAX_SOURCES>,
 }
@@ -598,7 +598,7 @@ impl<const MAX_SOURCES: usize> BassServer<MAX_SOURCES> {
         let control_point = service
             .add_characteristic(
                 characteristic::BROADCAST_AUDIO_SCAN_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::WriteWithoutResponse],
+                [CharacteristicProp::Write, CharacteristicProp::WriteWithoutResponse],
                 BroadcastAudioScanControlPointOperation::default(),
                 control_point_store,
             )
@@ -610,7 +610,7 @@ impl<const MAX_SOURCES: usize> BassServer<MAX_SOURCES> {
             let characteristic = service
                 .add_characteristic(
                     characteristic::BROADCAST_RECEIVE_STATE,
-                    &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                    [CharacteristicProp::Read, CharacteristicProp::Notify],
                     BroadcastReceiveStateValue::new(&BroadcastReceiveState::empty()),
                     store,
                 )

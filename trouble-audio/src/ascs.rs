@@ -109,7 +109,7 @@ pub enum AseDirection {
 
 /// Backing-store size that fits any spec-legal ASE characteristic value: ASE_ID + ASE_State (2)
 /// + CodecConfigured's fixed parameters (25) + a maximal Codec_Specific_Configuration (its length
-/// field is one octet, so 255).
+///   field is one octet, so 255).
 pub const ASE_STORE_SIZE: usize = 282;
 
 /// Backing-store size that fits any ASE Control Point write: ATT caps a characteristic value at
@@ -166,7 +166,7 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
         let ase_control_point_char = service
             .add_characteristic(
                 characteristic::ASE_CONTROL_POINT,
-                &[
+                [
                     CharacteristicProp::Write,
                     CharacteristicProp::WriteWithoutResponse,
                     CharacteristicProp::Notify,
@@ -186,7 +186,7 @@ impl<const MAX_ASES: usize> AscsServer<MAX_ASES> {
             };
             let store = ase_stores.next().expect("one ASE store per ASE endpoint required");
             let characteristic = service
-                .add_characteristic(uuid, &[CharacteristicProp::Read, CharacteristicProp::Notify], value, store)
+                .add_characteristic(uuid, [CharacteristicProp::Read, CharacteristicProp::Notify], value, store)
                 .read_permission(PermissionLevel::EncryptionRequired)
                 .build();
             ase_chars
@@ -262,8 +262,7 @@ impl<const MAX_ASES: usize, P: PacketPool> LeAudioServerService<P> for AscsServe
             return Some(match event.value(&self.ase_control_point) {
                 Ok(_) => Ok(()),
                 Err(_) => {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!("[ascs] malformed ASE Control Point write");
+                    warn!("[ascs] malformed ASE Control Point write");
                     Err(AttErrorCode::WRITE_REQUEST_REJECTED)
                 }
             });
@@ -358,7 +357,9 @@ pub enum AseType {
 /// own structure - only the state values themselves are spec-defined.
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Clone)]
+#[derive(Default)]
 pub enum AseState {
+    #[default]
     Idle,
     CodecConfigured {
         framing: u8,
@@ -482,11 +483,6 @@ impl core::fmt::Debug for AseState {
     }
 }
 
-impl Default for AseState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 impl AseState {
     fn ase_state_byte(&self) -> u8 {
@@ -605,7 +601,7 @@ impl AseState {
                     presentation_delay: [rest[12], rest[13], rest[14]],
                 })
             }
-            0x03 | 0x04 | 0x05 => {
+            0x03..=0x05 => {
                 if rest.len() < 3 {
                     return Err(FromGattError::InvalidLength);
                 }

@@ -35,6 +35,7 @@ pub use client::*;
 pub mod generic_audio;
 pub mod gmas;
 pub mod has;
+pub mod iso_rx;
 pub mod iso_tx;
 pub mod lc3;
 pub mod mcs;

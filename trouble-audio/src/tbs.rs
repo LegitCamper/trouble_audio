@@ -229,7 +229,7 @@ impl AsGatt for CallStateValue {
 
 impl FromGatt for CallStateValue {
     fn from_gatt(data: &[u8]) -> Result<Self, FromGattError> {
-        if data.len() % 3 != 0 {
+        if !data.len().is_multiple_of(3) {
             return Err(FromGattError::InvalidLength);
         }
         for triple in data.chunks_exact(3) {
@@ -329,7 +329,7 @@ impl CallControlPointOpcode {
         let opcode = *data.first().ok_or(FromGattError::InvalidLength)?;
         let rest = &data[1..];
         Ok(match opcode {
-            0x00 | 0x01 | 0x02 | 0x03 => {
+            0x00..=0x03 => {
                 if rest.len() != 1 {
                     return Err(FromGattError::InvalidLength);
                 }
@@ -498,7 +498,7 @@ pub fn join_calls(calls: &mut [CallRecord], indices: &[u8]) -> Result<(), u8> {
 
 /// A Gatt service client for reading/controlling a device's telephone bearer.
 pub struct TbsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub bearer_provider_name: Characteristic<HString<32>>,
     pub bearer_technology: Characteristic<BearerTechnology>,
     pub signal_strength: Characteristic<u8>,
@@ -608,7 +608,7 @@ impl TbsStorage {
 /// A Gatt service server exposing this device's telephone bearer, with up to `MAX_CALLS`
 /// concurrent calls.
 pub struct TbsServer<const MAX_CALLS: usize> {
-    handle: u16,
+    pub handle: u16,
     bearer_provider_name: Characteristic<HString<32>>,
     bearer_technology: Characteristic<BearerTechnology>,
     signal_strength: Characteristic<u8>,
@@ -634,7 +634,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let bearer_provider_name = service
             .add_characteristic(
                 characteristic::BEARER_PROVIDER_NAME,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.bearer_provider_name,
                 store.bearer_provider_name,
             )
@@ -644,7 +644,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let bearer_technology = service
             .add_characteristic(
                 characteristic::BEARER_TECHNOLOGY,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.bearer_technology,
                 store.bearer_technology,
             )
@@ -654,7 +654,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let signal_strength = service
             .add_characteristic(
                 characteristic::BEARER_SIGNAL_STRENGTH,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 0xFFu8, // 255 = unknown
                 store.signal_strength,
             )
@@ -664,7 +664,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let call_state = service
             .add_characteristic(
                 characteristic::CALL_STATE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 CallStateValue::new(&[]),
                 store.call_state,
             )
@@ -674,7 +674,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let bearer_list_current_calls = service
             .add_characteristic(
                 characteristic::BEARER_LIST_CURRENT_CALLS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 BearerListCurrentCallsValue::new(&[]),
                 store.bearer_list_current_calls,
             )
@@ -684,7 +684,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let content_control_id = service
             .add_characteristic(
                 characteristic::CONTENT_CONTROL_ID,
-                &[CharacteristicProp::Read],
+                [CharacteristicProp::Read],
                 init.content_control_id,
                 store.content_control_id,
             )
@@ -694,7 +694,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let status_flags = service
             .add_characteristic(
                 characteristic::STATUS_FLAGS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.status_flags,
                 store.status_flags,
             )
@@ -704,7 +704,7 @@ impl<const MAX_CALLS: usize> TbsServer<MAX_CALLS> {
         let call_control_point = service
             .add_characteristic(
                 characteristic::CALL_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Write, CharacteristicProp::Notify],
                 CallControlPointOperation::default(),
                 store.call_control_point,
             )
@@ -820,9 +820,14 @@ pub async fn drive_call_control_point<M: RawMutex, P: PacketPool, const MAX_CALL
     };
 
     if result_code == RESULT_SUCCESS {
-        let calls = tbs.calls.borrow();
-        let _ = tbs.call_state.notify(conn, &CallStateValue::new(&calls), true).await;
-        let _ = tbs.bearer_list_current_calls.notify(conn, &BearerListCurrentCallsValue::new(&calls), true).await;
+        // Build owned values before dropping the borrow: `calls` must not be held across an
+        // `.await`, since the application is expected to concurrently `borrow_mut()` it.
+        let (call_state, bearer_list) = {
+            let calls = tbs.calls.borrow();
+            (CallStateValue::new(&calls), BearerListCurrentCallsValue::new(&calls))
+        };
+        let _ = tbs.call_state.notify(conn, &call_state, true).await;
+        let _ = tbs.bearer_list_current_calls.notify(conn, &bearer_list, true).await;
     }
 
     let notification = CallControlPointNotification {

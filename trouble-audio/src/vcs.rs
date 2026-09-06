@@ -262,7 +262,7 @@ pub fn apply_volume_operation(
 
 /// A Gatt service client for reading/controlling a device's volume.
 pub struct VcsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub volume_state: Characteristic<VolumeState>,
     pub volume_control_point: Characteristic<VolumeControlPointOperation>,
     pub volume_flags: Characteristic<VolumeFlags>,
@@ -302,7 +302,7 @@ impl VcsClient {
 
 /// A Gatt service server exposing volume control.
 pub struct VcsServer {
-    handle: u16,
+    pub handle: u16,
     volume_state: Characteristic<VolumeState>,
     volume_control_point: Characteristic<VolumeControlPointOperation>,
     volume_flags: Characteristic<VolumeFlags>,
@@ -337,7 +337,7 @@ impl VcsServer {
         let volume_state = service
             .add_characteristic(
                 characteristic::VOLUME_STATE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 initial,
                 volume_state_store,
             )
@@ -347,7 +347,7 @@ impl VcsServer {
         let volume_control_point = service
             .add_characteristic(
                 characteristic::VOLUME_CONTROL_POINT,
-                &[CharacteristicProp::Write],
+                [CharacteristicProp::Write],
                 VolumeControlPointOperation::default(),
                 volume_control_point_store,
             )
@@ -357,7 +357,7 @@ impl VcsServer {
         let volume_flags = service
             .add_characteristic(
                 characteristic::VOLUME_FLAGS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 flags,
                 volume_flags_store,
             )

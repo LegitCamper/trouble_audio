@@ -656,7 +656,7 @@ impl ObjectChanged {
 
 /// A Gatt service client for browsing/managing a device's objects.
 pub struct OtsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub feature: Characteristic<OtsFeature>,
     pub object_name: Characteristic<HString<MAX_OBJECT_NAME_LEN>>,
     pub object_type: Characteristic<Uuid>,
@@ -758,7 +758,7 @@ impl OtsStorage {
 /// Properties characteristics at any one time (per OTS - the client uses OLCP to change which
 /// object is selected).
 pub struct OtsServer<const MAX_OBJECTS: usize> {
-    handle: u16,
+    pub handle: u16,
     feature: Characteristic<OtsFeature>,
     object_name: Characteristic<HString<MAX_OBJECT_NAME_LEN>>,
     object_type: Characteristic<Uuid>,
@@ -767,7 +767,7 @@ pub struct OtsServer<const MAX_OBJECTS: usize> {
     object_properties: Characteristic<ObjectProperties>,
     object_action_control_point: Characteristic<OacpOperation>,
     object_list_control_point: Characteristic<OlcpOperation>,
-    object_changed: Characteristic<()>,
+    pub object_changed: Characteristic<()>,
     objects: RefCell<AVec<ObjectRecord>>,
     selected: RefCell<usize>,
 }
@@ -788,14 +788,14 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let mut service = table.add_service(Service::new(service::OBJECT_TRANSFER));
 
         let feature_char = service
-            .add_characteristic(characteristic::OTS_FEATURE, &[CharacteristicProp::Read], feature, store.feature)
+            .add_characteristic(characteristic::OTS_FEATURE, [CharacteristicProp::Read], feature, store.feature)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let object_name = service
             .add_characteristic(
                 characteristic::OBJECT_NAME,
-                &[CharacteristicProp::Read, CharacteristicProp::Write],
+                [CharacteristicProp::Read, CharacteristicProp::Write],
                 objects[0].name.clone(),
                 store.object_name,
             )
@@ -804,14 +804,14 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
             .build();
 
         let object_type = service
-            .add_characteristic(characteristic::OBJECT_TYPE, &[CharacteristicProp::Read], objects[0].object_type, store.object_type)
+            .add_characteristic(characteristic::OBJECT_TYPE, [CharacteristicProp::Read], objects[0].object_type, store.object_type)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 
         let object_size = service
             .add_characteristic(
                 characteristic::OBJECT_SIZE,
-                &[CharacteristicProp::Read],
+                [CharacteristicProp::Read],
                 objects[0].current_size,
                 store.object_size,
             )
@@ -823,7 +823,7 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let object_id = service
             .add_characteristic(
                 characteristic::OBJECT_ID,
-                &[CharacteristicProp::Read],
+                [CharacteristicProp::Read],
                 <[u8; 6]>::try_from(id_bytes.as_slice()).unwrap(),
                 store.object_id,
             )
@@ -833,7 +833,7 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let object_properties = service
             .add_characteristic(
                 characteristic::OBJECT_PROPERTIES,
-                &[CharacteristicProp::Read, CharacteristicProp::Write],
+                [CharacteristicProp::Read, CharacteristicProp::Write],
                 objects[0].properties,
                 store.object_properties,
             )
@@ -844,7 +844,7 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let object_action_control_point = service
             .add_characteristic(
                 characteristic::OBJECT_ACTION_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Write, CharacteristicProp::Notify],
                 OacpOperation::default(),
                 store.object_action_control_point,
             )
@@ -854,7 +854,7 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let object_list_control_point = service
             .add_characteristic(
                 characteristic::OBJECT_LIST_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Write, CharacteristicProp::Notify],
                 OlcpOperation::default(),
                 store.object_list_control_point,
             )
@@ -864,7 +864,7 @@ impl<const MAX_OBJECTS: usize> OtsServer<MAX_OBJECTS> {
         let object_changed = service
             .add_characteristic(
                 characteristic::OBJECT_CHANGED,
-                &[CharacteristicProp::Notify],
+                [CharacteristicProp::Notify],
                 (),
                 store.object_changed,
             )
@@ -963,11 +963,16 @@ async fn notify_selected_object<M: RawMutex, P: PacketPool, const MAX_OBJECTS: u
     ots: &OtsServer<MAX_OBJECTS>,
     conn: &GattConnection<'_, '_, P>,
 ) {
-    let objects = ots.objects.borrow();
-    let selected = *ots.selected.borrow();
-    let Some(object) = objects.get(selected) else { return };
-    ots.object_name.set(_server, &object.name).ok();
-    let _ = ots.object_name.notify(conn, &object.name, false).await;
+    // Clone the name out before dropping the borrow: `objects` must not be held across an
+    // `.await`, since the application is expected to concurrently `borrow_mut()` it.
+    let name = {
+        let objects = ots.objects.borrow();
+        let selected = *ots.selected.borrow();
+        let Some(object) = objects.get(selected) else { return };
+        object.name.clone()
+    };
+    ots.object_name.set(_server, &name).ok();
+    let _ = ots.object_name.notify(conn, &name, false).await;
 }
 
 /// Applies an Object List Control Point write end to end: updates `ots`'s selected-object index

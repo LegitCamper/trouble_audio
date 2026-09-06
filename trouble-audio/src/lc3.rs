@@ -105,7 +105,7 @@ pub struct Lc3MonoEncoder {
 impl Lc3MonoEncoder {
     /// Bytes [`Self::new`] will allocate for the given negotiated Sampling_Frequency/Frame_Duration
     /// - see the module docs for using this to compile-time-assert a heap is big enough. A safe
-    /// upper bound, not byte-exact (see [`ENCODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
+    ///   upper bound, not byte-exact (see [`ENCODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
     pub const fn heap_bytes(sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Result<usize, UnsupportedSamplingFrequency> {
         let fs = match to_lc3_sampling_frequency(sampling_frequency) {
             Ok(fs) => fs,
@@ -158,7 +158,7 @@ pub struct Lc3MonoDecoder {
 impl Lc3MonoDecoder {
     /// Bytes [`Self::new`] will allocate for the given negotiated Sampling_Frequency/Frame_Duration
     /// - see the module docs for using this to compile-time-assert a heap is big enough. A safe
-    /// upper bound, not byte-exact (see [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
+    ///   upper bound, not byte-exact (see [`DECODER_INTERNAL_BOOKKEEPING_MARGIN_BYTES`]).
     pub const fn heap_bytes(sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Result<usize, UnsupportedSamplingFrequency> {
         let fs = match to_lc3_sampling_frequency(sampling_frequency) {
             Ok(fs) => fs,

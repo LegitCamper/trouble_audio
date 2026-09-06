@@ -556,7 +556,7 @@ pub fn apply_media_operation(
 
 /// A Gatt service client for reading/controlling a device's single media player.
 pub struct McsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub media_player_name: Characteristic<HString<32>>,
     pub track_changed: Characteristic<()>,
     pub track_title: Characteristic<HString<64>>,
@@ -770,7 +770,7 @@ impl McsStorage {
 
 /// A Gatt service server exposing this device's single media player.
 pub struct McsServer {
-    handle: u16,
+    pub handle: u16,
     media_player_name: Characteristic<HString<32>>,
     track_changed: Characteristic<()>,
     track_title: Characteristic<HString<64>>,
@@ -808,7 +808,7 @@ impl McsServer {
         let media_player_name = service
             .add_characteristic(
                 characteristic::MEDIA_PLAYER_NAME,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.media_player_name,
                 store.media_player_name,
             )
@@ -818,13 +818,13 @@ impl McsServer {
         // No value of its own (just a signal) and so no read/write permission to set - matches
         // OTS's Object Changed characteristic (see `ots::OtsServer::new`).
         let track_changed = service
-            .add_characteristic(characteristic::TRACK_CHANGED, &[CharacteristicProp::Notify], (), store.track_changed)
+            .add_characteristic(characteristic::TRACK_CHANGED, [CharacteristicProp::Notify], (), store.track_changed)
             .build();
 
         let track_title = service
             .add_characteristic(
                 characteristic::TRACK_TITLE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.track_title,
                 store.track_title,
             )
@@ -834,7 +834,7 @@ impl McsServer {
         let track_duration = service
             .add_characteristic(
                 characteristic::TRACK_DURATION,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 init.track_duration,
                 store.track_duration,
             )
@@ -844,7 +844,7 @@ impl McsServer {
         let track_position = service
             .add_characteristic(
                 characteristic::TRACK_POSITION,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 0i32,
                 store.track_position,
             )
@@ -855,7 +855,7 @@ impl McsServer {
         let playback_speed = service
             .add_characteristic(
                 characteristic::PLAYBACK_SPEED,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 init.playback_speed,
                 store.playback_speed,
             )
@@ -866,7 +866,7 @@ impl McsServer {
         let seeking_speed = service
             .add_characteristic(
                 characteristic::SEEKING_SPEED,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 0i8,
                 store.seeking_speed,
             )
@@ -876,7 +876,7 @@ impl McsServer {
         let playing_order = service
             .add_characteristic(
                 characteristic::PLAYING_ORDER,
-                &[CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Write, CharacteristicProp::Notify],
                 init.playing_order,
                 store.playing_order,
             )
@@ -892,7 +892,7 @@ impl McsServer {
         let media_state = service
             .add_characteristic(
                 characteristic::MEDIA_STATE,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 MediaState::Inactive,
                 store.media_state,
             )
@@ -902,7 +902,7 @@ impl McsServer {
         let media_control_point = service
             .add_characteristic(
                 characteristic::MEDIA_CONTROL_POINT,
-                &[CharacteristicProp::Write, CharacteristicProp::Notify],
+                [CharacteristicProp::Write, CharacteristicProp::Notify],
                 MediaControlPointOperation::default(),
                 store.media_control_point,
             )
@@ -917,7 +917,7 @@ impl McsServer {
         let content_control_id = service
             .add_characteristic(
                 characteristic::CONTENT_CONTROL_ID,
-                &[CharacteristicProp::Read],
+                [CharacteristicProp::Read],
                 init.content_control_id,
                 store.content_control_id,
             )
@@ -930,7 +930,7 @@ impl McsServer {
                 service
                     .add_characteristic(
                         uuid,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                        [CharacteristicProp::Read, CharacteristicProp::Notify],
                         ObjectIdValue::from(id),
                         char_store,
                     )

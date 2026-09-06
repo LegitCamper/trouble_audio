@@ -17,7 +17,7 @@ use trouble_host::{
 
 /// A Gatt service client for reading exposed Capabilities of an audio server
 pub struct PacsClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub sink_pac: Option<Characteristic<PAC>>,
     pub sink_audio_locations: Option<Characteristic<AudioLocation>>,
     pub source_pac: Option<Characteristic<PAC>>,
@@ -106,7 +106,7 @@ impl Default for PacsStorage {
 
 /// A Gatt service server exposing Capabilities of an audio device
 pub struct PacsServer {
-    handle: u16,
+    pub handle: u16,
     sink_pac: Option<Characteristic<PAC>>,
     sink_audio_locations: Option<Characteristic<AudioLocation>>,
     source_pac: Option<Characteristic<PAC>>,
@@ -139,75 +139,63 @@ impl PacsServer {
         // characteristics must support Notify (their records can change at runtime) - Android's
         // LE Audio client actively disconnects devices that lack this (see the analogous, but
         // fatal for Android, `AVAILABLE_AUDIO_CONTEXTS` case below).
-        let sink_pac_char = match sink_pac {
-            Some((sink_pac, store)) => Some(
-                service
-                    .add_characteristic(
-                        characteristic::SINK_PAC,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                        sink_pac.clone(),
-                        store,
-                    )
-                    .read_permission(PermissionLevel::EncryptionRequired)
-                    .build(),
-            ),
-            None => None,
-        };
+        let sink_pac_char = sink_pac.map(|(sink_pac, store)| {
+            service
+                .add_characteristic(
+                    characteristic::SINK_PAC,
+                    [CharacteristicProp::Read, CharacteristicProp::Notify],
+                    sink_pac.clone(),
+                    store,
+                )
+                .read_permission(PermissionLevel::EncryptionRequired)
+                .build()
+        });
 
-        let sink_audio_locations_char = match sink_audio_locations {
-            Some((sink_audio_locations, store)) => Some(
-                service
-                    .add_characteristic(
-                        characteristic::SINK_AUDIO_LOCATIONS,
-                        &[
-                            CharacteristicProp::Read,
-                            CharacteristicProp::Notify,
-                            CharacteristicProp::Write,
-                        ],
-                        *sink_audio_locations,
-                        store,
-                    )
-                    .read_permission(PermissionLevel::EncryptionRequired)
-                    .write_permission(PermissionLevel::EncryptionRequired)
-                    .build(),
-            ),
-            None => None,
-        };
+        let sink_audio_locations_char = sink_audio_locations.map(|(sink_audio_locations, store)| {
+            service
+                .add_characteristic(
+                    characteristic::SINK_AUDIO_LOCATIONS,
+                    [
+                        CharacteristicProp::Read,
+                        CharacteristicProp::Notify,
+                        CharacteristicProp::Write,
+                    ],
+                    *sink_audio_locations,
+                    store,
+                )
+                .read_permission(PermissionLevel::EncryptionRequired)
+                .write_permission(PermissionLevel::EncryptionRequired)
+                .build()
+        });
 
-        let source_pac_char = match source_pac {
-            Some((source_pac, store)) => Some(
-                service
-                    .add_characteristic(
-                        characteristic::SOURCE_PAC,
-                        &[CharacteristicProp::Read, CharacteristicProp::Notify],
-                        source_pac.clone(),
-                        store,
-                    )
-                    .read_permission(PermissionLevel::EncryptionRequired)
-                    .build(),
-            ),
-            None => None,
-        };
+        let source_pac_char = source_pac.map(|(source_pac, store)| {
+            service
+                .add_characteristic(
+                    characteristic::SOURCE_PAC,
+                    [CharacteristicProp::Read, CharacteristicProp::Notify],
+                    source_pac.clone(),
+                    store,
+                )
+                .read_permission(PermissionLevel::EncryptionRequired)
+                .build()
+        });
 
-        let source_audio_locations_char = match source_audio_locations {
-            Some((source_audio_locations, store)) => Some(
-                service
-                    .add_characteristic(
-                        characteristic::SOURCE_AUDIO_LOCATIONS,
-                        &[
-                            CharacteristicProp::Read,
-                            CharacteristicProp::Notify,
-                            CharacteristicProp::Write,
-                        ],
-                        *source_audio_locations,
-                        store,
-                    )
-                    .read_permission(PermissionLevel::EncryptionRequired)
-                    .write_permission(PermissionLevel::EncryptionRequired)
-                    .build(),
-            ),
-            None => None,
-        };
+        let source_audio_locations_char = source_audio_locations.map(|(source_audio_locations, store)| {
+            service
+                .add_characteristic(
+                    characteristic::SOURCE_AUDIO_LOCATIONS,
+                    [
+                        CharacteristicProp::Read,
+                        CharacteristicProp::Notify,
+                        CharacteristicProp::Write,
+                    ],
+                    *source_audio_locations,
+                    store,
+                )
+                .read_permission(PermissionLevel::EncryptionRequired)
+                .write_permission(PermissionLevel::EncryptionRequired)
+                .build()
+        });
 
         let supported_audio_contexts_char = service
             .add_characteristic_ro(characteristic::SUPPORTED_AUDIO_CONTEXTS, supported_audio_contexts)
@@ -220,7 +208,7 @@ impl PacsServer {
         let available_audio_contexts_char = service
             .add_characteristic(
                 characteristic::AVAILABLE_AUDIO_CONTEXTS,
-                &[CharacteristicProp::Read, CharacteristicProp::Notify],
+                [CharacteristicProp::Read, CharacteristicProp::Notify],
                 *available_audio_contexts,
                 available_audio_contexts_store,
             )

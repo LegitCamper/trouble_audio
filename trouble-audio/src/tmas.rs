@@ -61,7 +61,7 @@ impl FixedGattValue for TmapRole {
 
 /// A Gatt service client for reading a device's TMAP role support.
 pub struct TmasClient {
-    handle: ServiceHandle,
+    pub handle: ServiceHandle,
     pub role: Characteristic<TmapRole>,
 }
 
@@ -86,7 +86,7 @@ impl TmasClient {
 
 /// A Gatt service server exposing this device's TMAP role support.
 pub struct TmasServer {
-    handle: u16,
+    pub handle: u16,
     role: Characteristic<TmapRole>,
 }
 
@@ -108,7 +108,7 @@ impl TmasServer {
         let mut service = table.add_service(Service::new(service::TELEPHONY_AND_MEDIA_AUDIO));
 
         let role = service
-            .add_characteristic(characteristic::TMAP_ROLE, &[CharacteristicProp::Read], role, store)
+            .add_characteristic(characteristic::TMAP_ROLE, [CharacteristicProp::Read], role, store)
             .read_permission(PermissionLevel::EncryptionRequired)
             .build();
 

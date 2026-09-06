@@ -20,7 +20,6 @@ bitflags! {
     /// Audio_Location bitfield: identifies the physical location(s) of an audio channel.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct AudioLocation: u32 {
-        const Mono = 0x00000000;
         const FrontLeft = 0x00000001;
         const FrontRight = 0x00000002;
         const FrontCenter = 0x00000004;
@@ -55,6 +54,15 @@ bitflags! {
 impl Default for AudioLocation {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+impl AudioLocation {
+    /// Per the Generic Audio spec, an all-zero Audio_Location means Mono/unspecified — the
+    /// absence of any location bit, not a flag (a zero-valued bitflag would make `contains`
+    /// vacuously true for every value).
+    pub const fn is_mono(&self) -> bool {
+        self.is_empty()
     }
 }
 
@@ -186,5 +194,18 @@ impl OctetsPerCodecFrame {
         let min_octets = u16::from_le_bytes([bytes[0], bytes[1]]);
         let max_octets = u16::from_le_bytes([bytes[2], bytes[3]]);
         Self::new(min_octets, max_octets)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_location_is_mono_only_when_no_bit_is_set() {
+        assert!(AudioLocation::empty().is_mono());
+        assert!(AudioLocation::default().is_mono());
+        assert!(!AudioLocation::FrontLeft.is_mono());
+        assert!(!(AudioLocation::FrontLeft | AudioLocation::FrontRight).is_mono());
     }
 }
