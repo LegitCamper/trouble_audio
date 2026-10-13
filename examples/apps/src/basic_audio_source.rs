@@ -8,25 +8,27 @@
 use alloc::vec::Vec as AVec;
 
 use bt_hci::cmd::le::{
-    LeCreateCis, LeExtCreateConn, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetHostFeature, LeSetupIsoDataPath,
+    LeCreateCis, LeExtCreateConn, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath,
+    LeSetHostFeature, LeSetupIsoDataPath,
 };
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::Vec as HVec;
-use trouble_audio::ascs::{Ase, AscsClient, ConfigQosEntry, TargetLatency};
+use trouble_audio::ascs::{AscsClient, Ase, ConfigQosEntry, TargetLatency};
 use trouble_audio::cig::{self, AseQos, CigManager, SetCigParametersCmd};
 use trouble_audio::generic_audio::{
-    encode_list, AudioLocation, CodecSpecificConfiguration, ContextType, FrameDuration, Metadata, SamplingFrequency,
+    AudioLocation, CodecSpecificConfiguration, ContextType, Metadata, encode_list,
 };
 use trouble_audio::lc3::Lc3MonoEncoder;
-use trouble_audio::{ase_client, cis, iso_tx, CodecId};
+use trouble_audio::presets::AudioPreset;
+use trouble_audio::{CodecId, ase_client, cis, iso_tx};
 use trouble_host::prelude::*;
 
 use crate::sink::BondStore;
 
 #[cfg(feature = "defmt")]
-use defmt::{info, warn, Debug2Format};
+use defmt::{Debug2Format, info, warn};
 
 /// Max number of L2CAP channels.
 const L2CAP_CHANNELS_MAX: usize = 3; // Signal + att + CoC
@@ -35,30 +37,18 @@ const CONNECTIONS_MAX: usize = 1;
 /// Max number of GATT services this client caches per connection.
 const MAX_SERVICES: usize = 20;
 
-/// Sampling frequency/frame duration/octets to request - matches the only PAC record
-/// `basic_audio_sink` advertises support for.
-const SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
-const FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
-const OCTETS_PER_FRAME: u16 = 100;
-/// 48000 Hz * 10 ms.
-const SAMPLES_PER_FRAME: usize = 480;
+/// Largest PCM and encoded frames supported by the preset table. Buffers stay fixed-size so the
+/// embedded source does no allocation while streaming; only the negotiated prefix is used.
+const MAX_SAMPLES_PER_FRAME: usize = 480;
+const MAX_OCTETS_PER_FRAME: usize = 155;
 
 const CIG_ID: u8 = 1;
-/// 10000us (10ms), matching [`FRAME_DURATION`] - SDU interval and codec frame duration must match
-/// for unframed PDUs.
-const SDU_INTERVAL: [u8; 3] = [0x10, 0x27, 0x00];
-const MAX_TRANSPORT_LATENCY_MS: u16 = 20;
-/// 40000us (40ms) - a typical LC3 presentation delay.
-const PRESENTATION_DELAY: [u8; 3] = [0x40, 0x9c, 0x00];
-const RETRANSMISSION_NUMBER: u8 = 2;
-
 const TONE_FREQUENCIES_HZ: [f32; 2] = [440.0, 880.0];
 const TONE_AMPLITUDE: f32 = 8000.0;
-const SAMPLE_RATE_HZ: f32 = 48_000.0;
 // Both tones complete an integer number of cycles in 50 ms (22 and 44 respectively), so five
 // 10-ms frames form a seamless repeating test waveform.
 const TONE_PERIOD_FRAMES: usize = 5;
-type EncodedTone = [[[u8; OCTETS_PER_FRAME as usize]; TONE_PERIOD_FRAMES]; 2];
+type EncodedTone = [[[u8; MAX_OCTETS_PER_FRAME]; TONE_PERIOD_FRAMES]; 2];
 
 /// Runs the audio source central forever on the given controller: connects to `target` (a
 /// "random" address, e.g. [`crate::basic_audio_sink::ADDRESS`]), then streams a generated stereo
@@ -68,7 +58,13 @@ type EncodedTone = [[[u8; OCTETS_PER_FRAME as usize]; TONE_PERIOD_FRAMES]; 2];
 /// to re-pair (the sink remembers the LTK; without a stored bond on the source side, it won't know
 /// to resume encryption rather than pair fresh, which can fail if the peer enforces re-pairing
 /// prevention).
-pub async fn run<C>(controller: C, our_address: [u8; 6], target: [u8; 6], bond_store: Option<&dyn BondStore>) -> !
+pub async fn run<C>(
+    controller: C,
+    our_address: [u8; 6],
+    target: [u8; 6],
+    bond_store: Option<&dyn BondStore>,
+    preset: AudioPreset,
+) -> !
 where
     C: Controller
         + for<'a> ControllerCmdSync<SetCigParametersCmd<'a>>
@@ -81,7 +77,8 @@ where
         + ControllerCmdAsync<LeExtCreateConn>,
 {
     let target = Address::random(target);
-    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+    let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
+        HostResources::new();
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(Address::random(our_address))
         // Match the sink's NoInputNoOutput → JustWorks pairing on both sides.
@@ -134,7 +131,15 @@ where
             // failures.
             embassy_time::Timer::after(embassy_time::Duration::from_millis(500)).await;
             loop {
-                connect_and_stream(&stack, &mut central, target, &cig_manager, bond_store).await;
+                connect_and_stream(
+                    &stack,
+                    &mut central,
+                    target,
+                    &cig_manager,
+                    bond_store,
+                    preset,
+                )
+                .await;
                 embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
             }
         },
@@ -150,6 +155,7 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
     target: Address,
     cig_manager: &CigManager<NoopRawMutex>,
     bond_store: Option<&dyn BondStore>,
+    preset: AudioPreset,
 ) {
     // Clear stale state from the previous connection.  This also queues a `LeRemoveCig` action
     // for `drive_cig` to execute before the next `LE Set CIG Parameters` so the controller
@@ -173,8 +179,16 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
         #[cfg(feature = "log")]
         log::info!("[le_audio_source] connecting to {:?}", target);
         #[cfg(feature = "defmt")]
-        info!("[le_audio_source] connecting to {:?}", Debug2Format(&target));
-        match embassy_time::with_timeout(embassy_time::Duration::from_secs(10), central.connect_ext(&config)).await {
+        info!(
+            "[le_audio_source] connecting to {:?}",
+            Debug2Format(&target)
+        );
+        match embassy_time::with_timeout(
+            embassy_time::Duration::from_secs(10),
+            central.connect_ext(&config),
+        )
+        .await
+        {
             Ok(Ok(conn)) => break conn,
             Ok(Err(_e)) => {
                 #[cfg(feature = "log")]
@@ -215,12 +229,16 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
     let mut pending_bond: Option<BondInformation> = None;
     loop {
         match conn.next().await {
-            ConnectionEvent::PairingComplete { bond: Some(bond), .. } => {
+            ConnectionEvent::PairingComplete {
+                bond: Some(bond), ..
+            } => {
                 // Keep the bond info; we'll persist it once Encrypted confirms the link is up.
                 let _ = stack.add_bond_information(bond.clone());
                 pending_bond = Some(bond);
             }
-            ConnectionEvent::Encrypted { bond: Some(bond), .. } => {
+            ConnectionEvent::Encrypted {
+                bond: Some(bond), ..
+            } => {
                 // Bonded reconnect: encryption resumed with a stored LTK.
                 let _ = stack.add_bond_information(bond.clone());
                 if let Some(store) = bond_store {
@@ -272,7 +290,7 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
                 return;
             }
         };
-        stream_tone(stack, &client, &ascs, cig_manager).await;
+        stream_tone(stack, &client, &ascs, cig_manager, preset).await;
     })
     .await;
 }
@@ -284,31 +302,54 @@ async fn stream_tone<C: Controller, const N: usize>(
     client: &GattClient<'_, C, DefaultPacketPool, N>,
     ascs: &AscsClient,
     cig_manager: &CigManager<NoopRawMutex>,
+    preset: AudioPreset,
 ) {
+    let phy = if preset.sdu_interval_us() == 7_500 {
+        PhySet::M2
+    } else {
+        PhySet::M1
+    };
     let mut ase_ids = [0u8; 2];
     for (i, characteristic) in ascs.sink_ases().take(2).enumerate() {
         let mut buf = [0u8; 90];
         let Ok(n) = client.read_characteristic(characteristic, &mut buf).await else {
             return;
         };
-        let Ok(ase) = Ase::from_gatt(&buf[..n]) else { return };
+        let Ok(ase) = Ase::from_gatt(&buf[..n]) else {
+            return;
+        };
         ase_ids[i] = ase.id();
     }
 
     let codec_config = |location: AudioLocation| {
         encode_list(&[
-            CodecSpecificConfiguration::SamplingFrequency(SAMPLING_FREQUENCY),
-            CodecSpecificConfiguration::FrameDuration(FRAME_DURATION),
-            CodecSpecificConfiguration::OctetsPerCodecFrame(OCTETS_PER_FRAME),
+            CodecSpecificConfiguration::SamplingFrequency(preset.sampling_frequency),
+            CodecSpecificConfiguration::FrameDuration(preset.frame_duration),
+            CodecSpecificConfiguration::OctetsPerCodecFrame(preset.octets_per_frame),
             CodecSpecificConfiguration::AudioChannelAllocation(location),
         ])
     };
     let config_codec_entries: AVec<_> = [
-        (ase_ids[0], TargetLatency::Lower, PhySet::M1, CodecId::default(), codec_config(AudioLocation::FrontLeft)),
-        (ase_ids[1], TargetLatency::Lower, PhySet::M1, CodecId::default(), codec_config(AudioLocation::FrontRight)),
+        (
+            ase_ids[0],
+            TargetLatency::Lower,
+            phy,
+            CodecId::default(),
+            codec_config(AudioLocation::FrontLeft),
+        ),
+        (
+            ase_ids[1],
+            TargetLatency::Lower,
+            phy,
+            CodecId::default(),
+            codec_config(AudioLocation::FrontRight),
+        ),
     ]
     .into();
-    if ase_client::config_codec(client, ascs, config_codec_entries).await.is_err() {
+    if ase_client::config_codec(client, ascs, config_codec_entries)
+        .await
+        .is_err()
+    {
         #[cfg(feature = "log")]
         log::warn!("[le_audio_source] Config Codec failed");
         #[cfg(feature = "defmt")]
@@ -321,13 +362,17 @@ async fn stream_tone<C: Controller, const N: usize>(
     let qos = |cis_id: u8| AseQos {
         cig_id: CIG_ID,
         cis_id,
-        sdu_interval: SDU_INTERVAL,
+        sdu_interval: preset.sdu_interval_us().to_le_bytes()[..3]
+            .try_into()
+            .unwrap(),
         framing: 0,
-        phy: PhySet::M1,
-        max_sdu: OCTETS_PER_FRAME,
-        retransmission_number: RETRANSMISSION_NUMBER,
-        max_transport_latency: MAX_TRANSPORT_LATENCY_MS,
-        presentation_delay: PRESENTATION_DELAY,
+        phy,
+        max_sdu: preset.octets_per_frame,
+        retransmission_number: preset.rtn,
+        max_transport_latency: preset.max_transport_latency_ms,
+        presentation_delay: preset.presentation_delay_us.to_le_bytes()[..3]
+            .try_into()
+            .unwrap(),
     };
     let (qos_0, qos_1) = (qos(0), qos(1));
     let config_qos_entries: AVec<ConfigQosEntry> = [
@@ -357,7 +402,10 @@ async fn stream_tone<C: Controller, const N: usize>(
         ),
     ]
     .into();
-    if ase_client::config_qos(client, ascs, config_qos_entries).await.is_err() {
+    if ase_client::config_qos(client, ascs, config_qos_entries)
+        .await
+        .is_err()
+    {
         #[cfg(feature = "log")]
         log::warn!("[le_audio_source] Config QoS failed");
         #[cfg(feature = "defmt")]
@@ -368,16 +416,29 @@ async fn stream_tone<C: Controller, const N: usize>(
     // Encoding two channels live takes longer than the 10-ms radio interval on the nRF54L15.
     // Prepare the repeating waveform before CIG creation so sequence zero is ready as soon as the
     // CIS data paths become usable.
-    let tone = encode_test_tone();
+    let tone = encode_test_tone(preset);
 
     // Both ASEs are QoS-configured - `cig_manager` now has everything it needs to create the CIG
     // and both CIS (carried out by `cig::drive_cig`, running concurrently - see `run`).
-    cig_manager.configure(ase_ids[0], qos_0, SAMPLING_FREQUENCY, FRAME_DURATION);
-    cig_manager.configure(ase_ids[1], qos_1, SAMPLING_FREQUENCY, FRAME_DURATION);
+    cig_manager.configure(
+        ase_ids[0],
+        qos_0,
+        preset.sampling_frequency,
+        preset.frame_duration,
+    );
+    cig_manager.configure(
+        ase_ids[1],
+        qos_1,
+        preset.sampling_frequency,
+        preset.frame_duration,
+    );
 
     let metadata = encode_list(&[Metadata::StreamingAudioContexts(ContextType::Media)]);
     let enable_entries: AVec<_> = [(ase_ids[0], metadata.clone()), (ase_ids[1], metadata)].into();
-    if ase_client::enable(client, ascs, enable_entries).await.is_err() {
+    if ase_client::enable(client, ascs, enable_entries)
+        .await
+        .is_err()
+    {
         #[cfg(feature = "log")]
         log::warn!("[le_audio_source] Enable failed");
         #[cfg(feature = "defmt")]
@@ -395,9 +456,17 @@ async fn stream_tone<C: Controller, const N: usize>(
         }
     }
     #[cfg(feature = "log")]
-    log::info!("[le_audio_source] both channels streaming");
+    log::info!(
+        "[le_audio_source] both channels streaming preset={} interval_us={}",
+        preset.name,
+        preset.sdu_interval_us()
+    );
     #[cfg(feature = "defmt")]
-    info!("[le_audio_source] both channels streaming");
+    info!(
+        "[le_audio_source] both channels streaming preset={} interval_us={}",
+        preset.name,
+        preset.sdu_interval_us()
+    );
 
     // The peer learns that each CIS is established before its asynchronous HCI data-path setup
     // command has necessarily completed. Give a small embedded peer time to install both paths;
@@ -405,23 +474,29 @@ async fn stream_tone<C: Controller, const N: usize>(
     // setup command.
     embassy_time::Timer::after_millis(250).await;
 
-    play_tone(stack, cig_manager, ase_ids, &tone).await;
+    play_tone(stack, cig_manager, ase_ids, &tone, preset).await;
 }
 
-fn encode_test_tone() -> EncodedTone {
-    let mut tone = [[[0u8; OCTETS_PER_FRAME as usize]; TONE_PERIOD_FRAMES]; 2];
+fn encode_test_tone(preset: AudioPreset) -> EncodedTone {
+    let mut tone = [[[0u8; MAX_OCTETS_PER_FRAME]; TONE_PERIOD_FRAMES]; 2];
+    let samples_per_frame = preset.samples_per_frame();
+    let octets_per_frame = usize::from(preset.octets_per_frame);
     for (channel, frequency_hz) in TONE_FREQUENCIES_HZ.into_iter().enumerate() {
-        let mut encoder = Lc3MonoEncoder::new(SAMPLING_FREQUENCY, FRAME_DURATION)
+        let mut encoder = Lc3MonoEncoder::new(preset.sampling_frequency, preset.frame_duration)
             .expect("the negotiated LC3 sampling frequency is supported");
         for frame in 0..TONE_PERIOD_FRAMES {
-            let mut pcm = [0i16; SAMPLES_PER_FRAME];
-            for (i, sample) in pcm.iter_mut().enumerate() {
-                let sample_index = frame * SAMPLES_PER_FRAME + i;
-                let t = sample_index as f32 / SAMPLE_RATE_HZ;
-                *sample = (libm::sinf(2.0 * core::f32::consts::PI * frequency_hz * t) * TONE_AMPLITUDE) as i16;
+            let mut pcm = [0i16; MAX_SAMPLES_PER_FRAME];
+            for (i, sample) in pcm[..samples_per_frame].iter_mut().enumerate() {
+                let sample_index = frame * samples_per_frame + i;
+                let t = sample_index as f32 / preset.sampling_rate_hz() as f32;
+                *sample = (libm::sinf(2.0 * core::f32::consts::PI * frequency_hz * t)
+                    * TONE_AMPLITUDE) as i16;
             }
             encoder
-                .encode(&pcm, &mut tone[channel][frame])
+                .encode(
+                    &pcm[..samples_per_frame],
+                    &mut tone[channel][frame][..octets_per_frame],
+                )
                 .expect("fixed-size LC3 test-tone frame is valid");
         }
     }
@@ -435,8 +510,13 @@ async fn play_tone<C: Controller>(
     cig_manager: &CigManager<NoopRawMutex>,
     ase_ids: [u8; 2],
     tone: &EncodedTone,
+    preset: AudioPreset,
 ) -> ! {
-    let mut ticker = iso_tx::ticker_for_sdu_interval(SDU_INTERVAL);
+    let sdu_interval = preset.sdu_interval_us().to_le_bytes()[..3]
+        .try_into()
+        .unwrap();
+    let mut ticker = iso_tx::ticker_for_sdu_interval(sdu_interval);
+    let octets_per_frame = usize::from(preset.octets_per_frame);
     let mut sequence_numbers = [iso_tx::SequenceNumber::default(); 2];
     let mut iso_buf: HVec<u8, { iso_tx::MAX_ISO_PACKET_LEN }> = HVec::new();
     let mut frames = 0u32;
@@ -447,10 +527,18 @@ async fn play_tone<C: Controller>(
         ticker.next().await;
         let frame = frames as usize % TONE_PERIOD_FRAMES;
         for (channel, &ase_id) in ase_ids.iter().enumerate() {
-            let Some(cis_handle) = cig_manager.cis_handle(ase_id) else { continue };
+            let Some(cis_handle) = cig_manager.cis_handle(ase_id) else {
+                continue;
+            };
             let seq = sequence_numbers[channel].next();
             // The frame size is fixed at build time, well under the packet bound.
-            let packet = iso_tx::build_packet(&mut iso_buf, cis_handle, seq, &tone[channel][frame]).unwrap();
+            let packet = iso_tx::build_packet(
+                &mut iso_buf,
+                cis_handle,
+                seq,
+                &tone[channel][frame][..octets_per_frame],
+            )
+            .unwrap();
             // Best-effort: an occasional dropped ISO write just drops that one SDU.
             match stack.iso().send(&packet).await {
                 Ok(()) => packets_sent = packets_sent.wrapping_add(1),

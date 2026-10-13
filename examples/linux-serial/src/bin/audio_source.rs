@@ -20,7 +20,9 @@ async fn main() -> Result<(), std::io::Error> {
     let port_path = match std::env::args().collect::<Vec<_>>()[..] {
         [_, ref path] => path.clone(),
         _ => {
-            panic!("Provide the serial port (e.g. /dev/ttyACM0) as the one and only command line argument.")
+            panic!(
+                "Provide the serial port (e.g. /dev/ttyACM0) as the one and only command line argument."
+            )
         }
     };
 
@@ -48,5 +50,12 @@ async fn main() -> Result<(), std::io::Error> {
     let controller = ExternalController::<_, 8>::new(transport);
     let bond_store = source_bond_store();
 
-    basic_audio_source::run(controller, OUR_ADDRESS, basic_audio_sink::ADDRESS, Some(&bond_store)).await
+    basic_audio_source::run(
+        controller,
+        OUR_ADDRESS,
+        basic_audio_sink::ADDRESS,
+        Some(&bond_store),
+        trouble_audio::presets::BROADCAST_48_2_1,
+    )
+    .await
 }

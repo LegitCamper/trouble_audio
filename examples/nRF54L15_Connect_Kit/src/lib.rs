@@ -11,7 +11,7 @@ use trouble_audio::presets::{AudioPreset, BROADCAST_48_2_1, broadcast_preset};
 
 /// Broadcast preset name, overridable at build time so one scenario per preset can be flashed
 /// without editing source: `TROUBLE_AUDIO_PRESET=48_1_gs cargo build --bin broadcast_source`.
-fn preset() -> AudioPreset {
+pub fn audio_preset() -> AudioPreset {
     match option_env!("TROUBLE_AUDIO_PRESET") {
         Some(name) => match broadcast_preset(name) {
             Some(preset) => preset,
@@ -42,7 +42,7 @@ pub async fn run_auracast_source(controller: nrf_sdc::SoftdeviceController<'_>) 
         controller,
         [0x51, 0x52, 0x53, 0x54, 0x55, 0xc0],
         [0x12, 0x34, 0x56],
-        preset(),
+        audio_preset(),
         broadcast_code(),
     )
     .await

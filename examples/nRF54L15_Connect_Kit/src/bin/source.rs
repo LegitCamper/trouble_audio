@@ -104,7 +104,6 @@ fn build_sdc<'d, const N: usize>(
         .build(p, rng, mpsl, mem)
 }
 
-
 /// Peer to connect to. Defaults to this crate's own sink example; set `TROUBLE_AUDIO_TARGET` at
 /// build time (e.g. `c0:fd:94:b5:ae:d6`) to point at a foreign peer such as Zephyr's
 /// `bap_unicast_server`, whose identity address is fixed per board.
@@ -113,7 +112,10 @@ fn target_address() -> [u8; 6] {
         None => basic_audio_sink::ADDRESS,
         Some(text) => {
             let bytes = text.as_bytes();
-            assert!(bytes.len() == 17, "TROUBLE_AUDIO_TARGET must look like aa:bb:cc:dd:ee:ff");
+            assert!(
+                bytes.len() == 17,
+                "TROUBLE_AUDIO_TARGET must look like aa:bb:cc:dd:ee:ff"
+            );
             let mut addr = [0u8; 6];
             // Addresses are written most-significant octet first, but `Address::random` takes
             // them little-endian, as on the wire.
@@ -227,5 +229,12 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Running ble audio source example");
 
-    basic_audio_source::run(sdc, OUR_ADDRESS, target_address(), Some(&bond_store)).await
+    basic_audio_source::run(
+        sdc,
+        OUR_ADDRESS,
+        target_address(),
+        Some(&bond_store),
+        nrf54l15_connect_kit::audio_preset(),
+    )
+    .await
 }

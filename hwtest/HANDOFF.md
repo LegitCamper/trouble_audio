@@ -380,3 +380,18 @@ for the default and `32_1_gs` presets.
 Remaining from the earlier gap analysis (not started): bidirectional CIS (`cig.rs` still pins
 `rtn_p_to_c: 0`), GMAP service-level hardware tests, BASS/Broadcast Assistant, latency measurement
 rig, long soak, and full config-matrix sweep.
+
+### Session 9: unicast preset plumbing and 7.5 ms controller limit
+
+- Unicast source now takes the shared `AudioPreset`; codec configuration, QoS, CIG timing, LC3
+  frame size, tone generation, and transmit ticker derive from the selected preset.
+- Added `unicast-gaming-source-vs-zephyr-server` for GMAP `48_1_gs` at 7.5 ms.
+- Fixed two nrf-sdc adapter bugs on the user fork: `LE Create CIS` now strips bt-hci's synthetic
+  CIG handle before calling the SDC C ABI, and failed CIS-established events no longer panic while
+  decoding zeroed invalid PHY fields.
+- `unicast-source-vs-zephyr-server` passes end-to-end after those fixes
+  (`hwtest/logs/unicast-source-vs-zephyr-server-20261013-173209.log`).
+- `unicast-gaming-source-vs-zephyr-server` reaches CIG creation without parser panics, but both CIS
+  fail with status `0x0d` (limited resources) at 7.5 ms. Trying 2M PHY did not change the result and
+  was reverted. Next work is an SDC-compatible low-level CIG Test schedule or mono gaming topology.
+- Library tests pass (185 tests), and default embedded source/sink release checks pass.
