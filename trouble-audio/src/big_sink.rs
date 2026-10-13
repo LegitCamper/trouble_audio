@@ -26,6 +26,7 @@ use bt_hci::param::{
 };
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
@@ -37,6 +38,7 @@ use crate::big::{
 use crate::cis::{Lc3Frame, PcmFrame};
 use crate::generic_audio::{AudioLocation, FrameDuration, SamplingFrequency};
 use crate::lc3::Lc3MonoDecoder;
+use crate::stream_stats::SduStats;
 
 /// Maximum extended/periodic advertising payload defined by the Controller interface.
 const MAX_PERIODIC_DATA_LEN: usize = 1_650;
@@ -161,6 +163,7 @@ struct BisSlot {
     handle: Option<ConnHandle>,
     audio: Option<AudioParams>,
     decoder: Option<Lc3MonoDecoder>,
+    stats: SduStats,
 }
 
 #[derive(Clone)]
@@ -241,6 +244,7 @@ pub struct BigSink<M: RawMutex> {
     bases: Channel<M, Base, 2>,
     ready: Channel<M, u8, 4>,
     frames: Channel<M, SinkFrame, 16>,
+    periodic_sync: Signal<M, bool>,
 }
 
 impl<M: RawMutex> Default for BigSink<M> {
@@ -274,6 +278,7 @@ impl<M: RawMutex> BigSink<M> {
             bases: Channel::new(),
             ready: Channel::new(),
             frames: Channel::new(),
+            periodic_sync: Signal::new(),
         }
     }
 
@@ -283,6 +288,7 @@ impl<M: RawMutex> BigSink<M> {
         *self.periodic_sync_handle.borrow_mut() = None;
         *self.big_sync_pending.borrow_mut() = false;
         *self.big_sync_established.borrow_mut() = false;
+        self.periodic_sync.reset();
         self.periodic_data.borrow_mut().clear();
         let mut slots = self.slots.borrow_mut();
         for slot in slots.iter_mut() {
@@ -303,6 +309,11 @@ impl<M: RawMutex> BigSink<M> {
         self.bases.receive().await
     }
 
+    /// Waits for the pending periodic-advertising synchronization to complete.
+    pub async fn wait_periodic_sync(&self) -> bool {
+        self.periodic_sync.wait().await
+    }
+
     /// Waits for a BIS data path and returns its one-based BIS index.
     pub async fn next_ready_bis(&self) -> u8 {
         self.ready.receive().await
@@ -315,6 +326,15 @@ impl<M: RawMutex> BigSink<M> {
             .iter()
             .find(|slot| slot.index == Some(bis_index))
             .and_then(|slot| slot.handle)
+    }
+
+    /// Returns SDU delivery counters for one synchronized BIS, for conformance assertions.
+    pub fn bis_stats(&self, bis_index: u8) -> Option<SduStats> {
+        self.slots
+            .borrow()
+            .iter()
+            .find(|slot| slot.index == Some(bis_index))
+            .map(|slot| slot.stats)
     }
 
     /// Waits for a decoded broadcast PCM frame. Only the default mode produces these.
@@ -383,6 +403,7 @@ impl<M: RawMutex> EventHandler for BigSink<M> {
     fn on_periodic_adv_sync_established(&self, event: &LePeriodicAdvertisingSyncEstablished) {
         if event.status.to_result().is_err() {
             self.clear_sync();
+            self.periodic_sync.signal(false);
             return;
         }
         let matches = self.selection.borrow().as_ref().is_some_and(|selection| {
@@ -392,6 +413,9 @@ impl<M: RawMutex> EventHandler for BigSink<M> {
         });
         if matches {
             *self.periodic_sync_handle.borrow_mut() = Some(event.sync_handle);
+            self.periodic_sync.signal(true);
+        } else {
+            self.periodic_sync.signal(false);
         }
     }
 
@@ -507,6 +531,22 @@ impl<M: RawMutex> EventHandler for BigSink<M> {
         else {
             return;
         };
+        // Counted before decode so a stream that only delivers unusable SDUs still reports loss.
+        let delivered = match packet.data_load_header() {
+            Some(header) => {
+                let lost = (header.iso_sdu_len >> 14) == 2;
+                if lost {
+                    slot.stats.note_lost(header.sequence_num);
+                } else {
+                    slot.stats.note_received(header.sequence_num);
+                }
+                !lost
+            }
+            None => true,
+        };
+        if !delivered {
+            return;
+        }
         let (Some(bis_index), Some(audio)) = (slot.index, slot.audio) else {
             return;
         };
@@ -541,6 +581,10 @@ impl<M: RawMutex> EventHandler for BigSink<M> {
 }
 
 /// Starts periodic-advertising synchronization to a discovered broadcast.
+///
+/// Keep the extended scan active until [`BigSink::wait_periodic_sync`] completes. Some controllers
+/// use the scan procedure to acquire the advertiser's SyncInfo and abort synchronization when the
+/// scan is disabled early.
 pub async fn start_broadcast_sync<C, M: RawMutex>(
     stack: &Stack<'_, C, impl PacketPool>,
     sink: &BigSink<M>,
@@ -635,7 +679,6 @@ where
                         BroadcastCode::new(code),
                         config.max_subevents,
                         config.big_sync_timeout_10ms,
-                        config.bis.len() as u8,
                         &config.bis,
                     ))
                     .await
