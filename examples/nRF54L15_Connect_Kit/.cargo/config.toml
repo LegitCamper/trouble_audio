@@ -1,11 +1,26 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 #runner = "probe-rs run --chip nRF52832_xxAA"
 #runner = "probe-rs run --chip nRF52833_xxAA"
-runner = "probe-rs run --probe 2fe3:0204 --chip nRF54l15 --speed 4000"
+# Full probe serial, not just VID:PID - two Connect Kits both answer to 2fe3:0204 and probe-rs
+# refuses an ambiguous selector. `hwtest/` drives both boards via `probe-rs download` directly;
+# this runner is only for a single-board `cargo run`.
+runner = "probe-rs run --probe 2fe3:0204:820D9A5F0FC04A038AA34 --chip nRF54l15 --speed 4000"
 # runner = "probe-rs run --chip nRF54lm20a"
 
 [build]
 target = "thumbv8m.main-none-eabihf"
+# `generic_const_exprs` (see `trouble-audio/src/lib.rs`) ICEs the next-generation trait solver
+# that recent nightlies default to: rustc_infer/src/infer/mod.rs panics while checking
+# `examples/apps`. The old solver compiles it. Drop this once `generic_const_exprs` works with
+# `-Znext-solver` (rustc tracking issue 115585 / the `next-solver` tracking issue).
+# `cpubits` (via `aes` 0.9 -> `cmac` 0.8 -> `embassy-crypto-rustcrypto`) promotes any target
+# advertising `target_feature = "v7"` to a 64-bit word size. Nightly exposes `v7` for
+# thumbv8m.main while stable does not, which doubles `Aes128Enc` (352 -> 704 bytes) and overflows
+# the 432-byte opaque context `embassy-crypto` declares for `Aes128Cmac` on 32-bit targets - a
+# const-eval failure, not a link error. Cortex-M is 32-bit, so pin the word size.
+# ponytail: drop this once `embassy-crypto` sizes the CMAC context from the driver, or `cpubits`
+# stops treating thumbv8m as 64-bit-preferring.
+rustflags = ["--cfg", "cpubits=\"32\"", "-Znext-solver=no"]
 
 [env]
 DEFMT_LOG = "trouble_host=info,trouble_audio=debug,info"

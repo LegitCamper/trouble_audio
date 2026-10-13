@@ -18,7 +18,7 @@ nrf-sdc = []
 embassy-sync = "0.8"
 embassy-futures = "0.1.1"
 embassy-time = "0.5.1"
-bt-hci = { version = "0.10", features = ["uuid"] }
+bt-hci = { version = "0.11", features = ["uuid"] }
 embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
 trouble-host = { workspace = true, features = [

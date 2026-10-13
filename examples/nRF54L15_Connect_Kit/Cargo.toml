@@ -40,7 +40,7 @@ nrf-mpsl = { version = "0.4", default-features = false, features = [
   "defmt",
   "critical-section-impl",
 ] }
-bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.11", default-features = false, features = ["defmt"] }
 trouble-host = { workspace = true, features = [
   "derive",
   "scan",
@@ -50,6 +50,21 @@ trouble-host = { workspace = true, features = [
   "iso",
   "default-packet-pool",
 ] }
+
+# trouble-host's `security` feature only declares the embassy-crypto *traits*; a backend crate
+# must be linked or the AES/P-256 symbols stay undefined at link time. embassy-nrf exposes no
+# embassy-crypto driver for CRACEN yet, so use the software implementations, with the RNG driver
+# seeded from CRACEN's hardware entropy (see `src/csprng.rs`). Same approach as upstream
+# trouble's `examples/nrf52`.
+# ponytail: software AES/P-256 instead of the CRACEN accelerator; swap to a hardware-backed
+# embassy-crypto driver once embassy-nrf ships one.
+embassy-crypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c" }
+embassy-crypto-rustcrypto = { git = "https://github.com/embassy-rs/embassy.git", rev = "bd35bd7a7d19147c8bcae9c2eda99b25e597294c", features = [
+  "embassy-crypto-aes128-ecb",
+  "embassy-crypto-aes128-cmac",
+  "embassy-crypto-p256-ecdh",
+] }
+rand_chacha = { version = "0.9", default-features = false }
 
 defmt = "1.0"
 defmt-rtt = "1.0"
