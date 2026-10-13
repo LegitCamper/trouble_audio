@@ -42,6 +42,8 @@ pub mod mcs;
 pub mod mics;
 pub mod ots;
 pub mod pacs;
+pub mod presets;
+pub mod stream_stats;
 pub mod tbs;
 pub mod tmas;
 pub mod vcs;
