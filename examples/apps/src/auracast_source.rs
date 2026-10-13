@@ -12,22 +12,29 @@ use embassy_futures::select::select3;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use heapless::Vec as HVec;
 use trouble_audio::big::{BigSource, BroadcastConfig, drive_big, start_broadcast};
-use trouble_audio::generic_audio::{AudioLocation, ContextType, FrameDuration, SamplingFrequency};
+use trouble_audio::generic_audio::{AudioLocation, ContextType};
 use trouble_audio::iso_tx::{self, SequenceNumber};
 use trouble_audio::lc3::Lc3MonoEncoder;
+use trouble_audio::presets::AudioPreset;
 use trouble_host::prelude::*;
 
 #[cfg(feature = "defmt")]
 use defmt::{info, warn};
 
-const SAMPLING_FREQUENCY: SamplingFrequency = SamplingFrequency::Hz48000;
-const FRAME_DURATION: FrameDuration = FrameDuration::Duration10MS;
-const SAMPLES_PER_FRAME: usize = 480;
-const OCTETS_PER_FRAME: u16 = 100;
+/// Largest PCM frame any supported preset produces (48 kHz, 10 ms).
+const MAX_SAMPLES_PER_FRAME: usize = 480;
+/// Largest encoded LC3 frame any supported preset produces.
+const MAX_OCTETS_PER_FRAME: usize = 155;
 const BIG_HANDLE: u8 = 0;
 
-/// Runs an unencrypted stereo Auracast test broadcast forever.
-pub async fn run<C>(controller: C, random_address: [u8; 6], broadcast_id: [u8; 3]) -> !
+/// Runs a stereo Auracast test broadcast forever using `preset`.
+pub async fn run<C>(
+    controller: C,
+    random_address: [u8; 6],
+    broadcast_id: [u8; 3],
+    preset: AudioPreset,
+    broadcast_code: Option<[u8; 16]>,
+) -> !
 where
     C: Controller
         + ControllerCmdSync<LeSetExtAdvParams>
@@ -52,20 +59,20 @@ where
     bis.push(AudioLocation::FrontRight).unwrap();
     let config = BroadcastConfig {
         big_handle: BIG_HANDLE,
-        adv_handle: 1,
+        adv_handle: 0,
         adv_sid: 1,
         random_addr: random_address,
         broadcast_id,
         bis,
-        sampling_frequency: SAMPLING_FREQUENCY,
-        frame_duration: FRAME_DURATION,
-        octets_per_frame: OCTETS_PER_FRAME,
-        sdu_interval_us: 10_000,
-        max_transport_latency_ms: 20,
-        rtn: 2,
-        presentation_delay_us: 40_000,
+        sampling_frequency: preset.sampling_frequency,
+        frame_duration: preset.frame_duration,
+        octets_per_frame: preset.octets_per_frame,
+        sdu_interval_us: preset.sdu_interval_us(),
+        max_transport_latency_ms: preset.max_transport_latency_ms,
+        rtn: preset.rtn,
+        presentation_delay_us: preset.presentation_delay_us,
         streaming_contexts: ContextType::Media,
-        broadcast_code: None,
+        broadcast_code,
     };
 
     select3(
@@ -79,9 +86,12 @@ where
         },
         drive_big(&stack, &source),
         async {
-            if start_broadcast(&stack, &source, &config).await.is_err() {
+            if let Err(_e) = start_broadcast(&stack, &source, &config).await {
                 #[cfg(feature = "defmt")]
-                warn!("[auracast_source] broadcast setup failed");
+                warn!(
+                    "[auracast_source] broadcast setup failed: {}",
+                    defmt::Debug2Format(&_e)
+                );
                 core::future::pending::<()>().await;
             }
             let mut ready = [false; 2];
@@ -92,8 +102,12 @@ where
                 }
             }
             #[cfg(feature = "defmt")]
-            info!("[auracast_source] both BIS ready");
-            stream_test_tones(&stack, &source).await;
+            info!(
+                "[auracast_source] both BIS ready preset={} interval_us={}",
+                preset.name,
+                preset.sdu_interval_us()
+            );
+            stream_test_tones(&stack, &source, preset).await;
         },
     )
     .await;
@@ -103,15 +117,22 @@ where
 async fn stream_test_tones<C: Controller>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     source: &BigSource<NoopRawMutex>,
+    preset: AudioPreset,
 ) -> ! {
     let mut encoders = [
-        Lc3MonoEncoder::new(SAMPLING_FREQUENCY, FRAME_DURATION).unwrap(),
-        Lc3MonoEncoder::new(SAMPLING_FREQUENCY, FRAME_DURATION).unwrap(),
+        Lc3MonoEncoder::new(preset.sampling_frequency, preset.frame_duration).unwrap(),
+        Lc3MonoEncoder::new(preset.sampling_frequency, preset.frame_duration).unwrap(),
     ];
     let mut sequences = [SequenceNumber::default(); 2];
     let mut phases = [0u32; 2];
     let phase_steps = [440u32, 660u32];
-    let mut ticker = embassy_time::Ticker::every(embassy_time::Duration::from_millis(10));
+    let samples_per_frame = preset.samples_per_frame().min(MAX_SAMPLES_PER_FRAME);
+    let octets_per_frame = usize::from(preset.octets_per_frame).min(MAX_OCTETS_PER_FRAME);
+    let sampling_rate = preset.sampling_rate_hz();
+    // 7.5 ms presets need sub-millisecond ticks, so the SDU interval drives the ticker directly.
+    let mut ticker = embassy_time::Ticker::every(embassy_time::Duration::from_micros(u64::from(
+        preset.sdu_interval_us(),
+    )));
     let mut packet_buffer: HVec<u8, { iso_tx::MAX_ISO_PACKET_LEN }> = HVec::new();
 
     loop {
@@ -120,24 +141,27 @@ async fn stream_test_tones<C: Controller>(
             let Some(handle) = source.bis_handle(channel) else {
                 continue;
             };
-            let mut pcm = [0i16; SAMPLES_PER_FRAME];
-            for sample in &mut pcm {
+            let mut pcm = [0i16; MAX_SAMPLES_PER_FRAME];
+            for sample in &mut pcm[..samples_per_frame] {
                 *sample = if phases[channel] < 24_000 {
                     4_000
                 } else {
                     -4_000
                 };
-                phases[channel] = (phases[channel] + phase_steps[channel]) % 48_000;
+                phases[channel] = (phases[channel] + phase_steps[channel]) % sampling_rate;
             }
-            let mut encoded = [0u8; OCTETS_PER_FRAME as usize];
-            if encoders[channel].encode(&pcm, &mut encoded).is_err() {
+            let mut encoded = [0u8; MAX_OCTETS_PER_FRAME];
+            if encoders[channel]
+                .encode(&pcm[..samples_per_frame], &mut encoded[..octets_per_frame])
+                .is_err()
+            {
                 continue;
             }
             let Some(packet) = iso_tx::build_packet(
                 &mut packet_buffer,
                 handle,
                 sequences[channel].next(),
-                &encoded,
+                &encoded[..octets_per_frame],
             ) else {
                 continue;
             };

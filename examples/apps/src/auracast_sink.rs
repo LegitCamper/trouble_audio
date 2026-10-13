@@ -15,6 +15,9 @@ use trouble_host::prelude::*;
 #[cfg(feature = "defmt")]
 use defmt::{info, warn};
 
+/// How often synchronized BIS delivery counters are reported.
+const STATS_INTERVAL_SECS: u64 = 10;
+
 /// Scans for and plays the first compatible broadcast forever.
 pub async fn run<C>(controller: C, random_address: [u8; 6], config: BroadcastSinkConfig) -> !
 where
@@ -55,9 +58,9 @@ where
                 unreachable!();
             };
             let source = sink.next_broadcast().await;
-            scan.stop().await;
             #[cfg(feature = "defmt")]
             info!("[auracast_sink] broadcast discovered");
+            let bis_indices = config.bis.clone();
             if start_broadcast_sync(&stack, &sink, source, config)
                 .await
                 .is_err()
@@ -66,11 +69,42 @@ where
                 warn!("[auracast_sink] periodic sync command failed");
                 core::future::pending::<()>().await;
             }
+            if !sink.wait_periodic_sync().await {
+                #[cfg(feature = "defmt")]
+                warn!("[auracast_sink] periodic sync failed");
+                core::future::pending::<()>().await;
+            }
+            scan.stop().await;
+            let mut next_report = embassy_time::Instant::now()
+                + embassy_time::Duration::from_secs(STATS_INTERVAL_SECS);
             loop {
                 let frame = sink.receive_pcm().await;
                 let _ = frame;
                 #[cfg(feature = "defmt")]
                 info!("[auracast_sink] decoded BIS {}", frame.bis_index);
+                // Markers alone cannot distinguish a clean stream from one dropping a third of its
+                // SDUs, so the harness asserts on these counters instead.
+                if embassy_time::Instant::now() >= next_report {
+                    next_report = embassy_time::Instant::now()
+                        + embassy_time::Duration::from_secs(STATS_INTERVAL_SECS);
+                    for bis_index in bis_indices.iter() {
+                        let Some(_stats) = sink.bis_stats(*bis_index) else {
+                            continue;
+                        };
+                        #[cfg(feature = "defmt")]
+                        info!(
+                            "[auracast_sink] stats bis={} received={} lost={} missing={} dup={} reordered={} burst={} loss_permille={}",
+                            bis_index,
+                            _stats.received,
+                            _stats.flagged_lost,
+                            _stats.missing,
+                            _stats.duplicates,
+                            _stats.reordered,
+                            _stats.max_burst_missing,
+                            _stats.loss_per_mille()
+                        );
+                    }
+                }
             }
         },
     )

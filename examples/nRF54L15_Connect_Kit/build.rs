@@ -32,4 +32,9 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
+
+    // `option_env!` values are baked in at compile time and cargo does not track them by itself,
+    // so changing a preset would otherwise silently reuse the previously built firmware.
+    println!("cargo:rerun-if-env-changed=TROUBLE_AUDIO_PRESET");
+    println!("cargo:rerun-if-env-changed=TROUBLE_AUDIO_BROADCAST_CODE");
 }
