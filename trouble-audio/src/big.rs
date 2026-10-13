@@ -515,11 +515,12 @@ where
         ))
         .await?;
     let base = encode_base(config);
+    let announcement = basic_audio_announcement(&base);
     stack
         .command(LeSetPeriodicAdvData::new(
             adv_handle,
             Operation::Complete,
-            &basic_audio_announcement(&base),
+            &announcement,
         ))
         .await?;
     stack
@@ -540,6 +541,9 @@ where
         Some(code) => (EncryptionMode::Encrypted, code),
         None => (EncryptionMode::Unencrypted, [0u8; 16]),
     };
+    // Nordic SDC must emit periodic advertising before BIG creation or later PA sync attempts
+    // time out. ponytail: fixed startup guard; replace with a first-PA-event signal if exposed.
+    embassy_time::Timer::after_secs(2).await;
     stack
         .iso()
         .command_async(LeCreateBig::new(
