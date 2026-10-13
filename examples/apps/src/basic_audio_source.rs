@@ -7,7 +7,9 @@
 
 use alloc::vec::Vec as AVec;
 
-use bt_hci::cmd::le::{LeCreateCis, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetHostFeature, LeSetupIsoDataPath};
+use bt_hci::cmd::le::{
+    LeCreateCis, LeExtCreateConn, LeReadLocalSupportedFeatures, LeRemoveCig, LeRemoveIsoDataPath, LeSetHostFeature, LeSetupIsoDataPath,
+};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -75,7 +77,8 @@ where
         + ControllerCmdSync<LeRemoveIsoDataPath>
         + ControllerCmdSync<LeRemoveCig>
         + ControllerCmdSync<LeSetHostFeature>
-        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>
+        + ControllerCmdAsync<LeExtCreateConn>,
 {
     let target = Address::random(target);
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
@@ -141,7 +144,7 @@ where
     unreachable!("all branches above loop forever")
 }
 
-async fn connect_and_stream<C: Controller>(
+async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     central: &mut Central<'_, C, DefaultPacketPool>,
     target: Address,
@@ -170,14 +173,14 @@ async fn connect_and_stream<C: Controller>(
         #[cfg(feature = "log")]
         log::info!("[le_audio_source] connecting to {:?}", target);
         #[cfg(feature = "defmt")]
-        info!("[le_audio_source] connecting");
-        match embassy_time::with_timeout(embassy_time::Duration::from_secs(10), central.connect(&config)).await {
+        info!("[le_audio_source] connecting to {:?}", Debug2Format(&target));
+        match embassy_time::with_timeout(embassy_time::Duration::from_secs(10), central.connect_ext(&config)).await {
             Ok(Ok(conn)) => break conn,
             Ok(Err(_e)) => {
                 #[cfg(feature = "log")]
                 log::warn!("[le_audio_source] connect failed: {:?}", _e);
                 #[cfg(feature = "defmt")]
-                warn!("[le_audio_source] connect failed");
+                warn!("[le_audio_source] connect failed: {}", Debug2Format(&_e));
                 return;
             }
             Err(_timeout) => {

@@ -22,7 +22,8 @@ use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
 use trouble_audio::lc3::Lc3MonoDecoder;
 use trouble_audio_example_apps::basic_audio_sink;
 use trouble_host::prelude::*;
-use {defmt_rtt as _, panic_probe as _};
+// Links the software AES/P-256 backend behind trouble-host's `security` feature.
+use {defmt_rtt as _, embassy_crypto_rustcrypto as _, panic_probe as _};
 
 #[path = "sink/i2s_output.rs"]
 mod i2s_output;
@@ -84,6 +85,11 @@ fn build_sdc<'d, const N: usize>(
     sdc::Builder::new()?
         .support_adv()
         .support_peripheral()
+        .support_dle_peripheral()
+        // Zephyr's unicast client asks for 2M on the CIS, which the SDC rejects with
+        // `UNSUPPORTED_LL_PARAMETER_VALUE` (0x20) unless 2M and PHY update are enabled.
+        .support_le_2m_phy()
+        .support_phy_update_peripheral()
         .support_cis_peripheral()
         .peripheral_count(1)?
         .buffer_cfg(
@@ -338,6 +344,12 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
+    // The embassy-crypto RNG driver must be seeded before the BLE stack is built.
+    {
+        let mut seed = [0u8; 32];
+        rng.blocking_fill_bytes(&mut seed);
+        nrf54l15_connect_kit::csprng::seed(seed);
+    }
 
     // Keep this large backing store out of the debug call stack. Bump its size if `build_sdc`
     // fails - it logs the exact number of bytes needed.

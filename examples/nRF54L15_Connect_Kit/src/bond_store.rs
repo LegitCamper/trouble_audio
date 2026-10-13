@@ -21,11 +21,17 @@ const RECORD_SIZE: usize = 112;
 /// the returned value - construct it once in `main`, same as `cis_manager`/`led`.
 ///
 /// Only one bond is kept - a new peer pairing just overwrites the slot.
-pub fn rram_bond_store<'a>(flash: &'a RefCell<Nvmc<'_>>) -> EncodedBondStore<impl Fn() -> Option<Vec<u8>> + 'a, impl Fn(&[u8]) + 'a> {
+pub fn rram_bond_store<'a>(
+    flash: &'a RefCell<Nvmc<'_>>,
+) -> EncodedBondStore<impl Fn() -> Option<Vec<u8>> + 'a, impl Fn(&[u8]) + 'a> {
     EncodedBondStore::new(
         move || {
             let mut buf = [0u8; RECORD_SIZE];
-            if flash.borrow_mut().read(BOND_STORAGE_OFFSET, &mut buf).is_err() {
+            if flash
+                .borrow_mut()
+                .read(BOND_STORAGE_OFFSET, &mut buf)
+                .is_err()
+            {
                 defmt::warn!("[bond_store] failed to read bond storage");
                 return None;
             }
@@ -39,7 +45,10 @@ pub fn rram_bond_store<'a>(flash: &'a RefCell<Nvmc<'_>>) -> EncodedBondStore<imp
         },
         move |encoded: &[u8]| {
             if encoded.len() > RECORD_SIZE - 2 {
-                defmt::warn!("[bond_store] encoded bond ({} bytes) doesn't fit the record slot, not persisting", encoded.len());
+                defmt::warn!(
+                    "[bond_store] encoded bond ({} bytes) doesn't fit the record slot, not persisting",
+                    encoded.len()
+                );
                 return;
             }
             let mut buf = [0u8; RECORD_SIZE];
@@ -49,7 +58,10 @@ pub fn rram_bond_store<'a>(flash: &'a RefCell<Nvmc<'_>>) -> EncodedBondStore<imp
             let mut flash = flash.borrow_mut();
             // `NorFlash` requires erasing before a write can set a bit back from 0 to 1.
             if flash
-                .erase(BOND_STORAGE_OFFSET, BOND_STORAGE_OFFSET + embassy_nrf::nvmc::PAGE_SIZE as u32)
+                .erase(
+                    BOND_STORAGE_OFFSET,
+                    BOND_STORAGE_OFFSET + embassy_nrf::nvmc::PAGE_SIZE as u32,
+                )
                 .is_err()
             {
                 defmt::warn!("[bond_store] failed to erase bond storage page");

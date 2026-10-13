@@ -141,9 +141,22 @@ pub async fn run_peripheral<
     let mut runner = stack.runner();
     let mut peripheral = stack.peripheral();
 
-    // Computed once and reused across reconnects, same as `server` below - the advertising
-    // payload (name + service UUIDs) never changes for the life of this call, so there's no
-    // reason to re-encode it on every single reconnect.
+    // Computed once and reused across reconnects; contents never change during this call.
+    // BAP 1.0.1 §3.5.3 Audio Announcement. 0x00 selects General Announcement; metadata is empty.
+    let announcement = {
+        let sink = config
+            .available_audio_contexts
+            .sink_contexts
+            .bits()
+            .to_le_bytes();
+        let source = config
+            .available_audio_contexts
+            .source_contexts
+            .bits()
+            .to_le_bytes();
+        [0x00, sink[0], sink[1], source[0], source[1], 0x00]
+    };
+
     let mut advertiser_data = [0; 31];
     let adv_data_len = AdStructure::encode_slice(
         &[
@@ -153,12 +166,24 @@ pub async fn run_peripheral<
                 service::AUDIO_STREAM_CONTROL.to_le_bytes(),
                 service::COMMON_AUDIO.to_le_bytes(),
             ]),
-            AdStructure::CompleteLocalName(config.device_name),
+            AdStructure::ServiceData16 {
+                uuid: service::AUDIO_STREAM_CONTROL.to_le_bytes(),
+                data: &announcement,
+            },
         ],
         &mut advertiser_data[..],
     )
     .expect("static advertising data always fits in 31 bytes");
     let advertiser_data = &advertiser_data[..adv_data_len];
+
+    // Legacy AdV has no room for the name after UUIDs and Audio Announcement.
+    let mut scan_response_data = [0; 31];
+    let scan_data_len = AdStructure::encode_slice(
+        &[AdStructure::CompleteLocalName(config.device_name)],
+        &mut scan_response_data[..],
+    )
+    .expect("device name always fits in a scan response");
+    let scan_response_data = &scan_response_data[..scan_data_len];
 
     // Built once and reused across reconnects, matching `Peripheral`'s own lifetime - rebuilding
     // the GATT table on every connection isn't necessary and doesn't lifetime-check cleanly
@@ -185,7 +210,13 @@ pub async fn run_peripheral<
         },
         async {
             loop {
-                match advertise(advertiser_data, &mut peripheral, &server).await {
+                match advertise(
+                    advertiser_data,
+                    scan_response_data,
+                    &mut peripheral,
+                    &server,
+                )
+                .await {
                     Ok(conn) => {
                         #[cfg(feature = "log")]
                         log::info!("[le_audio] connected");
@@ -296,6 +327,7 @@ async fn advertise<
     M: RawMutex,
 >(
     adv_data: &[u8],
+    scan_data: &[u8],
     peripheral: &mut Peripheral<'values, C, DefaultPacketPool>,
     server: &'server Server<'values, MAX_ASES, CONNECTIONS_MAX, M>,
 ) -> Result<GattConnection<'values, 'server, DefaultPacketPool>, BleHostError<C::Error>> {
@@ -304,7 +336,7 @@ async fn advertise<
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
                 adv_data,
-                scan_data: &[],
+                scan_data,
             },
         )
         .await?;

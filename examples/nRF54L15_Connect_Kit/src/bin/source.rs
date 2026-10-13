@@ -19,7 +19,8 @@ use trouble_audio::generic_audio::{FrameDuration, SamplingFrequency};
 use trouble_audio::lc3::Lc3MonoEncoder;
 use trouble_audio_example_apps::{basic_audio_sink, basic_audio_source};
 use trouble_host::prelude::*;
-use {defmt_rtt as _, panic_probe as _};
+// Links the software AES/P-256 backend behind trouble-host's `security` feature.
+use {defmt_rtt as _, embassy_crypto_rustcrypto as _, panic_probe as _};
 
 /// Dominated by `Lc3MonoEncoder`'s working buffers, one per channel (`CHANNEL_COUNT` = 2) - see
 /// `trouble_audio::lc3` for the `heap_bytes`/`const`-assertion below that keeps this sized
@@ -80,6 +81,13 @@ fn build_sdc<'d, const N: usize>(
     sdc::Builder::new()?
         .support_scan()
         .support_central()
+        // Zephyr's bap_unicast_server advertises with extended advertising only, which a legacy
+        // initiator cannot see, so this connects with `LE Extended Create Connection`.
+        .support_ext_scan()
+        .support_ext_central()
+        // Extended advertisers put AUX_ADV_IND on the secondary PHY, which Zephyr defaults to 2M,
+        // so without 2M support the server's connectable ext adv is never seen.
+        .support_le_2m_phy()
         .support_cis_central()
         .central_count(1)?
         .buffer_cfg(
@@ -94,6 +102,40 @@ fn build_sdc<'d, const N: usize>(
         .cis_count(2)?
         .iso_buffer_cfg(4, 128, 2, 1, 2, 128)?
         .build(p, rng, mpsl, mem)
+}
+
+
+/// Peer to connect to. Defaults to this crate's own sink example; set `TROUBLE_AUDIO_TARGET` at
+/// build time (e.g. `c0:fd:94:b5:ae:d6`) to point at a foreign peer such as Zephyr's
+/// `bap_unicast_server`, whose identity address is fixed per board.
+fn target_address() -> [u8; 6] {
+    match option_env!("TROUBLE_AUDIO_TARGET") {
+        None => basic_audio_sink::ADDRESS,
+        Some(text) => {
+            let bytes = text.as_bytes();
+            assert!(bytes.len() == 17, "TROUBLE_AUDIO_TARGET must look like aa:bb:cc:dd:ee:ff");
+            let mut addr = [0u8; 6];
+            // Addresses are written most-significant octet first, but `Address::random` takes
+            // them little-endian, as on the wire.
+            let mut i = 0;
+            while i < 6 {
+                let hi = hex_digit(bytes[i * 3]);
+                let lo = hex_digit(bytes[i * 3 + 1]);
+                addr[5 - i] = hi << 4 | lo;
+                i += 1;
+            }
+            addr
+        }
+    }
+}
+
+const fn hex_digit(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => panic!("TROUBLE_AUDIO_TARGET must be hex octets separated by ':'"),
+    }
 }
 
 #[embassy_executor::main]
@@ -164,6 +206,12 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
+    // The embassy-crypto RNG driver must be seeded before the BLE stack is built.
+    {
+        let mut seed = [0u8; 32];
+        rng.blocking_fill_bytes(&mut seed);
+        nrf54l15_connect_kit::csprng::seed(seed);
+    }
 
     // Bump if `build_sdc` fails - it logs the exact number of bytes needed.
     let mut sdc_mem = sdc::Mem::<12288>::new();
@@ -179,11 +227,5 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Running ble audio source example");
 
-    basic_audio_source::run(
-        sdc,
-        OUR_ADDRESS,
-        basic_audio_sink::ADDRESS,
-        Some(&bond_store),
-    )
-    .await
+    basic_audio_source::run(sdc, OUR_ADDRESS, target_address(), Some(&bond_store)).await
 }
