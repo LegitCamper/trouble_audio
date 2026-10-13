@@ -47,5 +47,5 @@ cyw43-pio = { git = "https://github.com/embassy-rs/embassy.git", rev = "03c826f2
 
 # Fork carries the ISO packet dispatch and the BIG command impls
 # (`LeCreateBig`/`LeTerminateBig`/`LeBigCreateSync`/`LeBigTerminateSync`), not upstream yet.
-nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "1b62e96edbd59e937f374ea9eb4d9a3b1f80b95a" }
-nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "1b62e96edbd59e937f374ea9eb4d9a3b1f80b95a" }
+nrf-sdc = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "d6f66312ecf34c086babb2a56e3319d8da902fc9" }
+nrf-mpsl = { git = "https://github.com/LegitCamper/nrf-sdc", rev = "d6f66312ecf34c086babb2a56e3319d8da902fc9" }
