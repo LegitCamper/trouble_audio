@@ -1,0 +1,48 @@
+# Quality-gated Auracast baseline. Same path as `auracast-self`, but asserts on the sink's SDU
+# delivery counters instead of only "a frame decoded": a stream dropping a third of its SDUs still
+# satisfies marker-only scenarios.
+#
+# `settle` is long enough for at least one 10-second stats report after the first decoded frame.
+
+description = "trouble-audio broadcast source -> sink, with SDU loss thresholds"
+timeout = 180
+settle = 25
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B]
+firmware = "trouble-audio"
+bin = "broadcast_sink"
+require = [
+    "Running Auracast broadcast sink example",
+    "broadcast discovered",
+    "decoded BIS",
+    "stats bis=",
+]
+forbid = [
+    "extended scan failed",
+    "periodic sync command failed",
+    "periodic sync failed",
+    "memory allocation of",
+    "panicked",
+]
+
+# Thresholds are deliberately loose for a first bring-up gate on an open bench; tighten once a
+# clean-bench baseline is recorded.
+[boards.B.max_metrics]
+loss_permille = 50
+burst = 10
+
+[boards.B.min_metrics]
+received = 100

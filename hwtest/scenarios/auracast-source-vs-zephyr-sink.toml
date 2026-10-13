@@ -1,0 +1,41 @@
+# Our source advertises the Broadcast Audio Announcement and BASE; Zephyr discovers it,
+# synchronizes the PA/BIG, and receives BIS payloads.
+
+description = "trouble-audio broadcast source -> Zephyr BAP broadcast sink"
+timeout = 120
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B]
+firmware = "zephyr"
+sample = "samples/bluetooth/bap_broadcast_sink"
+capture = "rtt"
+extra_conf = [
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/rtt.conf",
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/broadcast-sink.conf",
+]
+require = [
+    "Waiting for Broadcaster",
+    "Broadcast source PA synced",
+    "BASE received",
+    "Waiting for stream\\(s\\) started",
+    "Incoming audio on stream",
+]
+forbid = [
+    "Unable to",
+    # probe-rs RTT host noise, not firmware.
+    "Failed to (?!create readline)",
+    "timed out, resetting",
+    "ASSERTION FAIL",
+]

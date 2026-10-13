@@ -1,0 +1,51 @@
+# GMAP gaming preset: 48 kHz, 7.5 ms SDUs, RTN 1, 8 ms max transport latency, 10 ms presentation
+# delay. This exercises a different controller scheduling path than the 10 ms media presets - the
+# shorter ISO interval and single retransmission leave far less slack.
+
+description = "trouble-audio broadcast source -> sink using GMAP gaming preset 48_1_gs"
+timeout = 180
+settle = 25
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready preset=48_1_gs interval_us=7500",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.A.env]
+TROUBLE_AUDIO_PRESET = "48_1_gs"
+
+[boards.B]
+firmware = "trouble-audio"
+bin = "broadcast_sink"
+require = [
+    "Running Auracast broadcast sink example",
+    "broadcast discovered",
+    "decoded BIS",
+    "stats bis=",
+]
+forbid = [
+    "extended scan failed",
+    "periodic sync command failed",
+    "periodic sync failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B.env]
+TROUBLE_AUDIO_PRESET = "48_1_gs"
+
+# A single retransmission at 7.5 ms is expected to be lossier than the media preset.
+[boards.B.max_metrics]
+loss_permille = 100
+burst = 20
+
+[boards.B.min_metrics]
+received = 100

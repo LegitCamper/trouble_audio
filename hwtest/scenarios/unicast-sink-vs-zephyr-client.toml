@@ -1,0 +1,52 @@
+# Zephyr's BAP client drives our server through PACS/ASCS discovery, codec/QoS setup and CIS.
+# This caught the missing ASCS Audio Announcement that self-interop could not expose.
+
+description = "Zephyr BAP unicast client -> trouble-audio sink"
+timeout = 120
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "sink"
+require = [
+    "Running ble audio sink example",
+    "accepting CIS request",
+    "ISO data path set up for handle",
+    "I2S received first decoded PCM frame",
+]
+forbid = [
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B]
+firmware = "zephyr"
+sample = "samples/bluetooth/bap_unicast_client"
+capture = "rtt"
+extra_conf = ["/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/rtt.conf"]
+require = [
+    "Audio server found with type",
+    "codec_cap .* dir 0x01",
+    "codec id 0x06 cid 0x0000 vid 0x0000",
+    "dir 1 loc 3",
+    "snk ctx 6 src ctx 0",
+    "Discover sinks complete: err 0",
+    "Sinks discovered",
+    "Audio Stream .* configured",
+    "Audio Stream .* QoS set",
+    "Streams enabled",
+    "Streams connected",
+    "Streams started",
+]
+forbid = [
+    "AD invalid size",
+    "Failed to (?!create readline)",
+    "failed to",
+    "Discovery failed",
+    "Could not",
+    "Unable to (?!find source PAC)",
+    "Malformed PAC",
+    "Failed to process all PAC records",
+    "without finding any sink ASEs",
+    "No streams were configured",
+    "ASSERTION FAIL",
+]

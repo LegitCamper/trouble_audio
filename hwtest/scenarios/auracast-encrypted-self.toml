@@ -1,0 +1,48 @@
+# Encrypted broadcast: both boards are built with the same Broadcast_Code, so the sink must
+# decrypt the BIG. The unencrypted path never exercises `BroadcastSinkConfig::broadcast_code`.
+
+description = "trouble-audio encrypted broadcast source -> sink with matching Broadcast_Code"
+timeout = 180
+settle = 25
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.A.env]
+TROUBLE_AUDIO_BROADCAST_CODE = "TroubleAudio01"
+
+[boards.B]
+firmware = "trouble-audio"
+bin = "broadcast_sink"
+require = [
+    "Running Auracast broadcast sink example",
+    "broadcast discovered",
+    "decoded BIS",
+    "stats bis=",
+]
+forbid = [
+    "extended scan failed",
+    "periodic sync command failed",
+    "periodic sync failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B.env]
+TROUBLE_AUDIO_BROADCAST_CODE = "TroubleAudio01"
+
+[boards.B.max_metrics]
+loss_permille = 50
+
+[boards.B.min_metrics]
+received = 100

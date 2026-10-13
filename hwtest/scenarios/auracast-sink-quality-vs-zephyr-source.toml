@@ -1,0 +1,50 @@
+# Quality-gated reciprocal test: Zephyr broadcasts, our sink synchronizes, and the sink's own SDU
+# delivery counters must stay inside threshold. Marker-only scenarios pass even when most SDUs are
+# dropped, so this is the conformance-grade version of `auracast-sink-vs-zephyr-source`.
+
+description = "Zephyr BAP broadcast source -> trouble-audio sink, with SDU loss thresholds"
+timeout = 180
+settle = 25
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_sink"
+require = [
+    "Running Auracast broadcast sink example",
+    "broadcast discovered",
+    "decoded BIS",
+    "stats bis=",
+]
+forbid = [
+    "extended scan failed",
+    "periodic sync command failed",
+    "periodic sync failed",
+    "memory allocation of",
+    "panicked",
+    # Known probe-rs host noise, not firmware failures.
+    "Failed to (?!create readline|deconfigure device)",
+]
+
+[boards.A.max_metrics]
+loss_permille = 50
+burst = 10
+
+[boards.A.min_metrics]
+received = 100
+
+[boards.B]
+firmware = "zephyr"
+sample = "samples/bluetooth/bap_broadcast_source"
+capture = "rtt"
+extra_conf = [
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/rtt.conf",
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/broadcast-source.conf",
+]
+require = [
+    "Creating broadcast source",
+    "Broadcast source started",
+    "Sent [1-9][0-9]* total ISO packets",
+]
+forbid = [
+    "Failed to (?!create readline|deconfigure device)",
+]

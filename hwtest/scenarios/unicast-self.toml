@@ -1,0 +1,45 @@
+# Phase 2 baseline: our own source against our own sink.
+#
+# Proves the harness reproduces what the README already claims works. Must pass before any
+# Zephyr scenario - otherwise a later failure cannot be attributed to non-conformance rather
+# than a broken harness.
+#
+# Markers are existing firmware log lines (examples/apps/src/basic_audio_source.rs,
+# examples/nRF54L15_Connect_Kit/src/bin/sink.rs); no instrumentation was added for this.
+
+description = "trouble-audio source -> trouble-audio sink (self-interop baseline)"
+timeout = 120
+
+[boards.B]
+firmware = "trouble-audio"
+bin = "sink"
+require = [
+    "clocks initialized",
+    "LED self-test: done",
+    "Running ble audio sink example",
+    "accepting CIS request",
+    "ISO data path set up for handle",
+    # Proof LC3 decode actually ran. The richer "[sink] decoded mono frames=" line is
+    # defmt::debug! while DEFMT_LOG leaves this bin crate at info, so it never reaches RTT.
+    "I2S received first decoded PCM frame",
+]
+forbid = [
+    # The reconnect OOM this example previously died of.
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "source"
+require = [
+    "connected and encrypted",
+    "both channels streaming",
+]
+forbid = [
+    "Config Codec failed",
+    "Config QoS failed",
+    "Enable failed",
+    "ASCS discovery failed",
+    "panicked",
+]

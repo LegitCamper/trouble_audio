@@ -1,0 +1,33 @@
+# Auracast baseline: our own broadcast source against our own broadcast sink. No ACL, no GATT -
+# this exercises periodic advertising, BASE encode/parse, BIG create/sync and BIS data paths only.
+
+description = "trouble-audio broadcast source -> trouble-audio broadcast sink"
+timeout = 120
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.B]
+firmware = "trouble-audio"
+bin = "broadcast_sink"
+require = [
+    "Running Auracast broadcast sink example",
+    "broadcast discovered",
+    "decoded BIS",
+]
+forbid = [
+    "extended scan failed",
+    "periodic sync command failed",
+    "memory allocation of",
+    "panicked",
+]

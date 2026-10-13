@@ -1,0 +1,45 @@
+# Gaming interop: our source uses GMAP preset 48_1_gs (48 kHz, 7.5 ms SDUs, RTN 1, 8 ms max
+# transport latency) and Zephyr must still sync and decode. The 7.5 ms ISO interval exercises a
+# different controller scheduling path than the 10 ms media presets.
+
+description = "trouble-audio gaming-preset (48_1_gs, 7.5 ms) source -> Zephyr BAP broadcast sink"
+timeout = 120
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "broadcast_source"
+require = [
+    "Running Auracast broadcast source example",
+    "both BIS ready preset=48_1_gs interval_us=7500",
+]
+forbid = [
+    "broadcast setup failed",
+    "memory allocation of",
+    "panicked",
+]
+
+[boards.A.env]
+TROUBLE_AUDIO_PRESET = "48_1_gs"
+
+[boards.B]
+firmware = "zephyr"
+sample = "samples/bluetooth/bap_broadcast_sink"
+capture = "rtt"
+extra_conf = [
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/rtt.conf",
+    "/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/broadcast-sink.conf",
+]
+require = [
+    "Waiting for Broadcaster",
+    "Broadcast source PA synced",
+    "BASE received",
+    "Waiting for stream\\(s\\) started",
+    "Incoming audio on stream",
+]
+forbid = [
+    "Unable to",
+    # probe-rs RTT host noise, not firmware.
+    "Failed to (?!create readline)",
+    "timed out, resetting",
+    "ASSERTION FAIL",
+]
