@@ -14,8 +14,10 @@ use heapless::Vec as HVec;
 
 /// Largest encoded ISO SDU this crate retains.
 ///
-/// The bound matches Sony's `LDACBT_MAX_NBYTES`; LC3 frames are substantially smaller.
-pub const MAX_ENCODED_AUDIO_SDU_LEN: usize = crate::ldac::MAX_TRANSPORT_FRAME_SEQUENCE_BYTES;
+/// The bound matches Sony's `LDACBT_MAX_NBYTES`; LC3 frames are substantially smaller. Kept
+/// literal here so this module stands alone - `ldac::MAX_TRANSPORT_FRAME_SEQUENCE_BYTES` on
+/// `feat/ldac-vendor-codec` is the same value and must stay in step.
+pub const MAX_ENCODED_AUDIO_SDU_LEN: usize = 1024;
 
 /// One complete, still-encoded ISO SDU from any negotiated audio codec.
 pub type EncodedAudioSdu = HVec<u8, MAX_ENCODED_AUDIO_SDU_LEN>;

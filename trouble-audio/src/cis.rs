@@ -28,7 +28,8 @@ use bt_hci::data::{IsoPacket, IsoPacketBoundary};
 use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::event::DisconnectionComplete;
 use bt_hci::param::{
-    CodecId, ConnHandle, DataPathDirection, DataPathId, DisconnectReason, ExtDuration, Status,
+    CodecId, ConnHandle, DataPathDirection, DataPathId, DisconnectReason, ExtDuration,
+    LeHostFeature, Status,
 };
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Channel;
@@ -709,7 +710,7 @@ pub async fn drive_cis<C, M: RawMutex, const MAX_ASES: usize>(stack: &Stack<'_, 
 where
     C: Controller
         + ControllerCmdAsync<LeAcceptCisRequest>
-        + ControllerCmdSync<Disconnect>
+        + ControllerCmdAsync<Disconnect>
         + ControllerCmdSync<LeRejectCisRequest>
         + for<'a> ControllerCmdSync<LeSetupIsoDataPath<'a>>
         + ControllerCmdSync<LeRemoveIsoDataPath>,
@@ -764,7 +765,7 @@ where
                 }
                 if released_ase_id.is_some() {
                     let disconnect = iso
-                        .command(Disconnect::new(
+                        .command_async(Disconnect::new(
                             handle,
                             DisconnectReason::RemoteUserTerminatedConn,
                         ))
@@ -785,7 +786,7 @@ where
 /// LE feature bit for "Connected Isochronous Stream (Host Support)" (Core 6, Vol 6, Part B,
 /// Section 4.6) - set via `HCI_LE_Set_Host_Feature` to opt in to using CIS. Without it, a peer's
 /// link-layer feature exchange sees CIS as unsupported and never attempts `LE_Create_CIS`.
-const CIS_HOST_SUPPORT_FEATURE_BIT: u8 = 32;
+const CIS_HOST_SUPPORT_FEATURE_BIT: LeHostFeature = LeHostFeature::CONN_ISO_STREAM;
 
 /// Enables CIS host support on `stack`'s controller - required once at startup before any CIS
 /// can be created, by either side. Await concurrently with [`drive_cis`] and the connection
@@ -804,7 +805,7 @@ where
             _features.supports_connected_isochronous_stream_central()
         );
     }
-    match stack.command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, 1)).await {
+    match stack.command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, true)).await {
         Ok(_) => {
             info!("[cis] enabled Isochronous Channels (Host Support)");
             true

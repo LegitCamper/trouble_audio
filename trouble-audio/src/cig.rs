@@ -187,6 +187,7 @@ enum CigAction {
     /// built here since the command borrows a per-CIS slice that can't outlive this action.
     SetCigParameters(AseQos, AseQos),
     CreateCis {
+        cig_id: u8,
         cis_0: ConnHandle,
         cis_1: ConnHandle,
         acl: ConnHandle,
@@ -325,7 +326,12 @@ impl<M: RawMutex> CigManager<M> {
             warn!("[cig] LE Set CIG Parameters completed before an ACL handle was set");
             return;
         };
+        let Some(cig_id) = *self.cig_id.borrow() else {
+            warn!("[cig] LE Set CIG Parameters completed before a CIG_ID was recorded");
+            return;
+        };
         let _ = self.actions.try_send(CigAction::CreateCis {
+            cig_id,
             cis_0: connection_handle_0,
             cis_1: connection_handle_1,
             acl,
@@ -468,12 +474,20 @@ where
                     }
                 }
             }
-            CigAction::CreateCis { cis_0, cis_1, acl } => {
+            CigAction::CreateCis {
+                cig_id,
+                cis_0,
+                cis_1,
+                acl,
+            } => {
                 let cis_configs = [
                     CisConnConfig { cis_handle: cis_0, acl_handle: acl },
                     CisConnConfig { cis_handle: cis_1, acl_handle: acl },
                 ];
-                if let Err(_e) = iso.command_async(LeCreateCis::new(&cis_configs)).await {
+                if let Err(_e) = iso
+                    .command_async(LeCreateCis::new(CigId::new(cig_id), &cis_configs))
+                    .await
+                {
                     #[cfg(feature = "log")]
                     log::warn!("[cig] LE Create CIS failed: {_e:?}");
                     #[cfg(feature = "defmt")]
@@ -578,7 +592,13 @@ mod tests {
         // Simulate `drive_cig` completing LE Set CIG Parameters.
         manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
         match manager.actions.try_receive() {
-            Ok(CigAction::CreateCis { cis_0, cis_1, acl }) => {
+            Ok(CigAction::CreateCis {
+                cig_id,
+                cis_0,
+                cis_1,
+                acl,
+            }) => {
+                assert_eq!(cig_id, 7);
                 assert_eq!(cis_0.raw(), 0x10);
                 assert_eq!(cis_1.raw(), 0x11);
                 assert_eq!(acl.raw(), 0x05);
