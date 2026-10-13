@@ -19,14 +19,14 @@
 use core::cell::{Cell, RefCell};
 
 use bt_hci::cmd::le::{
-    LeAcceptCisRequest, LeReadLocalSupportedFeatures, LeRejectCisRequest, LeRemoveIsoDataPath, LeSetHostFeature,
-    LeSetupIsoDataPath,
+    LeAcceptCisRequest, LeReadLocalSupportedFeatures, LeRejectCisRequest, LeRemoveIsoDataPath,
+    LeSetHostFeature, LeSetupIsoDataPath,
 };
 use bt_hci::cmd::link_control::Disconnect;
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::data::{IsoPacket, IsoPacketBoundary};
-use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::event::DisconnectionComplete;
+use bt_hci::event::le::{LeCisEstablished, LeCisRequest};
 use bt_hci::param::{
     CodecId, ConnHandle, DataPathDirection, DataPathId, DisconnectReason, ExtDuration,
     LeHostFeature, Status,
@@ -36,12 +36,13 @@ use embassy_sync::channel::Channel;
 use heapless::Vec as HVec;
 use trouble_host::prelude::*;
 
-
 use crate::{
-    ascs::{AscsServer, AseDirection, Operation},
-    generic_audio::{decode_list, AudioLocation, CodecSpecificConfiguration, FrameDuration, SamplingFrequency},
-    lc3::{Lc3MonoDecoder, Lc3MonoEncoder},
     CodingFormat, MAX_SERVICES,
+    ascs::{AscsServer, AseDirection, Operation},
+    generic_audio::{
+        AudioLocation, CodecSpecificConfiguration, FrameDuration, SamplingFrequency, decode_list,
+    },
+    lc3::{Lc3MonoDecoder, Lc3MonoEncoder},
 };
 
 /// HCI error code used to reject a CIS request that doesn't match any QoS-configured ASE
@@ -125,6 +126,7 @@ struct AseSlot {
     data_path_active: bool,
     teardown_pending: bool,
     release_pending: bool,
+    stats: crate::stream_stats::SduStats,
 }
 
 /// Each variant is tagged with the [`AudioParams`] it was built for, so a reconnect with the same
@@ -235,6 +237,15 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
         }
     }
 
+    /// Returns SDU delivery counters for one configured ASE, for conformance assertions.
+    pub fn ase_stats(&self, ase_id: u8) -> Option<crate::stream_stats::SduStats> {
+        self.slots
+            .borrow()
+            .iter()
+            .find(|slot| slot.ase_id == Some(ase_id))
+            .map(|slot| slot.stats)
+    }
+
     fn queue_action(&self, action: CisAction) {
         if self.actions.try_send(action).is_err() {
             warn!("[cis] action queue full; controller lifecycle action dropped");
@@ -243,7 +254,10 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
 
     fn queue_released(&self, ase_id: u8) {
         if self.released.try_send(ase_id).is_err() {
-            warn!("[cis] released ASE queue full; ASE {} completion dropped", ase_id);
+            warn!(
+                "[cis] released ASE queue full; ASE {} completion dropped",
+                ase_id
+            );
         }
     }
 
@@ -268,9 +282,14 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     ) {
         if let Operation::ConfigCodec(entries) = operation {
             for (ase_id, _target_latency, _target_phy, _codec_id, config) in entries.iter() {
-                let Some(direction) = find_ase_direction(server, ascs, *ase_id) else { continue };
+                let Some(direction) = find_ase_direction(server, ascs, *ase_id) else {
+                    continue;
+                };
                 let Some(audio) = audio_params_from_config(config) else {
-                    warn!("[cis] ASE {} Config Codec missing sampling frequency/frame duration", ase_id);
+                    warn!(
+                        "[cis] ASE {} Config Codec missing sampling frequency/frame duration",
+                        ase_id
+                    );
                     continue;
                 };
                 let mut slots = self.slots.borrow_mut();
@@ -307,7 +326,11 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
                                 AseDirection::Sink => (DataPathDirection::Output, Some(*ase_id)),
                                 AseDirection::Source => (DataPathDirection::Input, None),
                             };
-                            Some(CisAction::SetupDataPath(handle, direction, streaming_ase_id))
+                            Some(CisAction::SetupDataPath(
+                                handle,
+                                direction,
+                                streaming_ase_id,
+                            ))
                         })
                 };
                 if let Some(action) = action {
@@ -325,7 +348,8 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
             for &ase_id in ids.iter() {
                 let action = {
                     let mut slots = self.slots.borrow_mut();
-                    let Some(slot) = slots.iter_mut().find(|slot| slot.ase_id == Some(ase_id)) else {
+                    let Some(slot) = slots.iter_mut().find(|slot| slot.ase_id == Some(ase_id))
+                    else {
                         if release {
                             self.queue_released(ase_id);
                         }
@@ -335,7 +359,10 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
                     // A Sink stops receiving on Disable. A Source keeps transmitting until the
                     // client sends Receiver Stop Ready, so ignore its initial Disable here.
                     let should_teardown = release
-                        || matches!((operation, slot.direction), (Operation::Disable(_), Some(AseDirection::Sink)))
+                        || matches!(
+                            (operation, slot.direction),
+                            (Operation::Disable(_), Some(AseDirection::Sink))
+                        )
                         || matches!(
                             (operation, slot.direction),
                             (Operation::ReceiverStopReady(_), Some(AseDirection::Source))
@@ -353,7 +380,11 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
                         None => None,
                     };
                     slot.cis_handle.zip(direction).map(|(raw, direction)| {
-                        CisAction::RemoveDataPath(ConnHandle::new(raw), direction, release.then_some(ase_id))
+                        CisAction::RemoveDataPath(
+                            ConnHandle::new(raw),
+                            direction,
+                            release.then_some(ase_id),
+                        )
                     })
                 };
                 match action {
@@ -425,7 +456,10 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     fn data_path_setup_complete(&self, handle: ConnHandle, streaming_ase_id: Option<u8>) {
         let ready = {
             let mut slots = self.slots.borrow_mut();
-            let Some(slot) = slots.iter_mut().find(|slot| slot.cis_handle == Some(handle.raw())) else {
+            let Some(slot) = slots
+                .iter_mut()
+                .find(|slot| slot.cis_handle == Some(handle.raw()))
+            else {
                 return;
             };
             if slot.teardown_pending {
@@ -438,7 +472,10 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
         if ready {
             if let Some(ase_id) = streaming_ase_id {
                 if self.streaming.try_send(ase_id).is_err() {
-                    warn!("[cis] streaming ASE queue full; ASE {} transition dropped", ase_id);
+                    warn!(
+                        "[cis] streaming ASE queue full; ASE {} transition dropped",
+                        ase_id
+                    );
                 }
             }
         }
@@ -459,10 +496,16 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
     fn cis_disconnected(&self, handle: ConnHandle) -> bool {
         let completion = {
             let mut slots = self.slots.borrow_mut();
-            let Some(slot) = slots.iter_mut().find(|slot| slot.cis_handle == Some(handle.raw())) else {
+            let Some(slot) = slots
+                .iter_mut()
+                .find(|slot| slot.cis_handle == Some(handle.raw()))
+            else {
                 drop(slots);
                 let mut retired = self.retired_cis_handles.borrow_mut();
-                let Some(retired_handle) = retired.iter_mut().find(|entry| **entry == Some(handle.raw())) else {
+                let Some(retired_handle) = retired
+                    .iter_mut()
+                    .find(|entry| **entry == Some(handle.raw()))
+                else {
                     return false;
                 };
                 *retired_handle = None;
@@ -479,7 +522,10 @@ impl<M: RawMutex, const MAX_ASES: usize> CisManager<M, MAX_ASES> {
             self.queue_released(ase_id);
         } else if let Some((ase_id, false)) = completion {
             if self.qos_configured.try_send(ase_id).is_err() {
-                warn!("[cis] QoS Configured ASE queue full; ASE {} transition dropped", ase_id);
+                warn!(
+                    "[cis] QoS Configured ASE queue full; ASE {} transition dropped",
+                    ase_id
+                );
             }
         }
         true
@@ -503,7 +549,10 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
                 slots[idx].teardown_pending = false;
                 slots[idx].release_pending = false;
                 drop(slots);
-                info!("[cis] accepting CIS request (cig={} cis={})", event.cig_id, event.cis_id);
+                info!(
+                    "[cis] accepting CIS request (cig={} cis={})",
+                    event.cig_id, event.cis_id
+                );
                 self.queue_action(CisAction::Accept(event.cis_handle));
             }
             None => {
@@ -554,15 +603,22 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
                 (Some(Codec::Encoder(params, _)), AseDirection::Source) if *params == audio
             );
             if already_matches {
-                info!("[cis] reusing existing codec for ase slot {} (reconnect, same audio params)", idx);
+                info!(
+                    "[cis] reusing existing codec for ase slot {} (reconnect, same audio params)",
+                    idx
+                );
             } else {
                 let codec = match direction {
-                    AseDirection::Sink => Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
-                        .ok()
-                        .map(|d| Codec::Decoder(audio, d)),
-                    AseDirection::Source => Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
-                        .ok()
-                        .map(|e| Codec::Encoder(audio, e)),
+                    AseDirection::Sink => {
+                        Lc3MonoDecoder::new(audio.sampling_frequency, audio.frame_duration)
+                            .ok()
+                            .map(|d| Codec::Decoder(audio, d))
+                    }
+                    AseDirection::Source => {
+                        Lc3MonoEncoder::new(audio.sampling_frequency, audio.frame_duration)
+                            .ok()
+                            .map(|e| Codec::Encoder(audio, e))
+                    }
                 };
                 match codec {
                     Some(codec) => self.codecs.borrow_mut()[idx] = Some(codec),
@@ -580,7 +636,9 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
         };
         // Only a Sink ASE's Enabling->Streaming transition is autonomous; a Source ASE instead
         // waits for the client's Receiver Start Ready operation.
-        let streaming_ase_id = matches!(direction, AseDirection::Sink).then_some(()).and(slot.ase_id);
+        let streaming_ase_id = matches!(direction, AseDirection::Sink)
+            .then_some(())
+            .and(slot.ase_id);
         info!("[cis] CIS established, setting up ISO data path");
         self.queue_action(CisAction::SetupDataPath(
             event.handle,
@@ -592,7 +650,7 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
     fn on_iso_data(&self, packet: &IsoPacket<'_>) {
         let handle = packet.handle().raw();
         let (idx, ase_id, channel_allocation) = {
-            let slots = self.slots.borrow();
+            let mut slots = self.slots.borrow_mut();
             let Some(idx) = slots.iter().position(|s| s.cis_handle == Some(handle)) else {
                 warn!("[cis] on_iso_data: no slot for handle={}", handle);
                 return;
@@ -604,7 +662,20 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
             if !slots[idx].data_path_active {
                 return;
             }
-            (idx, ase_id, slots[idx].audio.and_then(|a| a.channel_allocation))
+            // Counted before decode, so a stream delivering only unusable SDUs still reports
+            // loss rather than looking idle.
+            if let Some(header) = packet.data_load_header() {
+                if (header.iso_sdu_len >> 14) == 2 {
+                    slots[idx].stats.note_lost(header.sequence_num);
+                } else {
+                    slots[idx].stats.note_received(header.sequence_num);
+                }
+            }
+            (
+                idx,
+                ase_id,
+                slots[idx].audio.and_then(|a| a.channel_allocation),
+            )
         };
 
         if self.mode == SinkMode::Passthrough {
@@ -691,7 +762,12 @@ impl<M: RawMutex, const MAX_ASES: usize> EventHandler for CisManager<M, MAX_ASES
     }
 }
 
-fn find_ase_direction<M: RawMutex, P: PacketPool, const MAX_ASES: usize, const MAX_CONNECTIONS: usize>(
+fn find_ase_direction<
+    M: RawMutex,
+    P: PacketPool,
+    const MAX_ASES: usize,
+    const MAX_CONNECTIONS: usize,
+>(
     server: &AttributeServer<'_, M, P, MAX_SERVICES, MAX_CONNECTIONS>,
     ascs: &AscsServer<MAX_ASES>,
     ase_id: u8,
@@ -706,7 +782,10 @@ fn find_ase_direction<M: RawMutex, P: PacketPool, const MAX_ASES: usize, const M
 /// path, as decided synchronously by `manager`'s [`EventHandler`] callbacks. Must be polled
 /// concurrently with [`RxRunner::run_with_handler`](trouble_host::prelude::RxRunner::run_with_handler)
 /// (e.g. via `select`) for those decisions to actually reach the controller.
-pub async fn drive_cis<C, M: RawMutex, const MAX_ASES: usize>(stack: &Stack<'_, C, impl PacketPool>, manager: &CisManager<M, MAX_ASES>) -> !
+pub async fn drive_cis<C, M: RawMutex, const MAX_ASES: usize>(
+    stack: &Stack<'_, C, impl PacketPool>,
+    manager: &CisManager<M, MAX_ASES>,
+) -> !
 where
     C: Controller
         + ControllerCmdAsync<LeAcceptCisRequest>
@@ -754,7 +833,9 @@ where
                 }
             }
             CisAction::RemoveDataPath(handle, direction, released_ase_id) => {
-                let result = iso.command(LeRemoveIsoDataPath::new(handle, direction)).await;
+                let result = iso
+                    .command(LeRemoveIsoDataPath::new(handle, direction))
+                    .await;
                 if result.is_ok() {
                     info!("[cis] ISO data path removed for handle {}", handle.raw());
                 } else {
@@ -795,7 +876,9 @@ const CIS_HOST_SUPPORT_FEATURE_BIT: LeHostFeature = LeHostFeature::CONN_ISO_STRE
 /// returns `false` and callers should retry after a short delay rather than give up permanently.
 pub async fn enable_cis_host_support<C>(stack: &Stack<'_, C, impl PacketPool>) -> bool
 where
-    C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<LeReadLocalSupportedFeatures>,
+    C: Controller
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<LeReadLocalSupportedFeatures>,
 {
     #[cfg(any(feature = "log", feature = "defmt"))]
     if let Ok(_features) = stack.command(LeReadLocalSupportedFeatures::new()).await {
@@ -805,7 +888,10 @@ where
             _features.supports_connected_isochronous_stream_central()
         );
     }
-    match stack.command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, true)).await {
+    match stack
+        .command(LeSetHostFeature::new(CIS_HOST_SUPPORT_FEATURE_BIT, true))
+        .await
+    {
         Ok(_) => {
             info!("[cis] enabled Isochronous Channels (Host Support)");
             true
@@ -825,19 +911,19 @@ mod tests {
     use alloc::boxed::Box;
     use alloc::vec::Vec as AVec;
 
-    use bt_hci::param::PhyKind;
     use bt_hci::FromHciBytes;
+    use bt_hci::param::PhyKind;
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
     use super::*;
     use crate::{
-        ascs::{
-            Ase, AscsServer, AseControlPointOperation, AseType, TargetLatency, ASE_CONTROL_POINT_STORE_SIZE,
-            ASE_STORE_SIZE,
-        },
-        generic_audio::{encode_list, FrameDuration, SamplingFrequency},
-        lc3::Lc3MonoEncoder,
         CodecId,
+        ascs::{
+            ASE_CONTROL_POINT_STORE_SIZE, ASE_STORE_SIZE, AscsServer, Ase,
+            AseControlPointOperation, AseType, TargetLatency,
+        },
+        generic_audio::{FrameDuration, SamplingFrequency, encode_list},
+        lc3::Lc3MonoEncoder,
     };
 
     const MAX_ASES: usize = 1;
@@ -853,7 +939,8 @@ mod tests {
         let mut ases = HVec::new();
         let _ = ases.push(AseType::Sink(Ase::new(0)));
         // Test fixtures leak their `'static` GATT stores (see the README's Miri note).
-        let control_point_store: &'static mut [u8] = Box::leak(Box::new([0u8; ASE_CONTROL_POINT_STORE_SIZE]));
+        let control_point_store: &'static mut [u8] =
+            Box::leak(Box::new([0u8; ASE_CONTROL_POINT_STORE_SIZE]));
         let ase_store: &'static mut [u8] = Box::leak(Box::new([0u8; ASE_STORE_SIZE]));
         let ascs = AscsServer::new(&mut table, ases, control_point_store, [ase_store]);
         let server = AttributeServer::new(table);
@@ -862,19 +949,46 @@ mod tests {
 
     /// Round-trips through the wire encoding so the decoded `Operation` matches what a real
     /// central's write would produce.
-    fn config_codec_operation(ase_id: u8, sampling_frequency: SamplingFrequency, frame_duration: FrameDuration) -> Operation {
+    fn config_codec_operation(
+        ase_id: u8,
+        sampling_frequency: SamplingFrequency,
+        frame_duration: FrameDuration,
+    ) -> Operation {
         let config = encode_list(&[
             CodecSpecificConfiguration::SamplingFrequency(sampling_frequency),
             CodecSpecificConfiguration::FrameDuration(frame_duration),
             CodecSpecificConfiguration::OctetsPerCodecFrame(100),
         ]);
-        let entries: AVec<_> = [(ase_id, TargetLatency::Lower, PhySet::M1, CodecId::default(), config)].into();
-        AseControlPointOperation::config_codec(entries).operation().unwrap()
+        let entries: AVec<_> = [(
+            ase_id,
+            TargetLatency::Lower,
+            PhySet::M1,
+            CodecId::default(),
+            config,
+        )]
+        .into();
+        AseControlPointOperation::config_codec(entries)
+            .operation()
+            .unwrap()
     }
 
     fn config_qos_operation(ase_id: u8, cig_id: u8, cis_id: u8) -> Operation {
-        let entries: AVec<_> = [(ase_id, cig_id, cis_id, [0, 0, 0], 0u8, PhySet::M1, 100u16, 0u8, 10u16, [0, 0, 0])].into();
-        AseControlPointOperation::config_qos(entries).operation().unwrap()
+        let entries: AVec<_> = [(
+            ase_id,
+            cig_id,
+            cis_id,
+            [0, 0, 0],
+            0u8,
+            PhySet::M1,
+            100u16,
+            0u8,
+            10u16,
+            [0, 0, 0],
+        )]
+        .into();
+        AseControlPointOperation::config_qos(entries)
+            .operation()
+            .unwrap()
     }
 
     fn established_event(handle: u16) -> LeCisEstablished {
@@ -901,7 +1015,12 @@ mod tests {
     /// Hand-encodes a single, complete, non-timestamped HCI ISO data packet - mirrors the
     /// approach used to test the receive-path plumbing in the `trouble` fork itself, since
     /// `IsoPacket` has no public constructor other than parsing from wire bytes.
-    fn iso_data_packet(cis_handle: u16, sequence_number: u16, packet_status: u16, payload: &[u8]) -> AVec<u8> {
+    fn iso_data_packet(
+        cis_handle: u16,
+        sequence_number: u16,
+        packet_status: u16,
+        payload: &[u8],
+    ) -> AVec<u8> {
         const PB_COMPLETE: u16 = 0b10;
         let handle_word = (cis_handle & 0x0fff) | (PB_COMPLETE << 12);
         let data_load_len = 4 + payload.len();
@@ -923,7 +1042,11 @@ mod tests {
 
         let sampling_frequency = SamplingFrequency::Hz48000;
         let frame_duration = FrameDuration::Duration10MS;
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, sampling_frequency, frame_duration),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
 
         // A CIS request for an unrelated (cig, cis) pair must be rejected...
@@ -964,7 +1087,9 @@ mod tests {
         // Encode a real LC3 frame at the negotiated config and feed it in as if it arrived over
         // the air, then check it comes out the other end as decoded PCM.
         let mut encoder = Lc3MonoEncoder::new(sampling_frequency, frame_duration).unwrap();
-        let pcm_in: AVec<i16> = (0..encoder.samples_per_frame).map(|i| (i as i16).wrapping_mul(37)).collect();
+        let pcm_in: AVec<i16> = (0..encoder.samples_per_frame)
+            .map(|i| (i as i16).wrapping_mul(37))
+            .collect();
         let mut frame = [0u8; 100];
         encoder.encode(&pcm_in, &mut frame).unwrap();
 
@@ -991,7 +1116,11 @@ mod tests {
 
         let sampling_frequency = SamplingFrequency::Hz48000;
         let frame_duration = FrameDuration::Duration10MS;
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, sampling_frequency, frame_duration),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
 
         manager.on_cis_request(&LeCisRequest {
@@ -1012,7 +1141,11 @@ mod tests {
         );
 
         // Simulate a reconnect: same Config Codec/QoS params, fresh CIS handle.
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, sampling_frequency, frame_duration));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, sampling_frequency, frame_duration),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
         manager.on_cis_request(&LeCisRequest {
             acl_handle: ConnHandle::new(0x06),
@@ -1034,7 +1167,9 @@ mod tests {
 
         // The reused decoder must still actually work.
         let mut encoder = Lc3MonoEncoder::new(sampling_frequency, frame_duration).unwrap();
-        let pcm_in: AVec<i16> = (0..encoder.samples_per_frame).map(|i| (i as i16).wrapping_mul(37)).collect();
+        let pcm_in: AVec<i16> = (0..encoder.samples_per_frame)
+            .map(|i| (i as i16).wrapping_mul(37))
+            .collect();
         let mut frame = [0u8; 100];
         encoder.encode(&pcm_in, &mut frame).unwrap();
         let raw = iso_data_packet(0x12, 0, 0, &frame);
@@ -1057,7 +1192,11 @@ mod tests {
         let (ascs, server) = build_ascs_and_server();
         let manager = CisManager::<NoopRawMutex, MAX_ASES>::new();
 
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
         manager.on_cis_request(&LeCisRequest {
             acl_handle: ConnHandle::new(0x05),
@@ -1071,7 +1210,11 @@ mod tests {
 
         // Renegotiate at a different sampling frequency: the 48 kHz decoder must be freed, not
         // orphaned, when the 16 kHz one replaces it.
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz16000, FrameDuration::Duration10MS));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, SamplingFrequency::Hz16000, FrameDuration::Duration10MS),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
         manager.on_cis_request(&LeCisRequest {
             acl_handle: ConnHandle::new(0x06),
@@ -1097,7 +1240,11 @@ mod tests {
         let (ascs, server) = build_ascs_and_server();
         let manager = CisManager::<NoopRawMutex, MAX_ASES>::new_passthrough();
 
-        manager.observe_operation(&server, &ascs, &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS));
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS),
+        );
         manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
         manager.on_cis_request(&LeCisRequest {
             acl_handle: ConnHandle::new(0x05),
@@ -1135,6 +1282,50 @@ mod tests {
         let (packet, _) = IsoPacket::from_hci_bytes(&lost).unwrap();
         manager.on_iso_data(&packet);
         assert!(manager.frames_out.try_receive().is_err());
+    }
+
+    #[test]
+    fn ase_stats_count_delivered_lost_and_missing_sdus() {
+        let (ascs, server) = build_ascs_and_server();
+        let manager = CisManager::<NoopRawMutex, MAX_ASES>::new_passthrough();
+        manager.observe_operation(
+            &server,
+            &ascs,
+            &config_codec_operation(0, SamplingFrequency::Hz48000, FrameDuration::Duration10MS),
+        );
+        manager.observe_operation(&server, &ascs, &config_qos_operation(0, 7, 9));
+        manager.on_cis_request(&LeCisRequest {
+            acl_handle: ConnHandle::new(0x05),
+            cis_handle: ConnHandle::new(0x11),
+            cig_id: 7,
+            cis_id: 9,
+        });
+        let _ = manager.actions.try_receive();
+        manager.on_cis_established(&established_event(0x11));
+        let _ = manager.actions.try_receive();
+        manager.data_path_setup_complete(ConnHandle::new(0x11), Some(0));
+
+        let payload = [0xC3u8; 100];
+        for sequence in [10u16, 11] {
+            let raw = iso_data_packet(0x11, sequence, 0, &payload);
+            let (packet, _) = IsoPacket::from_hci_bytes(&raw).unwrap();
+            manager.on_iso_data(&packet);
+        }
+        // Controller-flagged loss, then a gap of two never-delivered SDUs (13 and 14).
+        let lost = iso_data_packet(0x11, 12, 2, &[]);
+        let (packet, _) = IsoPacket::from_hci_bytes(&lost).unwrap();
+        manager.on_iso_data(&packet);
+        let raw = iso_data_packet(0x11, 15, 0, &payload);
+        let (packet, _) = IsoPacket::from_hci_bytes(&raw).unwrap();
+        manager.on_iso_data(&packet);
+
+        let stats = manager.ase_stats(0).expect("configured ASE has stats");
+        assert_eq!(stats.received, 3);
+        assert_eq!(stats.flagged_lost, 1);
+        assert_eq!(stats.missing, 2);
+        assert_eq!(stats.expected(), 6);
+        assert_eq!(stats.loss_per_mille(), 500);
+        assert!(manager.ase_stats(9).is_none());
     }
 
     #[test]
@@ -1205,7 +1396,13 @@ mod tests {
         assert!(manager.streaming.try_receive().is_err());
         assert!(manager.released.try_receive().is_err());
         assert!(manager.qos_configured.try_receive().is_err());
-        assert!(manager.slots.borrow().iter().all(|slot| slot.ase_id.is_none()));
+        assert!(
+            manager
+                .slots
+                .borrow()
+                .iter()
+                .all(|slot| slot.ase_id.is_none())
+        );
         assert!(manager.cis_disconnected(ConnHandle::new(0x11)));
         assert!(!manager.cis_disconnected(ConnHandle::new(0x11)));
     }

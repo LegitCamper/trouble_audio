@@ -167,6 +167,9 @@ async fn drive_audio_outputs(
     let mut resample_phase = 0;
     let mut frames = 0u32;
     let mut dma_buffers = 0u32;
+    // Decoded-frame counts alone cannot distinguish a clean stream from one dropping a third of
+    // its SDUs, so the harness asserts on these controller-level counters instead.
+    let mut next_stats_report = Instant::now() + Duration::from_secs(10);
     loop {
         let mut segment_offsets = [0; LC3_FRAMES_PER_DMA_BUFFER];
         let mut segment_lengths = [0; LC3_FRAMES_PER_DMA_BUFFER];
@@ -256,6 +259,22 @@ async fn drive_audio_outputs(
         dma_buffers = dma_buffers.wrapping_add(1);
         if dma_buffers == 25 {
             defmt::info!("I2S DMA remained continuous for 100 LC3 frame periods");
+        }
+        if let (Some(ase_id), true) = (selected_ase, Instant::now() >= next_stats_report) {
+            next_stats_report = Instant::now() + Duration::from_secs(10);
+            if let Some(stats) = cis_manager.ase_stats(ase_id) {
+                defmt::info!(
+                    "[sink] stats ase={} received={} lost={} missing={} dup={} reordered={} burst={} loss_permille={}",
+                    ase_id,
+                    stats.received,
+                    stats.flagged_lost,
+                    stats.missing,
+                    stats.duplicates,
+                    stats.reordered,
+                    stats.max_burst_missing,
+                    stats.loss_per_mille()
+                );
+            }
         }
     }
 }
