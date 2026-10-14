@@ -64,6 +64,7 @@ pub async fn run<C>(
     target: [u8; 6],
     bond_store: Option<&dyn BondStore>,
     preset: AudioPreset,
+    channels: usize,
 ) -> !
 where
     C: Controller
@@ -94,7 +95,12 @@ where
     // This example sends a fixed pre-encoded tone. Passthrough avoids retaining two large LC3
     // encoders after the tone has been cached and lets the first ISO packet be sent immediately
     // when the data paths open.
-    let cig_manager = CigManager::<NoopRawMutex>::new_passthrough();
+    assert!(channels == 1 || channels == 2, "only mono and stereo are supported");
+    let cig_manager = if channels == 1 {
+        CigManager::<NoopRawMutex>::new_mono_passthrough()
+    } else {
+        CigManager::<NoopRawMutex>::new_passthrough()
+    };
 
     select4(
         async {
@@ -138,6 +144,7 @@ where
                     &cig_manager,
                     bond_store,
                     preset,
+                    channels,
                 )
                 .await;
                 embassy_time::Timer::after(embassy_time::Duration::from_secs(1)).await;
@@ -156,6 +163,7 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
     cig_manager: &CigManager<NoopRawMutex>,
     bond_store: Option<&dyn BondStore>,
     preset: AudioPreset,
+    channels: usize,
 ) {
     // Clear stale state from the previous connection.  This also queues a `LeRemoveCig` action
     // for `drive_cig` to execute before the next `LE Set CIG Parameters` so the controller
@@ -290,7 +298,7 @@ async fn connect_and_stream<C: Controller + ControllerCmdAsync<LeExtCreateConn>>
                 return;
             }
         };
-        stream_tone(stack, &client, &ascs, cig_manager, preset).await;
+        stream_tone(stack, &client, &ascs, cig_manager, preset, channels).await;
     })
     .await;
 }
@@ -303,6 +311,7 @@ async fn stream_tone<C: Controller, const N: usize>(
     ascs: &AscsClient,
     cig_manager: &CigManager<NoopRawMutex>,
     preset: AudioPreset,
+    channels: usize,
 ) {
     let phy = if preset.sdu_interval_us() == 7_500 {
         PhySet::M2
@@ -310,7 +319,8 @@ async fn stream_tone<C: Controller, const N: usize>(
         PhySet::M1
     };
     let mut ase_ids = [0u8; 2];
-    for (i, characteristic) in ascs.sink_ases().take(2).enumerate() {
+    let mut found = 0;
+    for (i, characteristic) in ascs.sink_ases().take(channels).enumerate() {
         let mut buf = [0u8; 90];
         let Ok(n) = client.read_characteristic(characteristic, &mut buf).await else {
             return;
@@ -319,7 +329,16 @@ async fn stream_tone<C: Controller, const N: usize>(
             return;
         };
         ase_ids[i] = ase.id();
+        found += 1;
     }
+    if found < channels {
+        #[cfg(feature = "log")]
+        log::warn!("[le_audio_source] peer exposes too few Sink ASEs");
+        #[cfg(feature = "defmt")]
+        warn!("[le_audio_source] peer exposes too few Sink ASEs");
+        return;
+    }
+    let ase_ids = &ase_ids[..channels];
 
     let codec_config = |location: AudioLocation| {
         encode_list(&[
@@ -329,23 +348,17 @@ async fn stream_tone<C: Controller, const N: usize>(
             CodecSpecificConfiguration::AudioChannelAllocation(location),
         ])
     };
-    let config_codec_entries: AVec<_> = [
-        (
-            ase_ids[0],
+    let locations = [AudioLocation::FrontLeft, AudioLocation::FrontRight];
+    let mut config_codec_entries: AVec<_> = AVec::new();
+    for (&ase_id, &location) in ase_ids.iter().zip(locations.iter()) {
+        let _ = config_codec_entries.push((
+            ase_id,
             TargetLatency::Lower,
             phy,
             CodecId::default(),
-            codec_config(AudioLocation::FrontLeft),
-        ),
-        (
-            ase_ids[1],
-            TargetLatency::Lower,
-            phy,
-            CodecId::default(),
-            codec_config(AudioLocation::FrontRight),
-        ),
-    ]
-    .into();
+            codec_config(location),
+        ));
+    }
     if ase_client::config_codec(client, ascs, config_codec_entries)
         .await
         .is_err()
@@ -374,34 +387,23 @@ async fn stream_tone<C: Controller, const N: usize>(
             .try_into()
             .unwrap(),
     };
-    let (qos_0, qos_1) = (qos(0), qos(1));
-    let config_qos_entries: AVec<ConfigQosEntry> = [
-        (
-            ase_ids[0],
-            qos_0.cig_id,
-            qos_0.cis_id,
-            qos_0.sdu_interval,
-            qos_0.framing,
-            qos_0.phy,
-            qos_0.max_sdu,
-            qos_0.retransmission_number,
-            qos_0.max_transport_latency,
-            qos_0.presentation_delay,
-        ),
-        (
-            ase_ids[1],
-            qos_1.cig_id,
-            qos_1.cis_id,
-            qos_1.sdu_interval,
-            qos_1.framing,
-            qos_1.phy,
-            qos_1.max_sdu,
-            qos_1.retransmission_number,
-            qos_1.max_transport_latency,
-            qos_1.presentation_delay,
-        ),
-    ]
-    .into();
+    let all_qos = [qos(0), qos(1)];
+    let ase_qos = &all_qos[..channels];
+    let mut config_qos_entries: AVec<ConfigQosEntry> = AVec::new();
+    for (&ase_id, q) in ase_ids.iter().zip(ase_qos.iter()) {
+        let _ = config_qos_entries.push((
+            ase_id,
+            q.cig_id,
+            q.cis_id,
+            q.sdu_interval,
+            q.framing,
+            q.phy,
+            q.max_sdu,
+            q.retransmission_number,
+            q.max_transport_latency,
+            q.presentation_delay,
+        ));
+    }
     if ase_client::config_qos(client, ascs, config_qos_entries)
         .await
         .is_err()
@@ -420,21 +422,15 @@ async fn stream_tone<C: Controller, const N: usize>(
 
     // Both ASEs are QoS-configured - `cig_manager` now has everything it needs to create the CIG
     // and both CIS (carried out by `cig::drive_cig`, running concurrently - see `run`).
-    cig_manager.configure(
-        ase_ids[0],
-        qos_0,
-        preset.sampling_frequency,
-        preset.frame_duration,
-    );
-    cig_manager.configure(
-        ase_ids[1],
-        qos_1,
-        preset.sampling_frequency,
-        preset.frame_duration,
-    );
+    for (&ase_id, &q) in ase_ids.iter().zip(ase_qos.iter()) {
+        cig_manager.configure(ase_id, q, preset.sampling_frequency, preset.frame_duration);
+    }
 
     let metadata = encode_list(&[Metadata::StreamingAudioContexts(ContextType::Media)]);
-    let enable_entries: AVec<_> = [(ase_ids[0], metadata.clone()), (ase_ids[1], metadata)].into();
+    let mut enable_entries: AVec<_> = AVec::new();
+    for &ase_id in ase_ids.iter() {
+        let _ = enable_entries.push((ase_id, metadata.clone()));
+    }
     if ase_client::enable(client, ascs, enable_entries)
         .await
         .is_err()
@@ -447,7 +443,7 @@ async fn stream_tone<C: Controller, const N: usize>(
     }
 
     let mut ready = [false; 2];
-    while !(ready[0] && ready[1]) {
+    while ready[..channels].iter().any(|r| !r) {
         let ase_id = cig_manager.next_ready_ase().await;
         for (slot, &target) in ready.iter_mut().zip(ase_ids.iter()) {
             if ase_id == target {
@@ -508,7 +504,7 @@ fn encode_test_tone(preset: AudioPreset) -> EncodedTone {
 async fn play_tone<C: Controller>(
     stack: &Stack<'_, C, DefaultPacketPool>,
     cig_manager: &CigManager<NoopRawMutex>,
-    ase_ids: [u8; 2],
+    ase_ids: &[u8],
     tone: &EncodedTone,
     preset: AudioPreset,
 ) -> ! {

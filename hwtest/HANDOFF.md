@@ -406,3 +406,21 @@ rig, long soak, and full config-matrix sweep.
   limit is the 7.5 ms ISO interval scheduling for two central CIS, not the codec bitrate.
 - Next candidates: single-CIS (mono) gaming topology, or `LE Set CIG Parameters` (non-Test) once
   the controller accepts it, since the Test schedule pins NSE/BN for both CIS.
+
+### Session 10: mono (single-CIS) unicast
+
+- `CigManager` scope is now configurable: `new_mono()` / `new_mono_passthrough()` start CIG
+  creation after one ASE and request a single CIS. `SetCigParameters`/`CreateCis` carry an optional
+  second entry and `drive_cig` sends a one- or two-element `cis_configs` slice.
+- `basic_audio_source::run` takes a `channels` argument (1 or 2); ASE discovery, Config Codec,
+  Config QoS, Enable, readiness tracking, and tone transmission all follow it. Too few Sink ASEs on
+  the peer is now rejected explicitly instead of configuring a zeroed ASE_ID.
+- Connect Kit source selects mono with `TROUBLE_AUDIO_CHANNELS=1` (default 2).
+- `unicast-mono-source-vs-zephyr-server`: PASS at 48_2_1 / 10 ms
+  (`hwtest/logs/unicast-mono-source-vs-zephyr-server-20261013-231233.log`).
+- `unicast-source-vs-zephyr-server` stereo regression: PASS.
+- `unicast-gaming-mono-source-vs-zephyr-server`: still FAIL. One CIS at 7.5 ms is rejected exactly
+  like two were, so the limit is the 7.5 ms ISO interval itself on this controller, not CIS count
+  and not codec bitrate. Remaining lead is the `LE Set CIG Parameters Test` schedule (`NSE`/`BN`/
+  `FT` are pinned to 1) versus the non-Test command.
+- Library tests: 187 passed. Both embedded binaries build for stereo and for mono+48_1_gs.

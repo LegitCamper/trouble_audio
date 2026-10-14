@@ -54,9 +54,9 @@ use crate::{
     CodingFormat,
 };
 
-/// Number of CIS this crate's CIG creation supports - purely this crate's own stereo-only scope
-/// (the underlying `LE Set CIG Parameters [Test]`/`LE Create CIS` commands take a `cis_configs`
-/// slice, so nothing upstream caps this).
+/// Largest number of CIS this crate's CIG creation supports - purely this crate's own scope (the
+/// underlying `LE Set CIG Parameters [Test]`/`LE Create CIS` commands take a `cis_configs` slice,
+/// so nothing upstream caps this). A group may use fewer; see [`CigManager::new_mono`].
 const CIS_COUNT: usize = 2;
 
 /// `Worst_Case_SCA`/`Packing` for `LE Set CIG Parameters [Test]`: not a per-ASE concern, so fixed
@@ -183,13 +183,14 @@ enum CigAction {
     /// [`CigManager::reset`] so reconnect attempts don't hit `Command Disallowed (0x0C)` when
     /// they re-issue `LE Set CIG Parameters` with the same CIG_ID.
     RemoveCig(u8),
-    /// Both ASEs' QoS, from which [`drive_cig`] builds the actual command - deferred rather than
-    /// built here since the command borrows a per-CIS slice that can't outlive this action.
-    SetCigParameters(AseQos, AseQos),
+    /// Every ASE's QoS, from which [`drive_cig`] builds the actual command - deferred rather than
+    /// built here since the command borrows a per-CIS slice that can't outlive this action. The
+    /// second entry is `None` for a mono group (see [`CigManager::new_mono`]).
+    SetCigParameters(AseQos, Option<AseQos>),
     CreateCis {
         cig_id: u8,
         cis_0: ConnHandle,
-        cis_1: ConnHandle,
+        cis_1: Option<ConnHandle>,
         acl: ConnHandle,
     },
     SetupDataPath(ConnHandle, u8),
@@ -211,6 +212,9 @@ pub struct CigManager<M: RawMutex> {
     /// `true` when built via [`Self::new_passthrough`]: no encoder is ever constructed, the
     /// application supplies pre-encoded LC3 frames itself (see [`Self::encode`]'s docs).
     passthrough: bool,
+    /// How many CIS this group actually uses: 2 for a stereo pair, 1 for mono. Slots past this
+    /// are never filled, so CIG creation triggers once `cis_count` ASEs are configured.
+    cis_count: usize,
     slots: RefCell<[CigAseSlot; CIS_COUNT]>,
     encoders: RefCell<[Option<CachedEncoder>; CIS_COUNT]>,
     acl_handle: RefCell<Option<ConnHandle>>,
@@ -228,9 +232,23 @@ impl<M: RawMutex> Default for CigManager<M> {
 }
 
 impl<M: RawMutex> CigManager<M> {
-    /// Creates an empty manager, before any ASE has been configured.
+    /// Creates an empty manager for a stereo pair, before any ASE has been configured.
     pub fn new() -> Self {
-        Self::with_passthrough(false)
+        Self::with_scope(false, CIS_COUNT)
+    }
+
+    /// Creates an empty manager for a single-CIS (mono) group: CIG creation starts as soon as one
+    /// ASE is configured, and only one CIS is requested from the controller.
+    ///
+    /// Needed both for genuinely mono peers and because a controller may refuse two CIS at short
+    /// ISO intervals even when it accepts one.
+    pub fn new_mono() -> Self {
+        Self::with_scope(false, 1)
+    }
+
+    /// [`Self::new_mono`] in LC3 passthrough mode (see [`Self::new_passthrough`]).
+    pub fn new_mono_passthrough() -> Self {
+        Self::with_scope(true, 1)
     }
 
     /// Creates an empty manager in LC3 passthrough mode: no encoder is ever constructed (zero
@@ -238,12 +256,17 @@ impl<M: RawMutex> CigManager<M> {
     /// [`Self::next_ready_ase`] fires, via [`crate::iso_tx::build_packet`] addressed with
     /// [`Self::cis_handle`]; [`Self::encode`] always returns `None`.
     pub fn new_passthrough() -> Self {
-        Self::with_passthrough(true)
+        Self::with_scope(true, CIS_COUNT)
     }
 
-    fn with_passthrough(passthrough: bool) -> Self {
+    fn with_scope(passthrough: bool, cis_count: usize) -> Self {
+        assert!(
+            cis_count >= 1 && cis_count <= CIS_COUNT,
+            "a CIG must carry between 1 and CIS_COUNT CIS"
+        );
         Self {
             passthrough,
+            cis_count,
             slots: RefCell::new([CigAseSlot::default(); CIS_COUNT]),
             encoders: RefCell::new(core::array::from_fn(|_| None)),
             acl_handle: RefCell::new(None),
@@ -286,12 +309,13 @@ impl<M: RawMutex> CigManager<M> {
         let mut slots = self.slots.borrow_mut();
         // Re-configuring an already-known ASE (e.g. a central retrying Config QoS) must update
         // its existing slot, not consume a fresh one.
-        let idx = slots
+        let in_scope = &mut slots[..self.cis_count];
+        let idx = in_scope
             .iter()
             .position(|s| s.ase_id == Some(ase_id))
-            .or_else(|| slots.iter().position(|s| s.ase_id.is_none()));
+            .or_else(|| in_scope.iter().position(|s| s.ase_id.is_none()));
         let Some(idx) = idx else {
-            warn!("[cig] configure() called for more ASEs than this crate's stereo scope supports");
+            warn!("[cig] configure() called for more ASEs than this CIG's scope supports");
             return;
         };
         slots[idx] = CigAseSlot {
@@ -302,15 +326,21 @@ impl<M: RawMutex> CigManager<M> {
             cis_handle: None,
         };
 
-        if slots.iter().any(|s| s.ase_id.is_none()) {
+        if slots[..self.cis_count].iter().any(|s| s.ase_id.is_none()) {
             return;
         }
         // Every ASE is configured - queue LE Set CIG Parameters[/Test] for `drive_cig` to build
         // and send (see the module docs for why the command variant is feature-gated).
-        let (Some(q0), Some(q1)) = (slots[0].qos, slots[1].qos) else { return };
+        let Some(q0) = slots[0].qos else { return };
+        let q1 = if self.cis_count > 1 { slots[1].qos } else { None };
+        if self.cis_count > 1 && q1.is_none() {
+            return;
+        }
         *self.cig_id.borrow_mut() = Some(q0.cig_id);
-        debug_assert_eq!(q0.cig_id, q1.cig_id, "both ASEs of one CIG must share a CIG_ID");
-        debug_assert_eq!(q0.sdu_interval, q1.sdu_interval, "both ASEs of one CIG must share an SDU interval");
+        if let Some(q1) = q1 {
+            debug_assert_eq!(q0.cig_id, q1.cig_id, "both ASEs of one CIG must share a CIG_ID");
+            debug_assert_eq!(q0.sdu_interval, q1.sdu_interval, "both ASEs of one CIG must share an SDU interval");
+        }
         // ISO_Interval is in 1.25ms units; unframed PDUs require it to be an integer multiple of
         // SDU_Interval, and this crate always requests a 1:1 mapping.
         debug_assert_eq!(u24_le_to_u32(q0.sdu_interval) % 1250, 0, "SDU_Interval must be a multiple of 1.25ms");
@@ -319,9 +349,11 @@ impl<M: RawMutex> CigManager<M> {
 
     /// Called by [`drive_cig`] once `LE Set CIG Parameters` returns, to record the
     /// controller-assigned CIS connection handles and queue `LE Create CIS`.
-    fn cig_parameters_set(&self, connection_handle_0: ConnHandle, connection_handle_1: ConnHandle) {
+    fn cig_parameters_set(&self, connection_handle_0: ConnHandle, connection_handle_1: Option<ConnHandle>) {
         self.slots.borrow_mut()[0].cis_handle = Some(connection_handle_0.raw());
-        self.slots.borrow_mut()[1].cis_handle = Some(connection_handle_1.raw());
+        if let Some(handle) = connection_handle_1 {
+            self.slots.borrow_mut()[1].cis_handle = Some(handle.raw());
+        }
         let Some(acl) = *self.acl_handle.borrow() else {
             warn!("[cig] LE Set CIG Parameters completed before an ACL handle was set");
             return;
@@ -448,10 +480,13 @@ where
                 // multiple of SDU_Interval, and this crate always requests a 1:1 mapping (see the
                 // matching `debug_assert_eq!` in `CigManager::configure`).
                 let iso_interval = (sdu_interval_us / 1250) as u16;
+                // One entry for a mono group, two for a stereo pair - the command takes a slice,
+                // so the unused tail is simply not sent.
                 #[cfg(feature = "nrf-sdc")]
-                let cis_configs = [cis_config_test(&q0), cis_config_test(&q1)];
+                let all_configs = [cis_config_test(&q0), cis_config_test(q1.as_ref().unwrap_or(&q0))];
                 #[cfg(not(feature = "nrf-sdc"))]
-                let cis_configs = [cis_config(&q0), cis_config(&q1)];
+                let all_configs = [cis_config(&q0), cis_config(q1.as_ref().unwrap_or(&q0))];
+                let cis_configs = &all_configs[..if q1.is_some() { 2 } else { 1 }];
                 let cmd = SetCigParametersCmd::new(
                     CigId::new(q0.cig_id),
                     sdu_interval,
@@ -462,10 +497,13 @@ where
                     WORST_CASE_SCA,
                     Packing::Sequential,
                     framing(q0.framing),
-                    &cis_configs,
+                    cis_configs,
                 );
                 match iso.command(cmd).await {
-                    Ok(ret) => manager.cig_parameters_set(ret.cis_handles[0], ret.cis_handles[1]),
+                    Ok(ret) => manager.cig_parameters_set(
+                        ret.cis_handles[0],
+                        (ret.num_cis > 1).then(|| ret.cis_handles[1]),
+                    ),
                     Err(_e) => {
                         #[cfg(feature = "log")]
                         log::warn!("[cig] LE Set CIG Parameters failed: {_e:?}");
@@ -480,12 +518,13 @@ where
                 cis_1,
                 acl,
             } => {
-                let cis_configs = [
+                let all_configs = [
                     CisConnConfig { cis_handle: cis_0, acl_handle: acl },
-                    CisConnConfig { cis_handle: cis_1, acl_handle: acl },
+                    CisConnConfig { cis_handle: cis_1.unwrap_or(cis_0), acl_handle: acl },
                 ];
+                let cis_configs = &all_configs[..if cis_1.is_some() { 2 } else { 1 }];
                 if let Err(_e) = iso
-                    .command_async(LeCreateCis::new(CigId::new(cig_id), &cis_configs))
+                    .command_async(LeCreateCis::new(CigId::new(cig_id), cis_configs))
                     .await
                 {
                     #[cfg(feature = "log")]
@@ -590,7 +629,7 @@ mod tests {
         }
 
         // Simulate `drive_cig` completing LE Set CIG Parameters.
-        manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
+        manager.cig_parameters_set(ConnHandle::new(0x10), Some(ConnHandle::new(0x11)));
         match manager.actions.try_receive() {
             Ok(CigAction::CreateCis {
                 cig_id,
@@ -600,7 +639,7 @@ mod tests {
             }) => {
                 assert_eq!(cig_id, 7);
                 assert_eq!(cis_0.raw(), 0x10);
-                assert_eq!(cis_1.raw(), 0x11);
+                assert_eq!(cis_1.unwrap().raw(), 0x11);
                 assert_eq!(acl.raw(), 0x05);
             }
             other => panic!("expected CreateCis, got {:?}", other.is_ok()),
@@ -643,7 +682,7 @@ mod tests {
 
         manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
         match manager.actions.try_receive() {
-            Ok(CigAction::SetCigParameters(q0, q1)) => assert_ne!(q0.cis_id, q1.cis_id),
+            Ok(CigAction::SetCigParameters(q0, q1)) => assert_ne!(q0.cis_id, q1.unwrap().cis_id),
             other => panic!("expected SetCigParameters, got {:?}", other.is_ok()),
         }
     }
@@ -662,7 +701,7 @@ mod tests {
         manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
         manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
         let _ = manager.actions.try_receive(); // SetCigParameters
-        manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
+        manager.cig_parameters_set(ConnHandle::new(0x10), Some(ConnHandle::new(0x11)));
         let _ = manager.actions.try_receive(); // CreateCis
 
         let before_first = crate::test_alloc::allocated();
@@ -683,7 +722,7 @@ mod tests {
         manager.configure(0, qos(7, 0), sampling_frequency, frame_duration);
         manager.configure(1, qos(7, 1), sampling_frequency, frame_duration);
         let _ = manager.actions.try_receive(); // SetCigParameters
-        manager.cig_parameters_set(ConnHandle::new(0x20), ConnHandle::new(0x21));
+        manager.cig_parameters_set(ConnHandle::new(0x20), Some(ConnHandle::new(0x21)));
         let _ = manager.actions.try_receive(); // CreateCis
 
         let before_reconnect = crate::test_alloc::allocated();
@@ -713,7 +752,7 @@ mod tests {
         manager.configure(0, qos(7, 0), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
         manager.configure(1, qos(7, 1), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
         let _ = manager.actions.try_receive(); // SetCigParameters
-        manager.cig_parameters_set(ConnHandle::new(0x10), ConnHandle::new(0x11));
+        manager.cig_parameters_set(ConnHandle::new(0x10), Some(ConnHandle::new(0x11)));
         let _ = manager.actions.try_receive(); // CreateCis
 
         let before = crate::test_alloc::allocated();
@@ -724,5 +763,61 @@ mod tests {
         assert_eq!(manager.cis_handle(0).unwrap().raw(), 0x10);
         assert_eq!(manager.cis_handle(1).unwrap().raw(), 0x11);
         assert!(manager.encode(0, &[0i16; 480], &mut [0u8; 100]).is_none());
+    }
+
+    /// Mono scope: a single configured ASE must complete CIG creation on its own and request
+    /// exactly one CIS, since a controller can refuse two CIS at short ISO intervals.
+    #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
+    fn mono_scope_creates_one_cis_from_a_single_ase() {
+        let manager = CigManager::<NoopRawMutex>::new_mono();
+        manager.set_acl_handle(ConnHandle::new(0x05));
+
+        // One ASE is the whole group, so this alone starts CIG creation.
+        manager.configure(9, qos(7, 0), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
+        match manager.actions.try_receive() {
+            Ok(CigAction::SetCigParameters(q0, q1)) => {
+                assert_eq!(q0.cis_id, 0);
+                assert!(q1.is_none(), "a mono group must not request a second CIS");
+            }
+            other => panic!("expected SetCigParameters, got {:?}", other.is_ok()),
+        }
+
+        manager.cig_parameters_set(ConnHandle::new(0x30), None);
+        match manager.actions.try_receive() {
+            Ok(CigAction::CreateCis { cis_0, cis_1, .. }) => {
+                assert_eq!(cis_0.raw(), 0x30);
+                assert!(cis_1.is_none());
+            }
+            other => panic!("expected CreateCis, got {:?}", other.is_ok()),
+        }
+
+        manager.on_cis_established(&established_event(0x30));
+        match manager.actions.try_receive() {
+            Ok(CigAction::SetupDataPath(handle, ase_id)) => {
+                assert_eq!(handle.raw(), 0x30);
+                assert_eq!(ase_id, 9);
+            }
+            other => panic!("expected SetupDataPath, got {:?}", other.is_ok()),
+        }
+        assert_eq!(manager.cis_handle(9).unwrap().raw(), 0x30);
+        assert!(manager.encode(9, &[0i16; 480], &mut [0u8; 100]).unwrap().is_ok());
+    }
+
+    /// A mono group must ignore a second ASE rather than silently widening its scope.
+    #[test]
+    #[cfg_attr(miri, ignore)] // constructs a real LC3 codec; libm's x86 asm sqrt is unsupported by Miri
+    fn mono_scope_rejects_a_second_ase() {
+        let manager = CigManager::<NoopRawMutex>::new_mono();
+        manager.set_acl_handle(ConnHandle::new(0x05));
+        manager.configure(0, qos(7, 0), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
+        let _ = manager.actions.try_receive(); // SetCigParameters
+
+        manager.configure(1, qos(7, 1), SamplingFrequency::Hz48000, FrameDuration::Duration10MS);
+        assert!(
+            manager.actions.try_receive().is_err(),
+            "the out-of-scope ASE must not queue another CIG setup"
+        );
+        assert!(manager.cis_handle(1).is_none());
     }
 }

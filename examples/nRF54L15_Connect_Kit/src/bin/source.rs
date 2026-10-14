@@ -242,6 +242,7 @@ async fn main(spawner: Spawner) {
         target_address(),
         Some(&bond_store),
         nrf54l15_connect_kit::audio_preset(),
+        nrf54l15_connect_kit::audio_channels(),
     )
     .await
 }

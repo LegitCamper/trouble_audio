@@ -1,0 +1,48 @@
+# Single-CIS variant of unicast-gaming-source-vs-zephyr-server: a controller may refuse two CIS
+# at a 7.5 ms ISO interval while accepting one.
+# Mirror of unicast-sink-vs-zephyr-client: our central/source drives Zephyr's BAP unicast server
+# through ASCS discovery, Config Codec/QoS, Enable, CIS establishment and ISO audio.
+
+description = "trouble-audio mono GMAP 48_1_gs source -> Zephyr BAP unicast server"
+timeout = 120
+
+[boards.A]
+firmware = "trouble-audio"
+bin = "source"
+# The Zephyr controller derives a fixed random identity from board B's FICR, so the target is
+# stable per board rather than per build. Printed by the sample as
+# `bt_hci_core: Identity: C0:FD:94:B5:AE:D6 (random)`.
+env = { TROUBLE_AUDIO_TARGET = "c0:fd:94:b5:ae:d6", TROUBLE_AUDIO_PRESET = "48_1_gs", TROUBLE_AUDIO_CHANNELS = "1" }
+require = [
+    "connected and encrypted",
+    "both channels streaming preset=48_1_gs interval_us=7500",
+]
+forbid = [
+    "Config Codec failed",
+    "Config QoS failed",
+    "Enable failed",
+    "ASCS discovery failed",
+    "panicked",
+]
+
+[boards.B]
+firmware = "zephyr"
+sample = "samples/bluetooth/bap_unicast_server"
+capture = "rtt"
+extra_conf = ["/var/home/sawyer/projects/trouble_audio/hwtest/zephyr/rtt.conf"]
+require = [
+    "Advertising successfully started",
+    "Connected:",
+    "ASE Codec Config: conn",
+    "QoS: stream",
+    "Enable: stream",
+    "Audio Stream .* started",
+    "Incoming audio on stream",
+]
+forbid = [
+    "Failed to (?!create readline)",
+    "Could not",
+    "ASSERTION FAIL",
+    "No streams available",
+    "stopped with reason",
+]

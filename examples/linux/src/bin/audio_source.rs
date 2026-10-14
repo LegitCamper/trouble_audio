@@ -31,6 +31,7 @@ async fn main() -> Result<(), std::io::Error> {
         basic_audio_sink::ADDRESS,
         Some(&bond_store),
         trouble_audio::presets::BROADCAST_48_2_1,
+        2,
     )
     .await
 }
