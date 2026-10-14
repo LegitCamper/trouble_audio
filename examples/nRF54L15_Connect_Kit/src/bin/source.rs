@@ -11,7 +11,7 @@ use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{bind_interrupts, config, cracen, mode::Blocking};
 use embedded_alloc::LlffHeap as Heap;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
-use nrf_sdc::vendor::NordicCigReservedTimeSet;
+use nrf_sdc::vendor::{NordicCigReservedTimeSet, NordicCisSubeventLengthSet};
 use nrf_sdc::{self as sdc, mpsl};
 use nrf54l15_connect_kit::bond_store::rram_bond_store;
 use static_cell::{ConstStaticCell, StaticCell};
@@ -222,6 +222,13 @@ async fn main(spawner: Spawner) {
     // Frees the default ACL/other-role time reservation for the CIG itself - without this,
     // `LE Set CIG Parameters` was rejected with "Unsupported Feature or Parameter Value".
     unwrap!(sdc.exec(&NordicCigReservedTimeSet::new(0)).await);
+
+    // Each CIS subevent defaults to a reservation longer than a 7.5 ms ISO interval can hold for
+    // two CIS, so the gaming presets' CIG creation fails with "limited resources". Reserve a
+    // quarter of the shortest supported interval per subevent instead.
+    // ponytail: fixed worst-case reservation; derive from the negotiated Max_PDU and PHY once the
+    // controller exposes per-CIS scheduling feedback.
+    unwrap!(sdc.exec(&NordicCisSubeventLengthSet::new(1_875)).await);
 
     // Persists the bond to on-chip RRAM so re-pairing isn't needed after every reflash.
     let flash = RefCell::new(Nvmc::new(p.RRAMC));

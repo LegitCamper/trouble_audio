@@ -395,3 +395,14 @@ rig, long soak, and full config-matrix sweep.
   fail with status `0x0d` (limited resources) at 7.5 ms. Trying 2M PHY did not change the result and
   was reverted. Next work is an SDC-compatible low-level CIG Test schedule or mono gaming topology.
 - Library tests pass (185 tests), and default embedded source/sink release checks pass.
+
+### Session 9 follow-up: 7.5 ms unicast scheduling
+
+- Matching the ACL connection interval to the 7.5 ms SDU interval made the link fail before Zephyr
+  even reported `Connected:`; reverted.
+- Added `NordicCisSubeventLengthSet(1_875)` to the Connect Kit source so each CIS subevent fits
+  inside a 7.5 ms ISO interval. CIG creation still reports CIS establishment failure.
+- Re-ran the gaming scenario with `32_1_gs` (60 octets instead of 75). Identical failure, so the
+  limit is the 7.5 ms ISO interval scheduling for two central CIS, not the codec bitrate.
+- Next candidates: single-CIS (mono) gaming topology, or `LE Set CIG Parameters` (non-Test) once
+  the controller accepts it, since the Test schedule pins NSE/BN for both CIS.
