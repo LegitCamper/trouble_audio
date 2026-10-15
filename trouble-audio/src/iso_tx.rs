@@ -12,7 +12,10 @@
 //! `ISO_Data_Packet_Length` turns out to be smaller than that.
 
 use bt_hci::data::IsoPacket;
+use bt_hci::event::{EventKind, EventPacket, NumberOfCompletedPackets};
 use bt_hci::param::ConnHandle;
+use bt_hci::transport::Transport;
+use bt_hci::ControllerToHostPacket;
 use bt_hci::FromHciBytes;
 use embassy_time::{Duration, Ticker};
 use heapless::Vec as HVec;
@@ -40,12 +43,18 @@ pub fn build_packet<'a>(
     buf.clear();
     // The bound check above makes every push infallible.
     buf.extend_from_slice(&handle_word.to_le_bytes()).unwrap();
-    buf.extend_from_slice(&(data_load_len as u16).to_le_bytes()).unwrap();
+    buf.extend_from_slice(&(data_load_len as u16).to_le_bytes())
+        .unwrap();
     buf.extend_from_slice(&sequence_num.to_le_bytes()).unwrap();
-    buf.extend_from_slice(&(payload.len() as u16).to_le_bytes()).unwrap();
+    buf.extend_from_slice(&(payload.len() as u16).to_le_bytes())
+        .unwrap();
     buf.extend_from_slice(payload).unwrap();
 
-    Some(IsoPacket::from_hci_bytes(buf).expect("a packet this module just built always parses").0)
+    Some(
+        IsoPacket::from_hci_bytes(buf)
+            .expect("a packet this module just built always parses")
+            .0,
+    )
 }
 
 /// Per-CIS `ISO_SDU_Sequence_Number` (Core 6 Vol 6 Part G §1/3): the host is only required to send
@@ -69,6 +78,38 @@ pub fn ticker_for_sdu_interval(sdu_interval: [u8; 3]) -> Ticker {
     Ticker::every(Duration::from_micros(micros as u64))
 }
 
+/// Returns the completed-packet credit for `handle` carried by an HCI Number Of Completed
+/// Packets event. Malformed or unrelated events return `None`.
+pub fn completed_packet_count(event: &EventPacket<'_>, handle: ConnHandle) -> Option<u16> {
+    if event.kind != EventKind::NumberOfCompletedPackets {
+        return None;
+    }
+    let completed = NumberOfCompletedPackets::from_hci_bytes_complete(event.data).ok()?;
+    completed.completed_packets.iter().find_map(|entry| {
+        (entry.handle().ok()? == handle)
+            .then(|| entry.num_completed_packets().ok())
+            .flatten()
+    })
+}
+
+/// Waits for a nonzero controller credit for one ISO handle on an exclusively owned raw HCI
+/// transport. Unrelated controller packets are consumed; do not use alongside a host runner.
+pub async fn wait_for_completed_packet<T: Transport>(
+    transport: &T,
+    rx_buffer: &mut [u8],
+    handle: ConnHandle,
+) -> Result<u16, T::Error> {
+    loop {
+        let packet = transport.read::<ControllerToHostPacket>(rx_buffer).await?;
+        let ControllerToHostPacket::Event(event) = packet else {
+            continue;
+        };
+        if let Some(count) = completed_packet_count(&event, handle).filter(|count| *count != 0) {
+            return Ok(count);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bt_hci::data::IsoPacketBoundary;
@@ -90,7 +131,9 @@ mod tests {
 
         assert_eq!(packet.handle().raw(), 0x11);
         assert_eq!(packet.boundary_flag(), IsoPacketBoundary::Complete);
-        let header = packet.data_load_header().expect("Complete packets always carry a data load header");
+        let header = packet
+            .data_load_header()
+            .expect("Complete packets always carry a data load header");
         assert_eq!(header.sequence_num, 42);
         assert_eq!(header.iso_sdu_len, payload.len() as u16);
         assert_eq!(packet.data(), &payload);
@@ -104,5 +147,16 @@ mod tests {
         seq.0 = u16::MAX;
         assert_eq!(seq.next(), u16::MAX);
         assert_eq!(seq.next(), 0);
+    }
+
+    #[test]
+    fn completed_packet_count_selects_the_requested_handle() {
+        let bytes = [0x13, 9, 2, 0x11, 0x00, 3, 0, 0x42, 0x00, 7, 0];
+        let event = EventPacket::from_hci_bytes_complete(&bytes).unwrap();
+
+        assert_eq!(
+            completed_packet_count(&event, ConnHandle::new(0x42)),
+            Some(7)
+        );
     }
 }
