@@ -26,25 +26,25 @@ codegen-units = 1
 bt-hci = { git = "https://github.com/LegitCamper/bt-hci", rev = "a3b9b9785ef6e8269db31e1431f7d0710a6265cc" }
 # Keep command types and controllers on the same transport crate as the patched bt-hci.
 bt-hci-transport = { git = "https://github.com/LegitCamper/bt-hci", rev = "a3b9b9785ef6e8269db31e1431f7d0710a6265cc" }
-# This fork keeps the previously selected Embassy generation while moving CYW43 to bt-hci 0.11
-# and adding the resident-controller adapter. One git source avoids duplicate private Embassy
-# crates with incompatible types.
-embassy-embedded-hal = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-executor = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-futures = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-hal-internal = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-net-driver-channel = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-nrf = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-rp = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-sync = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-time = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-time-driver = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-time-queue-utils = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-usb = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-usb-driver = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-embassy-usb-logger = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-cyw43 = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
-cyw43-pio = { git = "https://github.com/LegitCamper/embassy.git", rev = "ee2eecf8362a33cb4e9f0eb2e57f8e8d56ae893c" }
+# This fork moves CYW43 to bt-hci 0.11, adds the resident-controller adapter, and exports aligned
+# firmware assets. One git source avoids duplicate private Embassy crates with incompatible types.
+embassy-embedded-hal = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-executor = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-futures = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-hal-internal = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-net-driver-channel = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-nrf = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-rp = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-sync = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-time = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-time-driver = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-time-queue-utils = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-usb = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-usb-driver = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+embassy-usb-logger = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+cyw43 = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+cyw43-pio = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
+cyw43-firmware = { git = "https://github.com/LegitCamper/embassy.git", rev = "dace83abb05586b7e485aee3bb3bb0c8d7696636" }
 
 # Fork carries the ISO packet dispatch and the BIG command impls
 # (`LeCreateBig`/`LeTerminateBig`/`LeBigCreateSync`/`LeBigTerminateSync`), not upstream yet.

@@ -11,8 +11,6 @@
 use bt_hci::param::ConnHandle;
 use bt_hci::transport::Transport;
 use cyw43::Cyw43439;
-#[cfg(not(feature = "skip-cyw43-firmware"))]
-use cyw43::aligned_bytes;
 use cyw43_pio::PioSpi;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{Level, Output};
@@ -74,25 +72,9 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(logger_task(usb::Driver::new(p.USB, Irqs)).unwrap());
 
-    #[cfg(feature = "skip-cyw43-firmware")]
-    let (fw, btfw, nvram) = {
-        static EMPTY: &cyw43::Aligned<cyw43::A4, [u8]> = &cyw43::Aligned([0u8; 0]);
-        (EMPTY, EMPTY, EMPTY)
-    };
-
-    #[cfg(not(feature = "skip-cyw43-firmware"))]
-    let (fw, btfw, nvram) = {
-        // IMPORTANT
-        //
-        // Download and make sure these files from https://github.com/embassy-rs/embassy/tree/main/cyw43-firmware
-        // are available in `./examples/rp-pico-w`. (should be automatic)
-        //
-        // IMPORTANT
-        let fw = aligned_bytes!("../../cyw43-firmware/43439A0.bin");
-        let btfw = aligned_bytes!("../../cyw43-firmware/43439A0_btfw.bin");
-        let nvram = aligned_bytes!("../../cyw43-firmware/nvram_rp2040.bin");
-        (fw, btfw, nvram)
-    };
+    let fw = cyw43_firmware::CYW43439_WIFI;
+    let btfw = cyw43::iso::BOOT_FIRMWARE;
+    let nvram = cyw43_firmware::CYW43439_NVRAM_RP2040;
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);

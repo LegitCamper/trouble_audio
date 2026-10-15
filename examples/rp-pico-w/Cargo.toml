@@ -36,6 +36,7 @@ cyw43 = { version = "0.7.0", features = ["log", "firmware-logs", "bluetooth"] }
 # example to work) - leaving it disabled just means cyw43-pio's own handful of debug prints don't
 # show up; unrelated to this crate's own logging.
 cyw43-pio = { version = "0.10.0" }
+cyw43-firmware = "0.1.0"
 
 # USB-serial logging via `embassy-usb-logger` (implements `log::Log`) instead of defmt/RTT, so
 # nothing here needs a debug probe - connect with any serial terminal (e.g.
@@ -61,11 +62,7 @@ trouble_audio = { path = "../../trouble-audio", default-features = false, featur
 ] }
 trouble-host = { workspace = true, features = ["derive", "gatt", "peripheral", "scan", "security", "default-packet-pool"] }
 
-[build-dependencies]
-reqwest = { version = "0.12.9", features = ["blocking"] }
-
 [features]
-skip-cyw43-firmware = []
 cyw43-iso = ["cyw43/bluetooth-iso"]
 
 [[bin]]
