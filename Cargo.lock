@@ -727,6 +727,7 @@ dependencies = [
  "bt-hci",
  "cortex-m",
  "cortex-m-rt",
+ "cyw43-controller",
  "derive_more",
  "embassy-futures",
  "embassy-net-driver-channel",
@@ -741,6 +742,19 @@ dependencies = [
  "sdio",
  "trait-set",
 ]
+
+[[package]]
+name = "cyw43-controller"
+version = "0.1.0"
+source = "git+https://github.com/LegitCamper/cyw43-controller?rev=c0d1c2f0438bbc1bdfd524100ca73c3d2db8cfc7#c0d1c2f0438bbc1bdfd524100ca73c3d2db8cfc7"
+dependencies = [
+ "cyw43-controller-blob",
+]
+
+[[package]]
+name = "cyw43-controller-blob"
+version = "0.1.0"
+source = "git+https://github.com/LegitCamper/cyw43-controller?rev=c0d1c2f0438bbc1bdfd524100ca73c3d2db8cfc7#c0d1c2f0438bbc1bdfd524100ca73c3d2db8cfc7"
 
 [[package]]
 name = "cyw43-pio"
