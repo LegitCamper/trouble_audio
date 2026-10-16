@@ -36,12 +36,13 @@ sink loops as well as the shared unicast/bond-store logic used by the platform e
 | Example | Sink | Source | Transport | README |
 | --- | :-: | :-: | --- | --- |
 | [`nRF54L15_Connect_Kit`](examples/nRF54L15_Connect_Kit) | ✅ | ✅ | Real BLE (`nrf-sdc`) | [README](examples/nRF54L15_Connect_Kit/README.md) |
-| [`rp-pico-w`](examples/rp-pico-w) | - | - | Real BLE (`cyw43`) | [README](examples/README.md) |
+| [`rp-pico-w`](examples/rp-pico-w) | experimental | experimental | Resident CYW43 patch | [README](examples/README.md) |
 | [`linux`](examples/linux) | ✅ | ✅ | Raw HCI socket | [README](examples/linux/README.md) |
 | [`linux-serial`](examples/linux-serial) | ✅ | ✅ | HCI-UART (serial) | [README](examples/linux-serial/README.md) |
 
-`rp-pico-w` is a pure media-control remote (MCS) - its cyw43439 controller has no CIS support, so
-it can't stream audio. See [`examples/README.md`](examples/README.md) for both demos.
+`rp-pico-w` includes a normal media-control remote plus experimental resident-controller LC3
+source and fixed-channel sink binaries. The sink is not yet an Auracast receiver because it has no
+BIGInfo-derived anchor. See [`examples/README.md`](examples/README.md) for the exact limits.
 
 ## Testing
 

@@ -54,18 +54,29 @@ static_cell = "2"
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 embedded-alloc = "0.6.0"
 
-trouble-audio-example-apps = { version = "0.1.0", path = "../apps", features = [
+trouble-audio-example-apps = { version = "0.1.0", path = "../apps", optional = true, features = [
   "log",
 ] }
 trouble_audio = { path = "../../trouble-audio", default-features = false, features = [
   "log",
 ] }
-trouble-host = { workspace = true, features = ["derive", "gatt", "peripheral", "scan", "security", "default-packet-pool"] }
+trouble-host = { workspace = true, optional = true, features = ["derive", "gatt", "peripheral", "scan", "security", "default-packet-pool"] }
 
 [features]
 cyw43-iso = ["cyw43/bluetooth-iso"]
+media-control = ["dep:trouble-audio-example-apps", "dep:trouble-host"]
+
+[[bin]]
+name = "media_control"
+path = "src/bin/media_control.rs"
+required-features = ["media-control"]
 
 [[bin]]
 name = "cyw43_iso_source"
 path = "src/bin/cyw43_iso_source.rs"
+required-features = ["cyw43-iso"]
+
+[[bin]]
+name = "cyw43_iso_sink"
+path = "src/bin/cyw43_iso_sink.rs"
 required-features = ["cyw43-iso"]

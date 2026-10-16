@@ -1,7 +1,7 @@
 [toolchain]
 # Floating `nightly`, not a dated pin: upstream trouble-host's `embassy-crypto` needs `cfg_select`,
 # which postdates the old 2026-10-07 pin. Re-pin to a date once embassy-crypto's MSRV
-# settles. `examples/nRF54L15_Connect_Kit/.cargo/config.toml` passes `-Znext-solver=no` because
-# `generic_const_exprs` ICEs the new solver.
+# settles. Embedded example Cargo configs select the old solver because `generic_const_exprs`
+# ICEs the new solver.
 channel = "nightly"
 profile = "complete"

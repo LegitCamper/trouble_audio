@@ -11,3 +11,9 @@ RUST_TEST_THREADS = "1"
 # this crate's full service set (MCS's Object ID characteristics pushed it past; the panic message
 # in `client_att_table.rs` reports the exact need).
 TROUBLE_HOST_CLIENT_ATT_TABLE_SIZE = "128"
+
+[target.thumbv6m-none-eabi]
+# Recent nightlies enable the next-generation trait solver globally, but it ICEs while checking
+# `examples/apps` through `trouble_audio`'s `generic_const_exprs`. Keep the old solver until rustc
+# supports that combination (rust-lang/rust#160895).
+rustflags = ["-Znext-solver=coherence"]
